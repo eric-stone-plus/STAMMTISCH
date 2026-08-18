@@ -59,7 +59,10 @@ ScrollBar { background: #000000; }
 ScrollBar > .scrollbar--thumb { background: #303030; }
 
 /* ── Chat ─────────────────────────────────────────────────────── */
-#chat-messages { background: #000000; border: solid #505050; }
+#chat-scroll { background: #000000; border: solid #505050; }
+#chat-scroll ScrollBar { background: #1a1a1a; }
+#chat-scroll ScrollBar > .scrollbar--thumb { background: #707070; }
+#chat-messages { background: #000000; }
 #chat-input { background: #000000; border: solid #4fc3f7; color: #a0a0a0; }
 
 /* ── OptionList ───────────────────────────────────────────────── */

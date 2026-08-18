@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from datetime import date, timedelta
@@ -78,6 +79,10 @@ class DashboardScreen(Screen):
     BINDINGS = [
         Binding("a", "open_chat", "Ask"),
         Binding("e", "edit_config", "Edit"),
+        Binding("d", "delete_selected", "Delete"),
+        Binding("x", "delete_selected", "Delete"),
+        Binding("delete", "delete_selected", "Delete"),
+        Binding("shift+d", "delete_all", "Delete all"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -104,13 +109,17 @@ class DashboardScreen(Screen):
         self.ai = ai
         self.engine = engine
         self.config = config
+        self._runs: list[dict[str, Any]] = []
 
     def compose(self) -> ComposeResult:
         yield Static("", id="dash-status")
         with Horizontal(id="dash-main"):
             with Vertical(id="dash-left"):
                 with Vertical(id="run-table-wrap"):
-                    yield Static("  Run Registry", id="run-table-label")
+                    yield Static(
+                        "  Run Registry  |  Enter inspect  ·  D delete  ·  Shift+D all",
+                        id="run-table-label",
+                    )
                     yield DataTable(id="run-table", cursor_type="row")
             with Vertical(id="dash-right"):
                 yield SystemHud(id="sys-hud")
@@ -129,7 +138,7 @@ class DashboardScreen(Screen):
         # No pre-selected row in Quick Start: hover feedback only on demand.
         self.query_one("#quick-list", OptionList).highlighted = None
         table = self.query_one("#run-table", DataTable)
-        table.add_columns("RUN ID", "PIPELINE", "STATE", "CREATED")
+        table.add_columns("SESSION", "STATE", "CREATED")
         self.action_refresh()
 
     def action_refresh(self) -> None:
@@ -164,6 +173,7 @@ class DashboardScreen(Screen):
             if registry_error:
                 hints.append(f"Run registry unavailable: {registry_error}")
             status.update("  " + "  |  ".join(hints) if hints else "")
+            self._runs = list(runs)
             hud.run_count = len(runs)
             table = self.query_one("#run-table", DataTable)
             table.clear()
@@ -172,8 +182,9 @@ class DashboardScreen(Screen):
                 if "T" in str(created):
                     created = str(created).split("T")[0]
                 table.add_row(
-                    run.get("run_id", "?"), run.get("pipeline_id", "?"),
-                    status_badge(run.get("state", "?")), created,
+                    run_session_title(run),
+                    status_badge(run.get("state", "?")),
+                    created,
                     key=run.get("_full_id", run.get("run_id", "")),
                 )
 
@@ -185,7 +196,13 @@ class DashboardScreen(Screen):
         pipelines = self.driver.list_pipelines()
         # One alphabetical list: pipeline workbenches, the built-in domain
         # modules, and configured domain plugins share the same ordering.
-        entries: list[tuple[str, str]] = [(p.stem.upper(), str(p)) for p in pipelines]
+        # fullstack.json is the example end-to-end pipeline, not a
+        # homepage workbench. Keep it off the sidebar.
+        entries: list[tuple[str, str]] = [
+            (p.stem.upper(), str(p))
+            for p in pipelines
+            if p.stem.lower() != "fullstack"
+        ]
         entries += [("CRYPTO", "domain:CRYPTO"), ("ENERGY", "domain:ENERGY")]
         entries += [
             (plugin["label"], f"domain:{plugin['label']}")
@@ -388,6 +405,64 @@ class DashboardScreen(Screen):
 
         self.app.push_screen(ConfirmScreen(
             f"  Delete run {short}?\n\n  This removes the run directory and its evidence.\n\n"
+            f"  [Y] Confirm  [N]/[Esc] Cancel",
+            _confirmed,
+        ))
+
+    def action_delete_all(self) -> None:
+        """Delete every run currently listed on the registry."""
+        runs = [run for run in self._runs if run.get("run_id") or run.get("_full_id")]
+        if not runs:
+            self.notify("No runs to delete.", severity="warning")
+            return
+        count = len(runs)
+
+        def _confirmed() -> None:
+            ids = [str(run.get("_full_id") or run.get("run_id")) for run in runs]
+
+            def _work() -> dict[str, Any]:
+                deleted = 0
+                failed: list[str] = []
+                for run_id in ids:
+                    try:
+                        result = self.driver.delete(run_id)
+                    except Exception as exc:
+                        failed.append(f"{run_id[:12]}: {exc}")
+                        continue
+                    if getattr(result, "ok", False):
+                        deleted += 1
+                    else:
+                        failed.append(
+                            f"{run_id[:12]}: {getattr(result, 'error_message', None) or 'failed'}"
+                        )
+                return {"deleted": deleted, "failed": failed}
+
+            def _deliver(result: Any) -> None:
+                if isinstance(result, dict) and "deleted" in result:
+                    self.action_refresh()
+                    failed = result.get("failed") or []
+                    if failed:
+                        self.notify(
+                            f"Deleted {result['deleted']}/{count}; "
+                            f"{failed[0]}",
+                            severity="warning",
+                        )
+                    else:
+                        self.notify(
+                            f"Deleted {result['deleted']} run(s).",
+                            severity="information",
+                        )
+                    return
+                if isinstance(result, dict):
+                    self.notify(f"Delete failed: {result.get('error')}", severity="error")
+                    return
+                self.notify("Delete failed.", severity="error")
+
+            self._run_async(_work, _deliver, drop_stale=False)
+
+        self.app.push_screen(ConfirmScreen(
+            f"  Delete all {count} listed run(s)?\n\n"
+            f"  This removes each run directory and its evidence.\n\n"
             f"  [Y] Confirm  [N]/[Esc] Cancel",
             _confirmed,
         ))
@@ -2204,7 +2279,11 @@ class RunInspectorScreen(Screen):
 
     def compose(self) -> ComposeResult:
         short_id = self.run_id[:20] + "..." if len(self.run_id) > 20 else self.run_id
-        yield Static(f"  Run: {short_id}  |  [E]xport [V]erify [A]I Analyze [X] Delete [Esc] back", classes="header-bar")
+        yield Static(
+            f"  Run: {short_id}  |  [E]xport [V]erify [A]I Analyze [X] Delete [Esc] back",
+            classes="header-bar",
+            id="ri-header",
+        )
         yield Static("", id="ri-status")
         with ScrollableContainer(id="ri-scroll"):
             with Vertical(classes="panel panel-green"):
@@ -2345,6 +2424,15 @@ class RunInspectorScreen(Screen):
             )
         mv.update("\n".join(lines))
         md.digest = p.get("canonical_sha256", "")
+        title = run_session_title({
+            "pipeline_id": p.get("id"),
+            "created_at": manifest.get("created_at"),
+            "run_id": self.run_id,
+        })
+        short_id = self.run_id[:20] + "..." if len(self.run_id) > 20 else self.run_id
+        self.query_one("#ri-header", Static).update(
+            f"  {title}  ·  {short_id}  |  [E]xport [V]erify [A]I Analyze [X] Delete [Esc] back"
+        )
         self.query_one("#ri-status", Static).update(
             f"  Verified snapshot: {len(events)} events, "
             f"{len(gates)} gates, {len(receipts)} receipts"
@@ -2658,6 +2746,7 @@ class SecurityScreen(Screen):
     CSS = """
     SecurityScreen { layout: vertical; }
     #sec-cats { height: 1; padding: 0 1; background: #202020; }
+    #sec-fetch { height: 1; padding: 0 1; color: #808080; }
     #sec-board-wrap { height: 1fr; border: solid #505050; background: #000000; }
     #sec-recent-wrap { height: 14; border: solid #505050; background: #000000; }
     .sec-label { dock: top; height: 1; padding: 0 1; background: #303030; text-style: bold; color: #ffffff; }
@@ -2680,6 +2769,7 @@ class SecurityScreen(Screen):
             classes="header-bar",
         )
         yield Static("", id="sec-cats")
+        yield Static("  ", id="sec-fetch")
         with Vertical(id="sec-board-wrap"):
             yield Static("  Watchlist by market zone (daily)", classes="sec-label")
             yield _RowTable(id="sec-board", cursor_type="row")
@@ -2694,7 +2784,48 @@ class SecurityScreen(Screen):
         self.query_one("#sec-recent", DataTable).add_columns(
             "DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"
         )
+        cached = self._cached_board()
+        if cached is not None:
+            self._zone_idx = int(cached.get("zone_idx") or 0)
+            self._restore_selected = cached.get("selected")
+            self._apply({"ok": True, "quotes": cached.get("quotes") or {}}, persist=False)
+            self._set_fetch_status("cached — [R] refresh")
+            return
         self.action_refresh()
+
+    def _board_state(self) -> dict[str, Any]:
+        state = getattr(self.app, "_security_board", None)
+        if not isinstance(state, dict):
+            state = {}
+            setattr(self.app, "_security_board", state)
+        return state
+
+    def _cached_board(self) -> dict[str, Any] | None:
+        state = self._board_state()
+        if tuple(self._symbols) != tuple(state.get("symbols") or ()):
+            return None
+        quotes = state.get("quotes")
+        return state if isinstance(quotes, dict) and quotes else None
+
+    def _set_fetch_status(self, text: str) -> None:
+        try:
+            self.query_one("#sec-fetch", Static).update(f"  {text}")
+        except Exception:
+            pass
+
+    def _post_progress(self, text: str) -> None:
+        def _ui() -> None:
+            if self.is_mounted:
+                self._set_fetch_status(text)
+
+        try:
+            self.app.call_from_thread(_ui)
+        except Exception:
+            pass
+
+    def _selected_key(self) -> str | None:
+        item = self._current_item()
+        return None if item is None else str(item.get("key") or "")
 
     # ── data loading (worker thread) ───────────────────────────────
 
@@ -2704,6 +2835,7 @@ class SecurityScreen(Screen):
                 "No security symbols configured (security_symbols).",
                 severity="warning",
             )
+        self._set_fetch_status("fetching…")
         _run_async(self, self._load, self._apply, dedup_key="security-board")
 
     def _load(self) -> dict[str, Any]:
@@ -2719,8 +2851,10 @@ class SecurityScreen(Screen):
                       for symbol in self._symbols}
             return {"ok": True, "quotes": quotes}
         start = (date.today() - timedelta(days=400)).isoformat()
-        for raw in self._symbols:
+        total = len(self._symbols)
+        for index, raw in enumerate(self._symbols, 1):
             symbol = _normalize_symbol(raw)
+            self._post_progress(f"fetching {index}/{total}  {symbol}")
             try:
                 df = fetch_ohlcv(
                     symbol, market="auto", start=start,
@@ -2730,11 +2864,11 @@ class SecurityScreen(Screen):
                 quotes[symbol] = {"error": str(exc)[:120]}
                 continue
             if _missing_ohlcv(df):
-                quotes[symbol] = {"error": "no data"}
+                quotes[symbol] = {"error": "no bars"}
                 continue
             df = df.dropna(subset=["close"])
             if df.empty:
-                quotes[symbol] = {"error": "no data"}
+                quotes[symbol] = {"error": "no bars"}
                 continue
             closes = [float(v) for v in df["close"]]
             last = closes[-1]
@@ -2768,7 +2902,7 @@ class SecurityScreen(Screen):
 
     # ── row model + rendering ──────────────────────────────────────
 
-    def _apply(self, result: dict[str, Any]) -> None:
+    def _apply(self, result: dict[str, Any], persist: bool = True) -> None:
         quotes = result.get("quotes", {})
         by_zone: dict[str, list[dict[str, Any]]] = {}
         for symbol in self._symbols:
@@ -2789,6 +2923,13 @@ class SecurityScreen(Screen):
         self._zones = [zone for zone in SECURITY_ZONES if zone in by_zone]
         if self._zone_idx >= len(self._zones):
             self._zone_idx = 0
+        if persist:
+            state = self._board_state()
+            state["quotes"] = quotes
+            state["symbols"] = tuple(self._symbols)
+            state["zone_idx"] = self._zone_idx
+            state["selected"] = getattr(self, "_restore_selected", None)
+            self._set_fetch_status(f"{len(quotes)} names  ·  [R] refresh")
         self._render_strip()
         self._render_board()
 
@@ -2827,8 +2968,20 @@ class SecurityScreen(Screen):
                 key=item["key"],
             )
         if board.row_count:
-            board.move_cursor(row=0)
-            self._render_detail(items[0])
+            restore = getattr(self, "_restore_selected", None)
+            row = 0
+            if restore:
+                for index, item in enumerate(items):
+                    if item["key"] == restore:
+                        row = index
+                        break
+            self._restore_selected = None
+            board.move_cursor(row=row)
+            self._render_detail(items[row])
+            state = getattr(self.app, "_security_board", None)
+            if isinstance(state, dict):
+                state["selected"] = items[row]["key"]
+                state["zone_idx"] = self._zone_idx
 
     def _render_detail(self, item: dict[str, Any]) -> None:
         recent_table = self.query_one("#sec-recent", DataTable)
@@ -2865,6 +3018,9 @@ class SecurityScreen(Screen):
         if not self._zones:
             return
         self._zone_idx = (self._zone_idx + delta) % len(self._zones)
+        state = getattr(self.app, "_security_board", None)
+        if isinstance(state, dict):
+            state["zone_idx"] = self._zone_idx
         self._render_strip()
         self._render_board()
 
@@ -2884,6 +3040,10 @@ class SecurityScreen(Screen):
     # ── workbench hotkeys proxied to the dashboard ─────────────────
 
     def action_back(self) -> None:
+        state = getattr(self.app, "_security_board", None)
+        if isinstance(state, dict):
+            state["zone_idx"] = self._zone_idx
+            state["selected"] = self._selected_key()
         self.app.pop_screen()
 
     def action_chat(self) -> None: self._dash.action_open_chat()
@@ -2902,9 +3062,216 @@ class SecurityScreen(Screen):
 # ═══════════════════════════════════════════════════════════════════
 
 
+_ASK_INTRO = (
+    "  Ready. Ask about pipelines, gates, backtests, strategy analysis.\n\n"
+)
+# Clockwise box corners — not the Grok Build working spinner.
+_LOAD_FRAMES = ("┌", "┐", "┘", "└")
+_THINK_TICK = 0.12
+_INPUT_HISTORY_CAP = 200
+_SESSION_KEEP = 80
+
+
+def run_session_title(run: dict[str, Any]) -> str:
+    """Display title for one registry row. Not stored in events.jsonl."""
+    explicit = run.get("title")
+    if isinstance(explicit, str) and explicit.strip():
+        return " ".join(explicit.split())
+    pipeline = str(run.get("pipeline_id") or "").strip() or "run"
+    stamp = _created_stamp(run.get("created_at"))
+    if stamp:
+        return f"{pipeline} · {stamp}"
+    rid = str(run.get("run_id") or "")
+    return f"{pipeline} · {rid[:8]}" if rid else pipeline
+
+
+def _created_stamp(created: Any) -> str:
+    text = str(created or "").strip()
+    if not text:
+        return ""
+    if "T" in text:
+        day, rest = text.split("T", 1)
+        hhmm = rest[:5]
+        return f"{day} {hhmm}" if len(hhmm) == 5 else day
+    return text[:16]
+
+
+def _thinking_line(elapsed: int, frame: int) -> str:
+    return f"  {_LOAD_FRAMES[frame % len(_LOAD_FRAMES)]}  thinking  {elapsed}s\n"
+
+
+def _thought_line(elapsed: int) -> str:
+    return f"  ·  {elapsed}s\n"
+
+
+def _ask_dir(app: Any | None = None) -> Path:
+    if app is not None:
+        driver = getattr(app, "driver", None)
+        root = getattr(driver, "state_root", None) if driver is not None else None
+        if root:
+            return Path(root) / "ask"
+        config = getattr(app, "config", None)
+        cfg_root = getattr(config, "state_root", None) if config is not None else None
+        if cfg_root:
+            return Path(cfg_root) / "ask"
+    env = os.environ.get("STAMMTISCH_HOME")
+    if env:
+        return Path(env) / "ask"
+    return Path.home() / ".local" / "share" / "stammtisch" / "ask"
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _new_ask_session_id() -> str:
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    return f"{stamp}-{os.urandom(3).hex()}"
+
+
+def _session_path(ask_dir: Path, session_id: str) -> Path:
+    safe = "".join(ch for ch in session_id if ch.isalnum() or ch in "-_")
+    return ask_dir / "sessions" / f"{safe}.json"
+
+
+def _empty_session(session_id: str | None = None) -> dict[str, Any]:
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return {
+        "schema": "stammtisch.ask-session.v1",
+        "id": session_id or _new_ask_session_id(),
+        "created_at": now,
+        "updated_at": now,
+        "title": "",
+        "turns": [],
+    }
+
+
+def _load_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def load_input_history(ask_dir: Path) -> list[str]:
+    raw = _load_json(ask_dir / "input_history.json", [])
+    if not isinstance(raw, list):
+        return []
+    return [
+        str(item) for item in raw if isinstance(item, str) and item.strip()
+    ][-_INPUT_HISTORY_CAP:]
+
+
+def save_input_history(ask_dir: Path, items: list[str]) -> None:
+    try:
+        _atomic_write_json(ask_dir / "input_history.json", items[-_INPUT_HISTORY_CAP:])
+    except OSError:
+        pass
+
+
+def load_ask_session(ask_dir: Path, session_id: str) -> dict[str, Any] | None:
+    data = _load_json(_session_path(ask_dir, session_id), None)
+    if not isinstance(data, dict) or not isinstance(data.get("turns"), list):
+        return None
+    data.setdefault("id", session_id)
+    data.setdefault("title", "")
+    return data
+
+
+def save_ask_session(ask_dir: Path, session: dict[str, Any]) -> None:
+    session["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        _atomic_write_json(_session_path(ask_dir, str(session["id"])), session)
+    except OSError:
+        return
+    rows = list_ask_sessions(ask_dir)
+    for row in rows[_SESSION_KEEP:]:
+        try:
+            _session_path(ask_dir, row["id"]).unlink()
+        except OSError:
+            pass
+
+
+def list_ask_sessions(ask_dir: Path) -> list[dict[str, Any]]:
+    folder = ask_dir / "sessions"
+    if not folder.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in folder.glob("*.json"):
+        data = _load_json(path, None)
+        if not isinstance(data, dict):
+            continue
+        sid = str(data.get("id") or path.stem)
+        title = str(data.get("title") or "").strip()
+        turns = data.get("turns") if isinstance(data.get("turns"), list) else []
+        preview = ""
+        texts: list[str] = [title, sid]
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            content = str(turn.get("content") or "").strip()
+            if content:
+                texts.append(content)
+            if not preview and turn.get("role") == "user" and content:
+                preview = content
+        if not title:
+            title = preview or sid
+        rows.append({
+            "id": sid,
+            "title": title,
+            "preview": preview,
+            "updated_at": str(data.get("updated_at") or data.get("created_at") or ""),
+            "turns": len(turns),
+            "hay": " ".join(texts).lower(),
+        })
+    rows.sort(key=lambda row: row["updated_at"], reverse=True)
+    return rows
+
+
+def delete_ask_session(ask_dir: Path, session_id: str) -> bool:
+    try:
+        _session_path(ask_dir, session_id).unlink()
+        return True
+    except OSError:
+        return False
+
+
+def render_ask_session(session: dict[str, Any]) -> str:
+    turns = session.get("turns") if isinstance(session.get("turns"), list) else []
+    if not turns:
+        return _ASK_INTRO
+    parts: list[str] = []
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        content = str(turn.get("content") or "")
+        if role == "user":
+            parts.append(f"  USER: {content}\n")
+        elif role == "assistant":
+            elapsed = turn.get("elapsed_s")
+            if isinstance(elapsed, int):
+                parts.append(_thought_line(elapsed))
+            for event in turn.get("tool_events") or []:
+                parts.append(f"  GALAHAD·tool: {event}\n")
+            parts.append(f"  GALAHAD: {content}\n\n")
+    return "".join(parts) if parts else _ASK_INTRO
+
+
 class ChatInput(TextArea):
     """Multi-line chat box: Enter submits,
-    Shift-Enter / Ctrl-J inserts a newline; height follows content."""
+    Shift-Enter / Ctrl-J inserts a newline; height follows content.
+
+    Up/Down move the caret inside the buffer. At the first/last line they
+    step the sent-line history instead.
+    """
 
     BINDINGS = [
         # The box keeps focus for the screen's lifetime, so the screen's
@@ -2918,6 +3285,11 @@ class ChatInput(TextArea):
             super().__init__()
             self.value = value
 
+    class HistoryStep(Message):
+        def __init__(self, delta: int) -> None:
+            super().__init__()
+            self.delta = delta
+
     async def _on_key(self, event) -> None:
         if event.key == "enter":
             event.prevent_default()
@@ -2930,6 +3302,16 @@ class ChatInput(TextArea):
             event.stop()
             self.insert("\n")
             return
+        if event.key == "up" and self.cursor_at_first_line:
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.HistoryStep(-1))
+            return
+        if event.key == "down" and self.cursor_at_last_line:
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.HistoryStep(1))
+            return
         await super()._on_key(event)
 
 
@@ -2938,43 +3320,117 @@ class ChatScreen(Screen):
         Binding("escape", "back", "Back"),
         Binding("pageup", "scroll_up", "PgUp"),
         Binding("pagedown", "scroll_down", "PgDn"),
+        Binding("ctrl+o", "open_sessions", "Sessions"),
+        Binding("ctrl+n", "new_session", "New"),
     ]
     CSS = """
     ChatScreen { layout: vertical; }
-    #chat-messages { height: 1fr; border: solid #505050; background: #000000; padding: 1 2; overflow-y: auto; }
+    #chat-scroll {
+        height: 1fr;
+        border: solid #505050;
+        background: #000000;
+        padding: 1 1 1 2;
+        overflow-x: hidden;
+        overflow-y: scroll;
+        scrollbar-gutter: stable;
+        scrollbar-size-vertical: 1;
+    }
+    #chat-messages { height: auto; background: #000000; }
     #chat-input { height: 3; border: solid #4fc3f7; }
     """
     ai: DeepSeekDriver
     _chat_log: str = ""
 
-    def __init__(self, ai: DeepSeekDriver, **kwargs: Any):
+    def __init__(self, ai: DeepSeekDriver, session_id: str | None = None, **kwargs: Any):
         super().__init__(**kwargs)
         self.ai = ai
-        self._chat_log = ""
+        self._asked_session_id = session_id
+        self._ask_dir: Path | None = None
+        self._session = _empty_session(session_id)
+        self._chat_log = _ASK_INTRO
         self._pending: str | None = None
         self._pending_started = 0.0
         self._think_timer = None
+        self._spin_frame = 0
         self._active_request: object | None = None
+        self._input_history: list[str] = []
+        self._history_index: int | None = None
+        self._draft = ""
 
     def compose(self) -> ComposeResult:
-        yield Static("  Ask  |  Enter send · Shift-Enter newline  |  PgUp/PgDn scroll  |  Esc back", classes="header-bar")
-        yield ScrollableContainer(Static(
-            "  Ready. Ask about pipelines, gates, backtests, strategy analysis.\n\n",
-            id="chat-messages",
-        ))
+        yield Static(
+            "  Ask  |  Enter send · Shift-Enter newline · ↑↓ history  "
+            "|  Ctrl+O sessions · Ctrl+N new  |  PgUp/PgDn  |  Esc back",
+            classes="header-bar",
+        )
+        yield ScrollableContainer(
+            Static(_ASK_INTRO, id="chat-messages", markup=False),
+            id="chat-scroll",
+        )
         yield ChatInput(id="chat-input")
 
     def on_mount(self) -> None:
+        self._ask_dir = _ask_dir(self.app)
+        self._input_history = load_input_history(self._ask_dir)
+        pointer = self._asked_session_id or _load_json(
+            self._ask_dir / "current.json", {}
+        ).get("id")
+        loaded = load_ask_session(self._ask_dir, str(pointer)) if pointer else None
+        if loaded is not None:
+            self._session = loaded
+        self._chat_log = render_ask_session(self._session)
+        self._sync_model_history()
+        self._refresh_log()
         self.query_one("#chat-input", ChatInput).focus()
+
+    def _scroller(self) -> ScrollableContainer:
+        return self.query_one("#chat-scroll", ScrollableContainer)
 
     def action_back(self) -> None:
         self.app.pop_screen()
 
     def action_scroll_up(self) -> None:
-        self.query_one(ScrollableContainer).scroll_page_up()
+        self._scroller().scroll_page_up()
 
     def action_scroll_down(self) -> None:
-        self.query_one(ScrollableContainer).scroll_page_down()
+        self._scroller().scroll_page_down()
+
+    def action_open_sessions(self) -> None:
+        if self._ask_dir is None:
+            self._ask_dir = _ask_dir(self.app)
+        self.app.push_screen(AskSessionScreen(self._ask_dir, self._session.get("id")))
+
+    def action_new_session(self) -> None:
+        if self._active_request is not None:
+            self.notify("Wait for the current answer before starting a new session.",
+                        severity="warning")
+            return
+        self._persist()
+        self._session = _empty_session()
+        self._chat_log = _ASK_INTRO
+        self._pending = None
+        self._sync_model_history()
+        self._persist()
+        self._refresh_log()
+        self.notify("New Ask session.")
+
+    def open_session(self, session_id: str) -> None:
+        if self._active_request is not None:
+            self.notify("Wait for the current answer before switching sessions.",
+                        severity="warning")
+            return
+        if self._ask_dir is None:
+            self._ask_dir = _ask_dir(self.app)
+        loaded = load_ask_session(self._ask_dir, session_id)
+        if loaded is None:
+            self.notify("Session not found.", severity="warning")
+            return
+        self._session = loaded
+        self._chat_log = render_ask_session(loaded)
+        self._pending = None
+        self._sync_model_history()
+        self._persist()
+        self._refresh_log()
 
     def on_text_area_changed(self, event: ChatInput.Changed) -> None:
         lines = event.text_area.text.count("\n") + 1
@@ -2989,19 +3445,48 @@ class ChatScreen(Screen):
         box.styles.height = 3
         self._submit(event.value.strip())
 
+    def on_chat_input_history_step(self, event: ChatInput.HistoryStep) -> None:
+        if not self._input_history:
+            return
+        box = self.query_one("#chat-input", ChatInput)
+        if self._history_index is None:
+            self._draft = box.text
+            self._history_index = len(self._input_history)
+        nxt = self._history_index + event.delta
+        nxt = max(0, min(len(self._input_history), nxt))
+        self._history_index = nxt
+        text = self._draft if nxt == len(self._input_history) else self._input_history[nxt]
+        box.text = text
+        lines = text.count("\n") + 1
+        box.styles.height = min(10, max(3, lines + 2))
+        rows = text.split("\n") or [""]
+        box.move_cursor((len(rows) - 1, len(rows[-1])))
+
+    def _remember_input(self, query: str) -> None:
+        if not query:
+            return
+        if not self._input_history or self._input_history[-1] != query:
+            self._input_history.append(query)
+            self._input_history = self._input_history[-_INPUT_HISTORY_CAP:]
+        self._history_index = None
+        self._draft = ""
+        if self._ask_dir is not None:
+            save_input_history(self._ask_dir, self._input_history)
+
     def _refresh_log(self) -> None:
         text = self._chat_log + (self._pending or "")
         self.query_one("#chat-messages", Static).update(text)
         # Follow the tail: new turns must stay visible without manual
         # scrolling; without this the viewport pins to the top of a growing
         # log and new answers look like the conversation stalled.
-        self.query_one(ScrollableContainer).scroll_end(animate=False)
+        self._scroller().scroll_end(animate=False)
 
     def _tick_thinking(self) -> None:
         if self._active_request is None:
             return
+        self._spin_frame += 1
         elapsed = int(time.monotonic() - self._pending_started)
-        self._pending = f"  GALAHAD: thinking… {elapsed}s\n"
+        self._pending = _thinking_line(elapsed, self._spin_frame)
         self._refresh_log()
 
     def _stop_thinking(self, request_token: object | None = None) -> None:
@@ -3016,9 +3501,44 @@ class ChatScreen(Screen):
             self._think_timer = None
         self._pending = None
 
+    def _persist(self) -> None:
+        if self._ask_dir is None:
+            return
+        save_ask_session(self._ask_dir, self._session)
+        try:
+            _atomic_write_json(
+                self._ask_dir / "current.json",
+                {"id": self._session.get("id")},
+            )
+        except OSError:
+            pass
+
+    def _sync_model_history(self) -> None:
+        if not hasattr(self.ai, "history"):
+            return
+        try:
+            from .deepseek import ChatMessage, SYSTEM_PROMPT
+            messages = [ChatMessage("system", SYSTEM_PROMPT)]
+            for turn in self._session.get("turns") or []:
+                if not isinstance(turn, dict):
+                    continue
+                role = turn.get("role")
+                content = str(turn.get("content") or "")
+                if role in ("user", "assistant") and content:
+                    messages.append(ChatMessage(str(role), content))
+            lock = getattr(self.ai, "_lock", None)
+            if lock is not None:
+                with lock:
+                    self.ai.history = messages
+            else:
+                self.ai.history = messages
+        except Exception:
+            pass
+
     def on_unmount(self) -> None:
         self._stop_thinking()
         self._active_request = None
+        self._persist()
 
     def _submit(self, query: str) -> bool:
         if not query:
@@ -3027,12 +3547,18 @@ class ChatScreen(Screen):
             self.notify("Wait for the current answer before sending another.", severity="warning")
             return False
 
+        self._remember_input(query)
         request_token = object()
         self._active_request = request_token
-        self._chat_log += f"  USER: {query}\n"
+        if not self._session.get("title"):
+            self._session["title"] = query.splitlines()[0][:80]
+        self._session.setdefault("turns", []).append({"role": "user", "content": query})
+        self._chat_log = render_ask_session(self._session)
         self._pending_started = time.monotonic()
-        self._pending = "  GALAHAD: thinking… 0s\n"
-        self._think_timer = self.set_interval(1.0, self._tick_thinking)
+        self._spin_frame = 0
+        self._pending = _thinking_line(0, 0)
+        self._think_timer = self.set_interval(_THINK_TICK, self._tick_thinking)
+        self._persist()
         box = self.query_one("#chat-input", ChatInput)
         box.disabled = True
         self._refresh_log()
@@ -3049,14 +3575,18 @@ class ChatScreen(Screen):
                     or self._active_request is not request_token
                 ):
                     return
+                elapsed = int(time.monotonic() - self._pending_started)
                 self._stop_thinking(request_token)
-                thinking = (r.reasoning_content or "").strip() if r.ok else ""
-                if thinking:
-                    self._chat_log += f"  GALAHAD·thinking: {thinking}\n"
-                for event in r.tool_events:
-                    self._chat_log += f"  GALAHAD·tool: {event}\n"
-                self._chat_log += f"  GALAHAD: {result}\n\n"
+                # Reasoning stays collapsed: only elapsed time is kept.
+                self._session.setdefault("turns", []).append({
+                    "role": "assistant",
+                    "content": result,
+                    "elapsed_s": elapsed,
+                    "tool_events": list(r.tool_events or []),
+                })
+                self._chat_log = render_ask_session(self._session)
                 self._active_request = None
+                self._persist()
                 box = self.query_one("#chat-input", ChatInput)
                 box.disabled = False
                 box.focus()
@@ -3067,6 +3597,105 @@ class ChatScreen(Screen):
                 pass
         threading.Thread(target=_query, daemon=True).start()
         return True
+
+
+class AskSessionScreen(Screen):
+    """Search and reopen persisted Ask sessions."""
+
+    BINDINGS = [
+        Binding("escape", "back", "Back"),
+        Binding("enter", "open_selected", "Open"),
+        Binding("x", "delete_selected", "Delete"),
+    ]
+    CSS = """
+    AskSessionScreen { layout: vertical; }
+    #ask-query { height: 3; border: solid #4fc3f7; }
+    #ask-sessions { height: 1fr; border: solid #505050; background: #000000; }
+    """
+
+    def __init__(self, ask_dir: Path, current_id: Any = None, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.ask_dir = ask_dir
+        self.current_id = str(current_id or "")
+        self._rows: list[dict[str, Any]] = []
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "  ASK SESSIONS  |  type to search  |  Enter open  |  X delete  |  Esc back",
+            classes="header-bar",
+        )
+        yield Input(placeholder="search title or text", id="ask-query")
+        yield OptionList(id="ask-sessions")
+
+    def on_mount(self) -> None:
+        self._reload()
+        self.query_one("#ask-query", Input).focus()
+
+    def _reload(self, query: str = "") -> None:
+        needle = query.strip().lower()
+        rows = list_ask_sessions(self.ask_dir)
+        if needle:
+            rows = [row for row in rows if needle in row["hay"]]
+        self._rows = rows
+        options = self.query_one("#ask-sessions", OptionList)
+        options.clear_options()
+        if not rows:
+            options.add_option(Option(Text("  No matching sessions."), id="empty", disabled=True))
+            return
+        for row in rows:
+            mark = "*" if row["id"] == self.current_id else " "
+            stamp = _created_stamp(row["updated_at"]) or row["updated_at"]
+            title = row["title"].replace("\n", " ")[:60]
+            options.add_option(
+                Option(Text(f" {mark} {stamp}  {title}  ({row['turns']})"), id=row["id"])
+            )
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "ask-query":
+            self._reload(event.value)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self._open(event.option_id)
+
+    def action_open_selected(self) -> None:
+        options = self.query_one("#ask-sessions", OptionList)
+        highlighted = options.highlighted
+        if highlighted is None:
+            return
+        option = options.get_option_at_index(highlighted)
+        self._open(option.id)
+
+    def action_delete_selected(self) -> None:
+        options = self.query_one("#ask-sessions", OptionList)
+        highlighted = options.highlighted
+        if highlighted is None:
+            return
+        option = options.get_option_at_index(highlighted)
+        sid = option.id
+        if not sid or sid == "empty":
+            return
+
+        def _confirmed() -> None:
+            delete_ask_session(self.ask_dir, str(sid))
+            self._reload(self.query_one("#ask-query", Input).value)
+            self.notify(f"Deleted session {str(sid)[:16]}")
+
+        self.app.push_screen(ConfirmScreen(
+            f"  Delete Ask session {str(sid)[:16]}…?\n\n"
+            f"  [Y] Confirm  [N]/[Esc] Cancel",
+            _confirmed,
+        ))
+
+    def _open(self, session_id: str | None) -> None:
+        if not session_id or session_id == "empty":
+            return
+        self.app.pop_screen()
+        screen = self.app.screen
+        if isinstance(screen, ChatScreen):
+            screen.open_session(session_id)
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -3429,10 +4058,11 @@ class HelpScreen(Screen):
                 "    other domain plugins from config 'plugins' (directory view).\n\n"
                 "  Quick Start (bottom list):\n"
                 "    a  Ask (GALAHAD chat)      e  Edit config\n\n"
-                "  Dashboard keys: a Ask · e Edit config · q Quit.\n"
-                "    Enter on a run row inspects it; new / delete / validate\n"
-                "    runs are CLI-first (stammtisch run / delete / validate).\n\n"
-                "  Chat: Enter send · Shift-Enter/Ctrl-J newline · PgUp/PgDn scroll\n\n"
+                "  Dashboard keys: a Ask · e Edit · d/x delete run · Shift+D delete all · q Quit.\n"
+                "    Enter inspects the selected run. Session titles are pipeline + time.\n"
+                "    FULLSTACK is the example pipeline, not a sidebar workbench.\n\n"
+                "  Chat: Enter send · Shift-Enter newline · ↑↓ history · Ctrl+O sessions\n"
+                "    Ctrl+N new session · PgUp/PgDn scroll. Thinking is collapsed with time.\n\n"
                 "  Press Esc to close"
             )
 

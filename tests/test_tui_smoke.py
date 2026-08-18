@@ -131,6 +131,25 @@ class TuiSmokeTest(unittest.TestCase):
     def test_chat_input_page_keys_scroll_the_log(self) -> None:
         asyncio.run(self._chat_page_scenario())
 
+    def test_run_session_title_uses_pipeline_and_time(self) -> None:
+        from tui.screens import run_session_title
+
+        self.assertEqual(
+            run_session_title({
+                "pipeline_id": "stock-quinte-local",
+                "created_at": "2026-08-18T03:25:06.320Z",
+                "run_id": "01a012e6-bb8c-75f3-8597-c55291876dc5",
+            }),
+            "stock-quinte-local · 2026-08-18 03:25",
+        )
+        self.assertEqual(run_session_title({"title": " coal screen "}), "coal screen")
+
+    def test_dashboard_delete_selected_run(self) -> None:
+        asyncio.run(self._dashboard_delete_scenario())
+
+    def test_security_board_reuses_cached_quotes(self) -> None:
+        asyncio.run(self._security_cache_scenario())
+
     async def _polymarket_failure_scenario(self) -> None:
         from tui.polymarket import PolymarketScreen
 
@@ -1186,8 +1205,9 @@ class TuiSmokeTest(unittest.TestCase):
                         # Pipelines, built-in modules, and configured
                         # plugins share one alphabetical list.
                         self.assertEqual(
-                            labels[:4], ["CRYPTO", "ENERGY", "FULLSTACK", "FUTURES"]
+                            labels[:3], ["CRYPTO", "ENERGY", "FUTURES"]
                         )
+                        self.assertNotIn("FULLSTACK", labels)
                         self.assertIn("SECURITY", labels)
                         # The list draws a top border, so option row N sits
                         # at y=N+1 relative to the widget region; CRYPTO is
@@ -1654,6 +1674,121 @@ class TuiSmokeTest(unittest.TestCase):
                         await pilot.press("pagedown")
                         await pilot.pause()
                         self.assertEqual(spy.call_count, 1)
+
+    async def _dashboard_delete_scenario(self) -> None:
+        class _Status:
+            ok = True
+            error_message = None
+            data = {
+                "runs": [{
+                    "run_id": "01a012e6-bb8c-75f3-8597-c55291876dc5",
+                    "pipeline_id": "stock-quinte-local",
+                    "state": "blocked",
+                    "created_at": "2026-08-18T03:25:06Z",
+                }]
+            }
+
+        class _Deleted:
+            ok = True
+            error_message = None
+            data = {"removed": True}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    dashboard = app.screen
+                    with mock.patch.object(dashboard.driver, "status", return_value=_Status()):
+                        dashboard.action_refresh()
+                        for _ in range(40):
+                            await asyncio.sleep(0.025)
+                            await pilot.pause()
+                            if dashboard.query_one("#run-table").row_count:
+                                break
+                    table = dashboard.query_one("#run-table")
+                    self.assertEqual(table.row_count, 1)
+                    title = str(table.get_row_at(0)[0])
+                    self.assertIn("stock-quinte-local", title)
+                    self.assertIn("2026-08-18 03:25", title)
+                    dashboard.query_one("#run-table").focus()
+                    with mock.patch.object(dashboard.driver, "delete", return_value=_Deleted()) as spy:
+                        await pilot.press("d")
+                        await pilot.pause()
+                        from tui.screens import ConfirmScreen
+                        self.assertIsInstance(app.screen, ConfirmScreen)
+                        await pilot.press("y")
+                        for _ in range(40):
+                            await asyncio.sleep(0.025)
+                            await pilot.pause()
+                            if spy.call_count:
+                                break
+                    self.assertEqual(spy.call_count, 1)
+                    self.assertEqual(
+                        spy.call_args[0][0],
+                        "01a012e6-bb8c-75f3-8597-c55291876dc5",
+                    )
+
+    async def _security_cache_scenario(self) -> None:
+        from tui.screens import SecurityScreen
+
+        loads = {"n": 0}
+
+        def _load(self):
+            loads["n"] += 1
+            return {
+                "ok": True,
+                "quotes": {
+                    "BTU": {
+                        "last": 25.0, "chg_pct": 1.0, "pct5": 2.0, "pct20": 3.0,
+                        "volume": 1000.0,
+                        "recent": [{
+                            "date": "2026-08-18", "open": 24.0, "high": 25.0,
+                            "low": 24.0, "close": 25.0, "volume": 1000.0,
+                        }],
+                    }
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({
+                    "state_root": os.path.join(tmp, "state"),
+                    "security_symbols": ["BTU"],
+                }, handle)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                with mock.patch.object(SecurityScreen, "_load", _load):
+                    async with app.run_test(size=(120, 40)) as pilot:
+                        await pilot.pause()
+                        pipeline_list = app.screen.query_one("#pipeline-list", OptionList)
+                        labels = [str(option.prompt) for option in pipeline_list.options]
+                        pipeline_list.focus()
+                        pipeline_list.highlighted = labels.index("SECURITY")
+                        await pilot.press("enter")
+                        await pilot.pause()
+                        for _ in range(40):
+                            await asyncio.sleep(0.025)
+                            await pilot.pause()
+                            if app.screen.query_one("#sec-board", DataTable).row_count:
+                                break
+                        self.assertEqual(loads["n"], 1)
+                        await pilot.press("escape")
+                        await pilot.pause()
+                        pipeline_list = app.screen.query_one("#pipeline-list", OptionList)
+                        pipeline_list.focus()
+                        pipeline_list.highlighted = labels.index("SECURITY")
+                        await pilot.press("enter")
+                        await pilot.pause()
+                        board = app.screen.query_one("#sec-board", DataTable)
+                        self.assertGreater(board.row_count, 0)
+                        self.assertEqual(loads["n"], 1)
+                        status = str(app.screen.query_one("#sec-fetch", Static).render())
+                        self.assertIn("cached", status)
 
     async def _brief_scenario(self) -> None:
         from tui.brief import BriefScreen, load_daily_path
@@ -2363,7 +2498,8 @@ class ChatScreenTest(unittest.TestCase):
                     await asyncio.sleep(0.8)
                     await pilot.pause()
                     self.assertIsNone(app.screen._pending)
-                    self.assertIn("GALAHAD·thinking: 先拆解证据再下结论", app.screen._chat_log)
+                    self.assertNotIn("先拆解证据再下结论", app.screen._chat_log)
+                    self.assertRegex(app.screen._chat_log, r"·\s+\d+s")
                     self.assertIn("GALAHAD: done", app.screen._chat_log)
 
     async def _chat_serialization_scenario(self) -> None:
@@ -2423,7 +2559,7 @@ class ChatScreenTest(unittest.TestCase):
                     self.assertIsNone(screen._active_request)
                     self.assertIsNone(screen._pending)
                     self.assertFalse(box.disabled)
-                    self.assertIn("GALAHAD·thinking: trace:first", screen._chat_log)
+                    self.assertNotIn("trace:first", screen._chat_log)
                     self.assertIn("GALAHAD: answer:first", screen._chat_log)
                     self.assertNotIn("second", screen._chat_log)
 
@@ -2436,8 +2572,70 @@ class ChatScreenTest(unittest.TestCase):
                         if screen._active_request is None:
                             break
                     self.assertEqual(ai.calls, ["first", "third"])
-                    self.assertIn("GALAHAD·thinking: trace:third", screen._chat_log)
+                    self.assertNotIn("trace:third", screen._chat_log)
                     self.assertIn("GALAHAD: answer:third", screen._chat_log)
+
+    def test_chat_input_history_and_session_search(self) -> None:
+        asyncio.run(self._chat_history_session_scenario())
+
+    async def _chat_history_session_scenario(self) -> None:
+        from tui.deepseek import ChatResponse
+        from tui.screens import AskSessionScreen, ChatInput, ChatScreen
+
+        class _FakeAI:
+            available = True
+
+            def chat(self, query, context=None):
+                return ChatResponse(content=f"echo:{query}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "state")
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({"state_root": state}, handle)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                async with app.run_test(size=(100, 30)) as pilot:
+                    app.push_screen(ChatScreen(_FakeAI()))
+                    await pilot.pause()
+                    screen = app.screen
+                    self.assertTrue(screen.query_one("#chat-scroll").styles.overflow_y == "scroll"
+                                    or str(screen.query_one("#chat-scroll").styles.overflow_y) == "scroll")
+                    box = screen.query_one("#chat-input", ChatInput)
+                    self.assertTrue(screen._submit("first pick"))
+                    for _ in range(40):
+                        await asyncio.sleep(0.025)
+                        await pilot.pause()
+                        if screen._active_request is None:
+                            break
+                    self.assertTrue(screen._submit("second pick"))
+                    for _ in range(40):
+                        await asyncio.sleep(0.025)
+                        await pilot.pause()
+                        if screen._active_request is None:
+                            break
+                    await pilot.press("up")
+                    await pilot.pause()
+                    self.assertEqual(box.text, "second pick")
+                    await pilot.press("up")
+                    await pilot.pause()
+                    self.assertEqual(box.text, "first pick")
+                    session_id = screen._session["id"]
+                    app.pop_screen()
+                    await pilot.pause()
+                    app.push_screen(ChatScreen(_FakeAI()))
+                    await pilot.pause()
+                    self.assertIn("first pick", app.screen._chat_log)
+                    self.assertIn("second pick", app.screen._chat_log)
+                    app.screen.action_open_sessions()
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, AskSessionScreen)
+                    query = app.screen.query_one("#ask-query")
+                    query.value = "second"
+                    app.screen._reload("second")
+                    await pilot.pause()
+                    ids = [opt.id for opt in app.screen.query_one("#ask-sessions").options]
+                    self.assertIn(session_id, ids)
 
 
 if __name__ == "__main__":
