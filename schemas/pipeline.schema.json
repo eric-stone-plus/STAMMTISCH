@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.pipeline.v0",
+  "title": "STAMMTISCH Pipeline Spec v0",
+  "type": "object",
+  "required": ["schema", "id", "doctrine", "stages"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "stammtisch.pipeline.v0"},
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$",
+      "description": "Stable pipeline identifier, kebab-case."
+    },
+    "doctrine": {
+      "type": "object",
+      "required": ["pack"],
+      "additionalProperties": false,
+      "properties": {
+        "pack": {"type": "string", "minLength": 1},
+        "ref": {
+          "type": "string",
+          "description": "Pinned doctrine reference: sha256:<hex> digest or absolute path. Digest preferred for provenance."
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/stage"}
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "required": ["id", "product"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+        "product": {
+          "enum": ["doctrine", "galahad", "quinte", "highball"],
+          "description": "Adapter key. Products are invoked only through their contracts."
+        },
+        "evidence": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Operator-local evidence files or directories rendered into the brief's evidence_roots; the downstream review product snapshots them. Empty or absent = no evidence."
+        },
+        "runtime": {
+          "type": "object",
+          "required": ["protocol", "endpoint"],
+          "additionalProperties": false,
+          "properties": {
+            "protocol": {
+              "enum": ["a2a"],
+              "description": "Wire protocol binding for a real product runtime. Only A2A v1.0 (JSON-RPC over HTTP) is supported today."
+            },
+            "endpoint": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Agent JSON-RPC endpoint URL. Never a local path; real runtimes are remote products."
+            },
+            "card_url": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Agent Card URL. Defaults to <endpoint origin>/.well-known/agent-card.json."
+            },
+            "token_env": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of an environment variable holding the bearer token sent as Authorization. Credentials are never inlined in pipeline specs."
+            },
+            "card_sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "description": "Optional pre-pinned Agent Card digest. A fetched card that digests differently halts the stage (fail closed)."
+            }
+          }
+        },
+        "in": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Artifact names produced by earlier stages. Cycles are rejected at validation time."
+        },
+        "out": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "adapter": {
+          "enum": ["fake", "product"],
+          "description": "fake = offline canned receipts. product = shipped HIGHBALL/GALAHAD CLI. Default: product for highball/galahad, fake for doctrine. quinte ignores this and requires runtime."
+        },
+        "workdir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Product working directory. GALAHAD uses the galahad-futures project root. HIGHBALL does not read workdir evidence: its route request and residual trace are typed, declared upstream artifacts."
+        },
+        "engine": {
+          "enum": ["paper", "nautilus"],
+          "description": "GALAHAD execution backend selection (run_paper.py --engine). paper = reference book (default). nautilus = NautilusTrader 1.231.0 event-driven backtest engine; requires the optional dependency in the galahad-futures tree, and a missing package is a hard error (no silent fallback)."
+        },
+        "gate": {
+          "type": "string",
+          "description": "Gate id resolved from the doctrine pack."
+        },
+        "on_block": {
+          "enum": ["halt", "blocked"],
+          "default": "halt",
+          "description": "Terminal mapping when the product refuses (e.g. HIGHBALL DENIED)."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3600,
+          "description": "Per-stage wall-clock budget for a real product invocation; expiry halts the run without cancelling the product."
+        },
+        "poll_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30,
+          "description": "Interval between one-shot host status polls for a real product invocation."
+        }
+      }
+    }
+  }
+}

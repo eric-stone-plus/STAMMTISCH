@@ -1,0 +1,1534 @@
+<!doctype html>
+<!--
+  STAMMTISCH chart viewer — TradingView Lightweight Charts (vendored,
+  Apache-2.0, see tui/static/). The terminal TUI is the command center;
+  the browser is the chart viewport.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STAMMTISCH Chart</title>
+<script src="/static/lightweight-charts.standalone.production.js"></script>
+<script src="/static/chart_math.js"></script>
+<style>
+  :root {
+    --bg: #000;
+    --bg-2: #000;
+    --panel: #0a0a0a;
+    --panel-2: #111;
+    --text: #e8e8e8;
+    --dim: #8a8a8a;
+    --faint: #5c5c5c;
+    --up: #c43b3b;
+    --down: #3d8f5a;
+    --ma: #9a9a9a;
+    --fc: #c4c4c4;
+    --border: #1f1f1f;
+    --border-2: #2e2e2e;
+    --accent: #fff;
+    --accent-dim: #161616;
+    --shadow: 0 16px 40px #000000cc;
+    --mono: Consolas, "Adwaita Mono", "Lucida Console", "Courier New",
+            ui-monospace, monospace;
+    --sans: "Adwaita Sans", Calibri, Arial, "Segoe UI", "Noto Sans CJK SC",
+            "Microsoft YaHei UI", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 var(--sans);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  body.page-home #toolbar {
+    flex: 0 0 48px;
+    height: 48px;
+  }
+  body.page-home .bar-tools {
+    display: none;
+  }
+  body.page-chart #toolbar {
+    flex: 0 0 84px;
+    height: 84px;
+  }
+  button {
+    background: transparent;
+    color: var(--text);
+    border: 0;
+    padding: 5px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { color: #fff; }
+  button.on {
+    color: #fff;
+    background: #1a1a1a;
+  }
+
+  /* ── chrome ─────────────────────────────────────────────────── */
+  #toolbar {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 84px;
+    height: 84px;
+    overflow: visible;
+    background: #000;
+    border-bottom: 1px solid var(--border);
+    z-index: 5;
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .bar-main {
+    flex: 0 0 48px;
+    height: 48px;
+    border-bottom: 1px solid var(--border);
+  }
+  .bar-tools {
+    flex: 0 0 35px;
+    height: 35px;
+    gap: 14px;
+  }
+  #brand {
+    display: flex;
+    align-items: center;
+    color: #fff;
+    font-family: var(--sans);
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    font-size: 16px;
+    flex: 0 0 auto;
+    padding: 0 18px 0 0;
+    margin-right: 6px;
+    border-right: 1px solid var(--border);
+    user-select: none;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #brand:hover { color: #ccc; }
+
+  #search-box { position: relative; flex: 0 0 320px; }
+  #symbol {
+    width: 320px;
+    height: 30px;
+    background: #000;
+    color: #fff;
+    border: 1px solid var(--border-2);
+    border-radius: 0;
+    padding: 0 12px;
+    font: 13px/1.4 var(--sans);
+    outline: none;
+  }
+  #symbol:focus {
+    border-color: #888;
+  }
+  #search-hint {
+    position: absolute;
+    left: 12px;
+    right: 10px;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    color: var(--faint);
+    pointer-events: none;
+    font-size: 13px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #search-box.filled #search-hint { opacity: 0; }
+
+  #suggest {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: calc(100% + 6px);
+    z-index: 20;
+    min-width: 420px;
+    max-height: 360px;
+    overflow: auto;
+    background: #0a0a0a;
+    border: 1px solid var(--border-2);
+    border-radius: 0;
+    box-shadow: var(--shadow);
+  }
+  #suggest.open { display: block; }
+  #suggest .mkt-row {
+    display: flex;
+    gap: 4px;
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    background: #000;
+  }
+  #suggest .mkt-row button {
+    padding: 3px 8px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    border: 1px solid var(--border);
+    border-radius: 0;
+  }
+  #suggest .mkt-row button.on {
+    border-color: #888;
+    color: #fff;
+  }
+  #suggest .hit {
+    display: flex;
+    gap: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+    align-items: baseline;
+  }
+  #suggest .hit:hover, #suggest .hit.on { background: #161616; }
+  #suggest .hit .m {
+    color: var(--dim);
+    width: 22px;
+    flex: 0 0 22px;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+  }
+  #suggest .hit .s { color: #fff; font-weight: 600; }
+  #suggest .hit .n { color: var(--dim); font-family: var(--sans); }
+
+  #load {
+    height: 30px;
+    padding: 0 14px;
+    border-radius: 0;
+    background: #fff;
+    border: 1px solid #fff;
+    color: #000;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  #load:hover { background: #d8d8d8; border-color: #d8d8d8; color: #000; }
+  #help-btn {
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--border-2);
+    border-radius: 0;
+    color: var(--dim);
+  }
+  #help-btn:hover { color: #fff; border-color: #888; }
+
+  .tf-group {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    overflow: hidden;
+    background: #000;
+  }
+  .tf-group button {
+    border: 0;
+    border-right: 1px solid var(--border);
+    border-radius: 0;
+    padding: 4px 11px;
+    color: var(--dim);
+    letter-spacing: 0.04em;
+  }
+  .tf-group button:last-child { border-right: 0; }
+  .tf-group button:hover { color: #fff; background: #141414; }
+  .tf-group button.on {
+    color: #fff;
+    background: #1c1c1c;
+    box-shadow: none;
+  }
+  .tool-label {
+    color: var(--faint);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    margin-right: -6px;
+  }
+  #fullscreen {
+    margin-left: auto;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+    font-size: 11px;
+  }
+  #fullscreen:hover { color: #fff; border-color: var(--border-2); }
+
+  /* ── workspace ──────────────────────────────────────────────── */
+  #workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    background: var(--bg);
+  }
+  #desk {
+    flex: 0 0 228px;
+    width: 228px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .desk-head {
+    flex: 0 0 34px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    color: var(--faint);
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--border);
+  }
+  .desk-list {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 8px;
+  }
+  .desk-item {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 9px 8px;
+    border-radius: 0;
+    text-align: left;
+    color: var(--text);
+    white-space: nowrap;
+    font-size: 14px;
+  }
+  .desk-item:hover { background: #141414; }
+  .desk-item.on {
+    background: #161616;
+    box-shadow: inset 0 0 0 1px #333;
+  }
+  .desk-item .m {
+    width: 26px;
+    flex: 0 0 26px;
+    color: var(--dim);
+    font-size: 12px;
+  }
+  .desk-item .s { color: #f2f4f8; font-weight: 600; font-size: 14px; }
+  .desk-item .n {
+    color: var(--dim);
+    font-family: var(--sans);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .desk-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .desk-row .desk-item {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+  }
+  .desk-forget {
+    flex: 0 0 26px;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    color: var(--faint);
+    border-radius: 0;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .desk-forget:hover {
+    color: #fff;
+    background: #1a1a1a;
+  }
+  .desk-empty {
+    padding: 14px 10px;
+    color: var(--faint);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .desk-note {
+    flex: 0 0 auto;
+    padding: 12px 14px 14px;
+    color: var(--faint);
+    font-size: 12px;
+    line-height: 1.5;
+    border-top: 1px solid var(--border);
+  }
+  .desk-note kbd {
+    display: inline-block;
+    padding: 0 4px;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--dim);
+  }
+
+  #chart-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    position: relative;
+    width: 100%;
+    background: #000;
+  }
+  #chart { height: 100%; width: 100%; }
+  #chart:fullscreen { background: var(--bg); }
+
+  #hud {
+    position: absolute;
+    top: 12px;
+    left: 14px;
+    z-index: 2;
+    display: none;
+    align-items: baseline;
+    gap: 12px;
+    pointer-events: none;
+  }
+  #hud.show { display: flex; }
+  #hud-sym {
+    font-family: var(--sans);
+    font-size: 18px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    color: #fff;
+  }
+  #hud-px {
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+  }
+  #hud-chg {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  #hud-chg.up { color: var(--up); }
+  #hud-chg.down { color: var(--down); }
+  #hud-meta {
+    color: var(--dim);
+    font-size: 11px;
+  }
+
+  #legend {
+    position: absolute;
+    top: 42px;
+    left: 14px;
+    z-index: 2;
+    color: #c8c8c8;
+    white-space: pre;
+    pointer-events: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  #legend:empty { display: none; }
+
+  #fc-badge {
+    position: absolute;
+    top: 12px;
+    right: 86px;
+    z-index: 2;
+    display: none;
+    color: var(--fc);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+    padding: 3px 8px;
+    border: 1px solid #333;
+    border-radius: 0;
+    background: #111;
+  }
+  #fc-badge:not(:empty) { display: inline-block; }
+
+  /* ── empty / loading ────────────────────────────────────────── */
+  #welcome, #loading {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+  }
+  #welcome.show, #loading.show {
+    display: flex;
+  }
+  .welcome-card {
+    width: min(720px, calc(100% - 48px));
+    padding: 8px 8px 4px;
+  }
+  .welcome-kicker {
+    color: var(--faint);
+    letter-spacing: 0.12em;
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+  .welcome-card h1 {
+    font-family: var(--sans);
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: #fff;
+    margin-bottom: 10px;
+  }
+  .welcome-card p {
+    color: var(--dim);
+    font-family: var(--sans);
+    font-size: 15px;
+    max-width: 46ch;
+    line-height: 1.55;
+    margin-bottom: 22px;
+  }
+  .launch-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 22px;
+  }
+  .launch {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 12px 12px 11px;
+    background: #000;
+    border: 1px solid var(--border-2);
+    border-radius: 0;
+    text-align: left;
+  }
+  .launch:hover {
+    border-color: #666;
+    background: #0c0c0c;
+  }
+  .launch .m { color: var(--faint); font-size: 10px; letter-spacing: 0.12em; }
+  .launch .s { color: #fff; font-size: 14px; font-weight: 650; }
+  .launch .n { color: var(--dim); font-family: var(--sans); font-size: 13px; }
+  .suffix-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .suffix {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--dim);
+    font-size: 12px;
+  }
+  .suffix b { color: var(--text); font-weight: 600; }
+  .spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid var(--border-2);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 12px;
+  }
+  #loading span { color: var(--dim); letter-spacing: 0.08em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #help {
+    display: none;
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 30;
+    width: 440px;
+    padding: 16px 18px 18px;
+    background: #0a0a0aee;
+    border: 1px solid var(--border-2);
+    border-radius: 0;
+    box-shadow: var(--shadow);
+    color: var(--text);
+    white-space: pre-wrap;
+    line-height: 1.55;
+  }
+  #help.open { display: block; }
+  #help h2 {
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    color: var(--dim);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  #help kbd {
+    display: inline-block;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: #eee;
+    font: inherit;
+  }
+
+  #dock {
+    flex: 0 0 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 14px;
+    background: #000;
+    border-top: 1px solid var(--border);
+    color: var(--dim);
+    font-size: 11px;
+  }
+  #status {
+    color: var(--dim);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #provenance {
+    display: none;
+    flex: 0 0 auto;
+    color: #b8b8b8;
+    border: 1px solid var(--border-2);
+    padding: 1px 6px;
+    white-space: nowrap;
+    cursor: copy;
+    user-select: text;
+  }
+  #provenance.show { display: inline-block; }
+  .dock-key { color: var(--faint); }
+  .dock-key b { color: var(--dim); font-weight: 500; }
+
+  @media (max-width: 960px) {
+    #desk { display: none; }
+    #toolbar { flex: 0 0 auto; height: auto; }
+    .bar-main { height: auto; min-height: 48px; padding: 8px 12px; }
+    .bar-tools {
+      height: auto;
+      min-height: 35px;
+      flex-wrap: wrap;
+      row-gap: 6px;
+      padding: 6px 12px 8px;
+      overflow: visible;
+      white-space: normal;
+    }
+    #hud { flex-wrap: wrap; gap: 4px 10px; max-width: calc(100% - 20px); }
+    #hud-sym { font-size: 15px; }
+    #hud-px { font-size: 15px; }
+    #hud-meta { display: none; }
+    #legend { font-size: 10px; max-width: calc(100% - 72px); overflow: hidden; }
+    #fc-badge { top: auto; bottom: 28px; right: 10px; }
+    #search-box { flex: 1 1 auto; min-width: 0; }
+    #symbol { width: 100%; }
+    .tool-label { display: none; }
+    #brand { font-size: 15px; padding-right: 12px; }
+    .launch-grid { grid-template-columns: repeat(2, 1fr); }
+    .welcome-card h1 { font-size: 26px; }
+    #dock .dock-key { display: none; }
+  }
+</style>
+</head>
+<body class="page-home">
+  <div id="toolbar">
+    <div class="bar bar-main">
+      <button type="button" id="brand" title="Home">STAMMTISCH</button>
+      <div id="search-box">
+        <input id="symbol" autofocus autocomplete="off" spellcheck="false" aria-label="Ticker or name">
+        <span id="search-hint">ticker or name</span>
+        <div id="suggest"></div>
+      </div>
+      <button id="load">Load</button>
+      <button id="help-btn" title="Ticker suffix help">?</button>
+    </div>
+    <div class="bar bar-tools">
+      <span class="tool-label">RANGE</span>
+      <span class="tf-group">
+        <button data-bars="22">1M</button>
+        <button data-bars="66">3M</button>
+        <button data-bars="132">6M</button>
+        <button data-bars="260">1Y</button>
+        <button data-bars="all">All</button>
+      </span>
+      <span class="tool-label">TF</span>
+      <span class="tf-group">
+        <button data-period="D" class="on">D</button>
+        <button data-period="W">W</button>
+        <button data-period="M">M</button>
+      </span>
+      <span class="tool-label">STUDY</span>
+      <span class="tf-group">
+        <button id="ind-ma" class="on">MA20</button>
+        <button id="ind-boll">BOLL</button>
+        <button id="ind-macd" class="on">MACD</button>
+      </span>
+      <button id="fullscreen" title="Fullscreen — Esc exits">FULL</button>
+    </div>
+  </div>
+
+  <div id="workspace">
+    <aside id="desk">
+      <div class="desk-head"><span>HISTORY</span></div>
+      <div class="desk-list"></div>
+      <div class="desk-note">
+        Recent charts, newest first. Remove a row to drop it.<br>
+        <kbd>?</kbd> help &nbsp; <kbd>F</kbd> fullscreen
+      </div>
+    </aside>
+
+    <div id="chart-wrap">
+      <div id="hud">
+        <span id="hud-sym"></span>
+        <span id="hud-px"></span>
+        <span id="hud-chg"></span>
+        <span id="hud-meta"></span>
+      </div>
+      <span id="legend"></span>
+      <span id="fc-badge"></span>
+      <div id="help">
+        <h2>TICKERS</h2>
+Always use an exchange suffix (except US).
+  600098.SS    CN Shanghai     Guangzhou Development
+  000001.SZ    CN Shenzhen
+  830799.BJ    CN Beijing
+  9992.HK      Hong Kong       Pop Mart  (also 09992)
+  0700.HK      Hong Kong       Tencent
+  7203.T       Japan
+  005930.KS    Korea
+  AAPL         United States
+
+Type a code or English name. Arrow keys + Enter pick a hit.
+Comma-compare: 600098.SS,AAPL
+<kbd>F</kbd> fullscreen   <kbd>Esc</kbd> close this help
+      </div>
+      <div id="welcome" class="show">
+        <div class="welcome-card">
+          <div class="welcome-kicker">CHART</div>
+          <h1>Search a ticker to open the chart.</h1>
+          <p>CN, HK, JP, KR and US. Type a code or English name. The dashed line is the Kronos daily forecast.</p>
+          <div class="launch-grid">
+            <button class="launch" data-sym="600098.SS"><span class="m">CN / SHANGHAI</span><span class="s">600098.SS</span><span class="n">Guangzhou Development</span></button>
+            <button class="launch" data-sym="9992.HK"><span class="m">HK</span><span class="s">9992.HK</span><span class="n">Pop Mart</span></button>
+            <button class="launch" data-sym="AAPL"><span class="m">US</span><span class="s">AAPL</span><span class="n">Apple</span></button>
+            <button class="launch" data-sym="0700.HK"><span class="m">HK</span><span class="s">0700.HK</span><span class="n">Tencent</span></button>
+            <button class="launch" data-sym="7203.T"><span class="m">JP</span><span class="s">7203.T</span><span class="n">Toyota</span></button>
+            <button class="launch" data-sym="005930.KS"><span class="m">KR</span><span class="s">005930.KS</span><span class="n">Samsung Electronics</span></button>
+          </div>
+          <div class="suffix-row">
+            <span class="suffix"><b>.SS</b> Shanghai</span>
+            <span class="suffix"><b>.SZ</b> Shenzhen</span>
+            <span class="suffix"><b>.BJ</b> Beijing</span>
+            <span class="suffix"><b>.HK</b> Hong Kong</span>
+            <span class="suffix"><b>.T</b> Tokyo</span>
+            <span class="suffix"><b>.KS</b> Korea</span>
+            <span class="suffix"><b>AAPL</b> US bare</span>
+          </div>
+        </div>
+      </div>
+      <div id="loading">
+        <div class="spinner"></div>
+        <span id="loading-text">loading</span>
+      </div>
+      <div id="chart"></div>
+    </div>
+  </div>
+
+  <div id="dock">
+    <span id="status">ready — search a ticker</span>
+    <span id="provenance" role="button" tabindex="0"
+          aria-label="Copy validated OHLCV provenance"></span>
+    <span class="dock-key"><b>?</b> help</span>
+    <span class="dock-key"><b>F</b> full</span>
+    <span class="dock-key">KRONOS on Daily</span>
+  </div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const LC = LightweightCharts;
+  const UP = "#c43b3b", DOWN = "#3d8f5a", MA = "#9a9a9a", FC = "#c4c4c4";
+  const CMP_COLORS = ["#b8b8b8", "#888", "#6a6a6a", "#d0d0d0"];
+
+  if (typeof ChartMath === "undefined") {
+    $("status").textContent = "error: chart math failed to load — restart the chart server";
+    return;
+  }
+  const PANE = ChartMath.PANE_LAYOUT;
+  const chart = LC.createChart($("chart"), {
+    autoSize: true,  // follow the container: window resize, fullscreen
+    layout: { background: { type: LC.ColorType.Solid, color: "#000000" }, textColor: "#8a8a8a" },
+    grid: { vertLines: { color: "#161616" }, horzLines: { color: "#161616" } },
+    rightPriceScale: Object.assign({ borderColor: "#1f1f1f" }, ChartMath.priceScaleApply(PANE.price)),
+    leftPriceScale: { visible: false },
+    // Vertical drag on the price axis turns autoScale off and is what
+    // makes overlay panes leap into the candle area, then both axes vanish.
+    handleScroll: {
+      mouseWheel: true, pressedMouseMove: true,
+      horzTouchDrag: true, vertTouchDrag: false,
+    },
+    handleScale: {
+      axisPressedMouseMove: { time: true, price: false },
+      mouseWheel: true, pinch: true,
+    },
+    timeScale: { borderColor: "#1f1f1f", timeVisible: true, secondsVisible: false },
+    // Hide axis crosshair labels — they change the price-scale width
+    // when the pointer leaves the plot (toolbar hover) and the chart jumps.
+    crosshair: {
+      mode: LC.CrosshairMode.Magnet,
+      vertLine: { labelVisible: false, color: "#3a3a3a" },
+      horzLine: { labelVisible: false, color: "#3a3a3a" },
+    },
+  });
+
+  // The vendored standalone bundle exposes the v3-style series methods
+  // (addCandlestickSeries & friends), not addSeries(Definition).
+  const candles = chart.addCandlestickSeries({
+    upColor: UP, downColor: DOWN,
+    borderUpColor: UP, borderDownColor: DOWN,
+    wickUpColor: UP, wickDownColor: DOWN,
+    priceLineVisible: true,
+  });
+  const volume = chart.addHistogramSeries({
+    priceScaleId: PANE.volume.scaleId, priceFormat: { type: "volume" },
+    lastValueVisible: false, priceLineVisible: false,
+  });
+  const ma = chart.addLineSeries({
+    color: MA, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+  const bollUp = chart.addLineSeries({
+    color: "#909090", lineWidth: 1, lineStyle: LC.LineStyle.Dashed,
+    priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+  });
+  const bollLo = chart.addLineSeries({
+    color: "#909090", lineWidth: 1, lineStyle: LC.LineStyle.Dashed,
+    priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+  });
+  const forecast = chart.addLineSeries({
+    color: FC, lineWidth: 2, lineStyle: LC.LineStyle.Dashed,
+    priceLineVisible: false, lastValueVisible: true,
+    crosshairMarkerVisible: true,
+  });
+  const macdFmt = { type: "custom", minMove: 0.01, formatter: (v) => v.toFixed(2) };
+  const macdOpts = {
+    priceScaleId: PANE.macd.scaleId,
+    priceFormat: macdFmt,
+    lastValueVisible: false, priceLineVisible: false,
+  };
+  const macdHist = chart.addHistogramSeries(macdOpts);
+  const macdDif = chart.addLineSeries(Object.assign({}, macdOpts, {
+    color: "#b0b0b0", lineWidth: 1,
+    priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+  }));
+  const macdDea = chart.addLineSeries(Object.assign({}, macdOpts, {
+    color: "#6e6e6e", lineWidth: 1,
+    priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+  }));
+
+  const state = {
+    all: [], lastBase: [], symbol: "", mic: "", token: "", period: "D",
+    showMA: true, showBOLL: false, showMACD: true,
+    forecastData: [], primaryLeg: null, forecastLinked: false,
+  };
+  let cmpSeries = [];
+  const loads = new ChartMath.LoadSeq();
+  let marketFilter = "";
+  let suggestHits = [];
+  let suggestIx = -1;
+  let searchTimer = 0;
+  const knownMeta = Object.create(null);
+
+  function pinPaneScales() {
+    // LC v4 resets overlay scaleMargins to {top:0.2,bottom:0.1} on
+    // range changes unless we re-apply them on the priceScale itself.
+    ["price", "volume", "macd"].forEach((k) => {
+      chart.priceScale(PANE[k].scaleId).applyOptions(ChartMath.priceScaleApply(PANE[k]));
+    });
+    if (cmpSeries.length) {
+      chart.priceScale(PANE.compare.scaleId).applyOptions(
+        ChartMath.priceScaleApply(PANE.compare),
+      );
+    }
+  }
+  pinPaneScales();
+  chart.timeScale().subscribeVisibleLogicalRangeChange(pinPaneScales);
+
+  function setStage(mode) {
+    $("welcome").classList.toggle("show", mode === "welcome");
+    $("loading").classList.toggle("show", mode === "loading");
+    const onChart = mode === "chart" || mode === "loading";
+    document.body.classList.toggle("page-home", !onChart);
+    document.body.classList.toggle("page-chart", onChart);
+    requestAnimationFrame(() => { sizeChart(); });
+  }
+
+  function setChartPath(token) {
+    const next = token
+      ? "/chart/" + encodeURIComponent(token)
+      : "/";
+    if (location.pathname === next) return;
+    history.pushState({ symbol: token || "" }, "", next);
+  }
+
+  function derivedSeries() {
+    const primary = "primary:" + (state.token || state.symbol);
+    const items = [primary + ":candles:" + state.period, primary + ":volume"];
+    if (state.showMA && state.lastBase.length >= 20) {
+      items.push(primary + ":MA20:sma(close)");
+    }
+    if (state.showBOLL && state.lastBase.length >= 20) {
+      items.push(primary + ":BOLL20:mean+/-2std(close)");
+    }
+    if (state.showMACD && state.lastBase.length > 26) {
+      items.push(primary + ":MACD:12,26,9(close)");
+    }
+    cmpSeries.forEach((entry) => {
+      items.push("compare:" + entry.sym + ":return_from_first_close");
+    });
+    if (state.forecastLinked && state.period === "D" && state.forecastData.length) {
+      items.push(primary + ":forecast:validated_input_tail");
+    }
+    return items;
+  }
+
+  function setDataProvenance() {
+    const el = $("provenance");
+    const legs = [];
+    if (state.primaryLeg) legs.push(state.primaryLeg);
+    cmpSeries.forEach((entry) => { if (entry.leg) legs.push(entry.leg); });
+    if (!legs.length) {
+      el.textContent = "";
+      el.title = "";
+      el.dataset.copy = "";
+      el.classList.remove("show");
+      return;
+    }
+    const full = ChartMath.provenanceText(legs, derivedSeries());
+    const compact = legs.map((leg) =>
+      `${leg.token} ${leg.bars_sha256.slice(0, 10)}`,
+    ).join(" · ");
+    el.textContent = `VERIFIED ${legs.length} LEG${legs.length === 1 ? "" : "S"} · ${compact}`;
+    el.title = full;
+    el.dataset.copy = full;
+    el.classList.add("show");
+  }
+
+  function copyDataProvenance() {
+    const value = $("provenance").dataset.copy || "";
+    if (value && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).catch(() => {});
+    }
+  }
+
+  function goHome(opts) {
+    const fromPop = !!(opts && opts.fromPop);
+    loads.next();
+    state.all = [];
+    state.lastBase = [];
+    state.forecastData = [];
+    state.symbol = "";
+    state.mic = "";
+    state.token = "";
+    state.primaryLeg = null;
+    state.forecastLinked = false;
+    clearCompare();
+    $("legend").textContent = "";
+    setForecastBadge("");
+    setDataProvenance();
+    try {
+      candles.setData([]);
+      volume.setData([]);
+      ma.setData([]);
+      bollUp.setData([]);
+      bollLo.setData([]);
+      forecast.setData([]);
+      macdHist.setData([]);
+      macdDif.setData([]);
+      macdDea.setData([]);
+    } catch (e) { /* series may be empty */ }
+    markDesk("");
+    hideSuggest();
+    $("help").classList.remove("open");
+    $("hud").classList.remove("show");
+    document.title = "STAMMTISCH Chart";
+    $("status").textContent = "ready — search a ticker";
+    setStage("welcome");
+    if (!fromPop) setChartPath("");
+    $("symbol").focus();
+  }
+
+  function syncHint() {
+    $("search-box").classList.toggle("filled", !!$("symbol").value);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function readHistory() {
+    try {
+      return ChartMath.historyParse(localStorage.getItem(ChartMath.HISTORY_KEY));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function writeHistory(list) {
+    try {
+      localStorage.setItem(ChartMath.HISTORY_KEY, ChartMath.historyDump(list));
+    } catch (e) { /* private mode / quota */ }
+  }
+
+  function rememberMeta(symbol, mic, market, name) {
+    const identity = ChartMath.symbolIdentity(symbol, mic);
+    if (!identity) return;
+    knownMeta[identity.token] = {
+      mic: identity.mic,
+      market: market || ChartMath.marketOf(identity.symbol),
+      name: name || (knownMeta[identity.token] && knownMeta[identity.token].name) || "",
+    };
+  }
+
+  function metaOf(symbol, mic) {
+    const identity = ChartMath.symbolIdentity(symbol, mic);
+    if (!identity) return null;
+    const known = knownMeta[identity.token] || {};
+    return {
+      symbol: identity.symbol,
+      mic: identity.mic,
+      market: known.market || ChartMath.marketOf(identity.symbol),
+      name: known.name || "",
+    };
+  }
+
+  function paintDesk() {
+    const wrap = document.querySelector("#desk .desk-list");
+    if (!wrap) return;
+    const list = readHistory();
+    if (!list.length) {
+      wrap.innerHTML = '<div class="desk-empty">No recent charts. Load a ticker to start a trail.</div>';
+      return;
+    }
+    wrap.innerHTML = list.map((h) => {
+      const name = h.name ? `<span class="n">${escapeHtml(h.name)}</span>` : "";
+      const mkt = h.market || ChartMath.marketOf(h.symbol);
+      return `<div class="desk-row">` +
+        `<button type="button" class="desk-item" data-sym="${escapeHtml(h.token)}">` +
+        `<span class="m">${escapeHtml(mkt)}</span>` +
+        `<span class="s">${escapeHtml(h.token)}</span>${name}</button>` +
+        `<button type="button" class="desk-forget" data-forget="${escapeHtml(h.token)}" ` +
+        `aria-label="Remove ${escapeHtml(h.token)}">×</button></div>`;
+    }).join("");
+    markDesk(state.token);
+  }
+
+  function markDesk(sym) {
+    document.querySelectorAll("#desk [data-sym]").forEach((b) => {
+      b.classList.toggle("on", b.dataset.sym === sym);
+    });
+  }
+
+  function sizeChart() {
+    const el = $("chart");
+    if (!el) return;
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if (w > 0 && h > 0 && typeof chart.resize === "function") {
+      chart.resize(w, h);
+    }
+    pinPaneScales();
+  }
+
+  function fitAfterLoad() {
+    sizeChart();
+    if (state.lastBase.length) chart.timeScale().fitContent();
+  }
+
+  function updateHud() {
+    const hud = $("hud");
+    if (!state.lastBase.length || !state.symbol) {
+      hud.classList.remove("show");
+      $("legend").textContent = "";
+      return;
+    }
+    hud.classList.add("show");
+    const last = state.lastBase[state.lastBase.length - 1];
+    const prev = state.lastBase.length > 1 ? state.lastBase[state.lastBase.length - 2] : last;
+    const chg = prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0;
+    const up = chg >= 0;
+    $("hud-sym").textContent = state.token || state.symbol;
+    $("hud-px").textContent = Number(last.close).toFixed(2);
+    $("hud-chg").textContent = (up ? "+" : "") + chg.toFixed(2) + "%";
+    $("hud-chg").className = up ? "up" : "down";
+    $("hud-meta").textContent = last.time + "  " + state.period;
+    paintLegend(last.time, { value: last.volume }, last);
+  }
+
+  function paintLegend(time, volPoint, ohlc) {
+    const snap = ChartMath.legendSnapshot(state.lastBase, time, volPoint, ohlc);
+    $("legend").textContent = ChartMath.formatLegend(snap);
+  }
+
+  chart.subscribeCrosshairMove((param) => {
+    if (!param.time) {
+      if (state.lastBase.length) {
+        const last = state.lastBase[state.lastBase.length - 1];
+        paintLegend(last.time, { value: last.volume }, last);
+      } else {
+        $("legend").textContent = "";
+      }
+      return;
+    }
+    const d = param.seriesData.get(candles);
+    if (!d) return;
+    const snap = ChartMath.legendSnapshot(
+      state.lastBase, param.time, param.seriesData.get(volume), d,
+    );
+    $("legend").textContent = ChartMath.formatLegend(snap);
+  });
+
+  function renderData() {
+    const base = ChartMath.sanitizeCandles(ChartMath.resample(state.all, state.period));
+    state.lastBase = base;
+    try {
+      candles.setData(base);
+    } catch (e) {
+      candles.setData([]);
+      state.lastBase = [];
+      $("status").textContent = "error: chart render failed";
+      return;
+    }
+    volume.setData(base.map((c) => ({
+      time: c.time, value: c.volume,
+      color: c.close >= c.open ? UP + "66" : DOWN + "66",
+    })));
+
+    const closes = base.map((c) => c.close);
+    ma.setData(state.showMA ? ChartMath.lineData(base, ChartMath.sma(closes, 20)) : []);
+    if (state.showBOLL) {
+      const bb = ChartMath.bollinger(closes, 20, 2);
+      bollUp.setData(ChartMath.lineData(base, bb.up));
+      bollLo.setData(ChartMath.lineData(base, bb.lo));
+    } else {
+      bollUp.setData([]);
+      bollLo.setData([]);
+    }
+
+    if (state.showMACD && closes.length > 26) {
+      const m = ChartMath.macd(closes);
+      macdHist.setData(base.map((c, i) => ({
+        time: c.time, value: m.hist[i],
+        color: m.dif[i] >= m.dea[i] ? UP + "99" : DOWN + "99",
+      })));
+      macdDif.setData(ChartMath.lineData(base, m.dif));
+      macdDea.setData(ChartMath.lineData(base, m.dea));
+    } else {
+      macdHist.setData([]);
+      macdDif.setData([]);
+      macdDea.setData([]);
+    }
+
+    // Kronos is a daily close path: hide it on W/M so it cannot smear.
+    forecast.setData(state.period === "D" ? state.forecastData : []);
+    sizeChart();
+    updateHud();
+  }
+
+  function setForecastBadge(text) {
+    $("fc-badge").textContent = text || "";
+  }
+
+  function clearCompare() {
+    cmpSeries.forEach((s) => {
+      try { chart.removeSeries(s.s); } catch (e) { /* already gone */ }
+    });
+    cmpSeries = [];
+    setDataProvenance();
+  }
+
+  function setRange(bars) {
+    if (!state.lastBase.length) return;
+    if (bars === "all") { chart.timeScale().fitContent(); return; }
+    const times = state.lastBase.map((c) => c.time);
+    const to = times[times.length - 1];
+    const from = times[Math.max(0, times.length - 1 - bars)];
+    chart.timeScale().setVisibleRange({ from, to });
+  }
+  document.querySelectorAll("[data-bars]").forEach((btn) => {
+    btn.addEventListener("click", () => setRange(btn.dataset.bars));
+  });
+
+  document.querySelectorAll("[data-period]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-period]").forEach((b) => b.classList.remove("on"));
+      btn.classList.add("on");
+      state.period = btn.dataset.period;
+      renderData();
+      setDataProvenance();
+      chart.timeScale().fitContent();
+    });
+  });
+
+  [["ind-ma", "showMA"], ["ind-boll", "showBOLL"], ["ind-macd", "showMACD"]]
+    .forEach(([id, key]) => {
+      $(id).addEventListener("click", () => {
+        state[key] = !state[key];
+        $(id).classList.toggle("on", state[key]);
+        renderData();
+        setDataProvenance();
+      });
+    });
+
+  document.addEventListener("click", (e) => {
+    const forget = e.target.closest("[data-forget]");
+    if (forget) {
+      e.preventDefault();
+      e.stopPropagation();
+      writeHistory(ChartMath.historyRemove(readHistory(), forget.dataset.forget));
+      paintDesk();
+      return;
+    }
+    const hit = e.target.closest("[data-sym]");
+    if (hit) load(hit.dataset.sym);
+  });
+
+  async function fetchCandles(identity) {
+    const parsed = ChartMath.symbolIdentity(identity);
+    if (!parsed) return { ok: false, error: "invalid symbol or MIC identity", candles: [] };
+    const start = new Date(Date.now() - 365 * 3 * 864e5).toISOString().slice(0, 10);
+    const mic = parsed.mic ? `&mic=${encodeURIComponent(parsed.mic)}` : "";
+    const r = await fetch(`/api/candles?symbol=${encodeURIComponent(parsed.symbol)}${mic}&start=${start}`);
+    return r.json();
+  }
+
+  async function loadCompare(others, seq) {
+    clearCompare();
+    for (const [i, rawIdentity] of others.entries()) {
+      if (!loads.isCurrent(seq)) return;
+      try {
+        const requested = ChartMath.symbolIdentity(rawIdentity);
+        if (!requested) continue;
+        const d = await fetchCandles(requested);
+        if (!loads.isCurrent(seq)) return;
+        const cmpBars = ChartMath.sanitizeCandles(d.candles || []);
+        if (!d.ok || !cmpBars.length) continue;
+        const returned = ChartMath.symbolIdentity(d.symbol, d.mic || requested.mic);
+        if (!returned) continue;
+        const leg = ChartMath.validatedProvenanceLeg(
+          "compare", returned.symbol, returned.mic, d.provenance,
+        );
+        if (state.primaryLeg && !leg) continue;
+        const first = cmpBars[0].close || 1;
+        const s = chart.addLineSeries({
+          priceScaleId: PANE.compare.scaleId,
+          color: CMP_COLORS[i % CMP_COLORS.length], lineWidth: 1,
+          priceFormat: { type: "custom", minMove: 0.01, formatter: (v) => v.toFixed(2) + "%" },
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        s.setData(cmpBars.map((c) => ({
+          time: c.time, value: (c.close / first - 1) * 100,
+        })));
+        cmpSeries.push({ sym: returned.token, identity: returned, leg, s });
+        setDataProvenance();
+        pinPaneScales();
+      } catch (e) { /* a compare symbol failing must not kill the chart */ }
+    }
+  }
+
+  async function load(raw) {
+    const parts = String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+    const requested = ChartMath.symbolIdentity(parts[0]);
+    if (!requested) return;
+    const symbol = requested.token;
+    const seq = loads.next();
+    // Drop the previous name immediately so a slow Kronos reply cannot
+    // paint yesterday's yellow line on the new ticker.
+    state.all = [];
+    state.forecastData = [];
+    state.symbol = "";
+    state.mic = "";
+    state.token = "";
+    state.primaryLeg = null;
+    state.forecastLinked = false;
+    clearCompare();
+    $("legend").textContent = "";
+    setForecastBadge("");
+    setDataProvenance();
+    renderData();
+    hideSuggest();
+    markDesk(symbol);
+    setStage("loading");
+    $("loading-text").textContent = "loading " + symbol;
+    $("status").textContent = "loading " + symbol + "...";
+    try {
+      const data = await fetchCandles(requested);
+      if (!loads.isCurrent(seq)) return;
+      if (!data.ok) {
+        $("status").textContent = `error: ${data.error}`;
+        setStage(state.all.length ? "chart" : "welcome");
+        return;
+      }
+
+      const bars = ChartMath.sanitizeCandles(data.candles || []);
+      if (!bars.length) {
+        $("status").textContent = `error: no usable bars for ${data.symbol || symbol}`;
+        setStage(state.all.length ? "chart" : "welcome");
+        return;
+      }
+
+      const returned = ChartMath.symbolIdentity(data.symbol, data.mic || requested.mic);
+      if (!returned) {
+        $("status").textContent = "error: response has an invalid symbol or MIC identity";
+        setStage("welcome");
+        return;
+      }
+      const primaryLeg = ChartMath.validatedProvenanceLeg(
+        "primary", returned.symbol, returned.mic, data.provenance,
+      );
+      if (data.provenance && data.provenance.data_mode === "validated" && !primaryLeg) {
+        $("status").textContent = "error: validated bars lack a complete identity reference";
+        setStage("welcome");
+        return;
+      }
+
+      state.all = bars;
+      state.symbol = returned.symbol;
+      state.mic = returned.mic;
+      state.token = returned.token;
+      state.primaryLeg = primaryLeg;
+      state.forecastData = [];
+      setDataProvenance();
+      rememberMeta(returned.symbol, returned.mic);
+      writeHistory(ChartMath.historyRecord(readHistory(), metaOf(returned.symbol, returned.mic)));
+      paintDesk();
+      markDesk(returned.token);
+      setStage("chart");
+      renderData();
+      requestAnimationFrame(() => {
+        fitAfterLoad();
+        requestAnimationFrame(fitAfterLoad);
+      });
+      document.title = `${returned.token} — STAMMTISCH Chart`;
+      setChartPath(returned.token);
+
+      if (parts.length > 1) loadCompare(parts.slice(1), seq);
+
+      $("status").textContent = `${returned.token} — ${state.lastBase.length} bars — KRONOS running...`;
+      setForecastBadge("KRONOS running");
+      // The server applies the configured kronos_horizon when it is omitted.
+      const mic = returned.mic ? `&mic=${encodeURIComponent(returned.mic)}` : "";
+      const provenance = data.provenance || {};
+      const validatedRef = provenance.reference
+        ? `&validated_ref=${encodeURIComponent(JSON.stringify(provenance.reference))}` : "";
+      const f = await fetch(
+        `/api/forecast?symbol=${encodeURIComponent(returned.symbol)}${mic}${validatedRef}`,
+      );
+      const fc = await f.json();
+      if (!loads.isCurrent(seq)) return;
+      let ftext = "KRONOS off";
+      setForecastBadge("");
+      if ((fc.ok || fc.execution_ok) && fc.forecast && fc.forecast.length) {
+        const linked = !state.primaryLeg || ChartMath.sameValidatedReference(
+          state.primaryLeg.reference,
+          fc.provenance && fc.provenance.validated_bars_reference,
+        );
+        if (linked) {
+          const last = state.lastBase[state.lastBase.length - 1];
+          state.forecastData = ChartMath.forecastPoints(fc.forecast, fc.dates, last);
+          state.forecastLinked = !!state.primaryLeg;
+          const gateStatus = (fc.provenance && fc.provenance.decision_gate
+            && fc.provenance.decision_gate.status) || "";
+          // A non-PASS curve is diagnostics: drawn dashed, labeled with the gate.
+          ftext = `KRONOS ${fc.model} (${fc.forecast.length} bars)` +
+            (fc.ok ? "" : ` · ${gateStatus || "no gate"}`);
+          setForecastBadge(ftext);
+        } else {
+          ftext = "KRONOS: validated bars reference mismatch";
+        }
+      } else if (fc && fc.error) {
+        ftext = "KRONOS: " + fc.error;
+      }
+      renderData();
+      setDataProvenance();
+      if (state.period === "D" && state.forecastData.length) {
+        chart.timeScale().fitContent();
+      }
+      const cmps = cmpSeries.map((c) => c.sym);
+      $("status").textContent =
+        `${returned.token} — ${state.lastBase.length} bars — ${ftext}` +
+        (cmps.length ? ` — vs ${cmps.join(" ")}` : "");
+    } catch (e) {
+      if (!loads.isCurrent(seq)) return;
+      $("status").textContent = `error: ${e}`;
+      setForecastBadge("");
+      setStage(state.all.length ? "chart" : "welcome");
+    }
+  }
+
+  function hideSuggest() {
+    $("suggest").classList.remove("open");
+    $("suggest").innerHTML = "";
+    suggestHits = [];
+    suggestIx = -1;
+  }
+
+  function renderSuggest() {
+    const box = $("suggest");
+    const mkts = ["ALL", "CN", "HK", "JP", "KR", "US"];
+    const chips = mkts.map((m) => {
+      const on = (m === "ALL" ? !marketFilter : marketFilter === m) ? " on" : "";
+      return `<button type="button" data-mkt="${m}" class="${on.trim()}">${m}</button>`;
+    }).join("");
+    const rows = suggestHits.map((h, i) => {
+      const cls = i === suggestIx ? "hit on" : "hit";
+      const name = h.name ? `<span class="n">${h.name}</span>` : "";
+      const identity = ChartMath.symbolIdentity(h.symbol, h.mic);
+      const token = identity ? identity.token : h.symbol;
+      return `<div class="${cls}" data-i="${i}"><span class="m">${h.market}</span><span class="s">${token}</span>${name}</div>`;
+    }).join("");
+    box.innerHTML = `<div class="mkt-row">${chips}</div>${rows || `<div class="hit"><span class="n">no matches</span></div>`}`;
+    box.classList.add("open");
+    box.querySelectorAll("[data-mkt]").forEach((b) => {
+      b.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        marketFilter = b.dataset.mkt === "ALL" ? "" : b.dataset.mkt;
+        refreshSuggest($("symbol").value);
+      });
+    });
+    box.querySelectorAll(".hit[data-i]").forEach((el) => {
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        pickHit(Number(el.dataset.i));
+      });
+    });
+  }
+
+  async function refreshSuggest(q) {
+    const query = (q || "").trim();
+    if (!query) { hideSuggest(); return; }
+    try {
+      const r = await fetch(
+        `/api/search?q=${encodeURIComponent(query)}&market=${encodeURIComponent(marketFilter)}`,
+      );
+      const data = await r.json();
+      if (($("symbol").value || "").trim() !== query) return;
+      suggestHits = (data && data.hits) || [];
+      suggestIx = suggestHits.length ? 0 : -1;
+      renderSuggest();
+    } catch (e) {
+      hideSuggest();
+    }
+  }
+
+  function pickHit(i) {
+    const h = suggestHits[i];
+    if (!h) return;
+    $("symbol").value = "";
+    syncHint();
+    hideSuggest();
+    rememberMeta(h.symbol, h.mic, h.market, h.name);
+    const identity = ChartMath.symbolIdentity(h.symbol, h.mic);
+    if (identity) load(identity.token);
+  }
+
+  function commitSearch() {
+    if (suggestIx >= 0 && suggestHits[suggestIx]) {
+      pickHit(suggestIx);
+      return;
+    }
+    const s = $("symbol").value.trim();
+    if (s) {
+      $("symbol").value = "";
+      syncHint();
+      hideSuggest();
+      load(s);
+    }
+  }
+
+  paintDesk();
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => { sizeChart(); }).observe($("chart"));
+  }
+
+  $("brand").addEventListener("click", () => { goHome(); });
+  $("provenance").addEventListener("click", copyDataProvenance);
+  $("provenance").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      copyDataProvenance();
+    }
+  });
+  window.addEventListener("popstate", () => {
+    const s = ChartMath.pathSymbol(location.pathname);
+    if (s) load(s);
+    else goHome({ fromPop: true });
+  });
+
+  // Symbol from the URL path (/chart/600098.SS): load it, but leave the
+  // input box empty — the loaded symbol lives in the status line.
+  // GET / must not load: pathname "/" is not a /chart/<symbol> capture.
+  const fromPath = ChartMath.pathSymbol(location.pathname);
+  if (fromPath) { load(fromPath); }
+  else { $("symbol").focus(); }
+
+  $("load").addEventListener("click", commitSearch);
+  $("symbol").addEventListener("input", () => {
+    syncHint();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => refreshSuggest($("symbol").value), 80);
+  });
+  $("symbol").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" && suggestHits.length) {
+      e.preventDefault();
+      suggestIx = (suggestIx + 1) % suggestHits.length;
+      renderSuggest();
+    } else if (e.key === "ArrowUp" && suggestHits.length) {
+      e.preventDefault();
+      suggestIx = (suggestIx - 1 + suggestHits.length) % suggestHits.length;
+      renderSuggest();
+    } else if (e.key === "Escape") {
+      hideSuggest();
+      $("help").classList.remove("open");
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      commitSearch();
+    }
+  });
+  $("symbol").addEventListener("blur", () => {
+    setTimeout(hideSuggest, 120);
+  });
+  $("help-btn").addEventListener("click", () => {
+    $("help").classList.toggle("open");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "?" && document.activeElement !== $("symbol")) {
+      $("help").classList.toggle("open");
+    }
+    if (e.key === "Escape") $("help").classList.remove("open");
+  });
+
+  function toggleFullscreen() {
+    const el = $("chart");
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else if (el.requestFullscreen) {
+      el.requestFullscreen();
+    } else if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen();
+    }
+  }
+  $("fullscreen").addEventListener("click", toggleFullscreen);
+  // f toggles fullscreen (skipped while typing a symbol); Esc exits
+  // natively via the Fullscreen API.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "f" && document.activeElement !== $("symbol")) {
+      toggleFullscreen();
+    }
+  });
+})();
+</script>
+</body>
+</html>

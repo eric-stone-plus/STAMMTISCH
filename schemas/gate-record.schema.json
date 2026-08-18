@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.gate-record.v0",
+  "title": "STAMMTISCH Gate Evaluation Record v0",
+  "type": "object",
+  "required": [
+    "schema", "gate_id", "run_id", "stage", "decision",
+    "artifact_sha256", "evaluated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "stammtisch.gate-record.v0"},
+    "gate_id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "stage": {"type": "string"},
+    "kind": {"enum": ["artifact_metric", "schema_check", "receipt_flag", "metric_threshold", "quinte_result", "artifact_flag"]},
+    "decision": {"enum": ["pass", "fail"]},
+    "on_fail": {"enum": ["blocked", "halted"]},
+    "observed": {"description": "Observed metric/flag value; number, string, or boolean."},
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {"enum": ["==", "!=", ">", ">=", "<", "<="]},
+        "value": {}
+      }
+    },
+    "artifact_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "detail": {"type": "string"},
+    "evaluated_at": {"type": "string", "format": "date-time"}
+  }
+}

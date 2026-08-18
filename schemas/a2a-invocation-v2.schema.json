@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.a2a-invocation.v2",
+  "title": "A2A Wire Invocation Receipt v2",
+  "type": "object",
+  "required": ["schema", "host", "stage", "operation", "observed_at", "invocation_id", "upstream", "upstream_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "a2a.invocation.v2"},
+    "host": {
+      "type": "object",
+      "required": ["endpoint", "card_url", "card_sha256", "agent", "protocol_version"],
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {"type": "string", "minLength": 1},
+        "card_url": {"type": "string", "minLength": 1},
+        "card_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "agent": {"type": "string", "minLength": 1},
+        "protocol_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "stage": {"type": "string", "minLength": 1},
+    "operation": {"enum": ["card_discovery", "send_message", "get_task"]},
+    "observed_at": {"type": "string", "minLength": 20},
+    "invocation_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "context_id": {"type": "string", "minLength": 1},
+    "task_state": {
+      "enum": [
+        "TASK_STATE_SUBMITTED", "TASK_STATE_WORKING", "TASK_STATE_INPUT_REQUIRED",
+        "TASK_STATE_AUTH_REQUIRED", "TASK_STATE_COMPLETED", "TASK_STATE_FAILED",
+        "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"
+      ]
+    },
+    "upstream": {"type": "object"},
+    "upstream_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["operation"],
+        "properties": {"operation": {"enum": ["send_message", "get_task"]}}
+      },
+      "then": {"required": ["task_id", "context_id", "task_state"]}
+    },
+    {
+      "if": {
+        "required": ["operation"],
+        "properties": {"operation": {"const": "card_discovery"}}
+      },
+      "then": {
+        "properties": {
+          "task_id": false,
+          "context_id": false,
+          "task_state": false
+        }
+      }
+    }
+  ]
+}

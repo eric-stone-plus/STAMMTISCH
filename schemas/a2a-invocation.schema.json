@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.a2a-invocation.v1",
+  "title": "A2A Wire Invocation Receipt v1",
+  "type": "object",
+  "required": ["schema", "host", "stage", "operation", "observed_at", "invocation_id", "upstream", "upstream_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "a2a.invocation.v1"},
+    "host": {
+      "type": "object",
+      "required": ["endpoint", "card_url", "card_sha256", "agent", "protocol_version"],
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Agent JSON-RPC endpoint URL the invocation was sent to."
+        },
+        "card_url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Agent Card URL fetched at preflight."
+        },
+        "card_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Canonical digest of the fetched Agent Card. Pinned per stage; a stage-configured pre-pin mismatch halts."
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Agent Card 'name' field."
+        },
+        "protocol_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Negotiated A2A protocol version (the JSONRPC interface's protocolVersion)."
+        }
+      }
+    },
+    "stage": {"type": "string", "minLength": 1},
+    "operation": {
+      "enum": ["card_discovery", "send_message", "get_task"],
+      "description": "Wire observation this receipt records."
+    },
+    "observed_at": {
+      "type": "string",
+      "minLength": 20,
+      "description": "RFC 3339 UTC timestamp when the upstream response was observed."
+    },
+    "invocation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UUIDv7 identifying this single wire invocation."
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A2A task id (absent for card_discovery)."
+    },
+    "context_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A2A context id grouping the stage's task with its messages."
+    },
+    "task_state": {
+      "enum": [
+        "TASK_STATE_SUBMITTED",
+        "TASK_STATE_WORKING",
+        "TASK_STATE_INPUT_REQUIRED",
+        "TASK_STATE_AUTH_REQUIRED",
+        "TASK_STATE_COMPLETED",
+        "TASK_STATE_FAILED",
+        "TASK_STATE_CANCELED",
+        "TASK_STATE_REJECTED"
+      ],
+      "description": "Task state carried by the upstream response (absent for card_discovery)."
+    },
+    "upstream": {
+      "type": "object",
+      "description": "The raw upstream A2A response object (Agent Card, SendMessageResponse or Task). Typed-validated by the adapter's wire model before wrapping; core never re-interprets it."
+    },
+    "upstream_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Canonical digest of the upstream object, binding this receipt to the observed bytes."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["operation"],
+        "properties": {"operation": {"enum": ["send_message", "get_task"]}}
+      },
+      "then": {"required": ["task_id", "task_state"]}
+    },
+    {
+      "if": {
+        "required": ["operation"],
+        "properties": {"operation": {"const": "card_discovery"}}
+      },
+      "then": {
+        "properties": {
+          "task_id": false,
+          "task_state": false
+        },
+        "description": "A card_discovery receipt must not claim a task the operation never saw."
+      }
+    }
+  ]
+}

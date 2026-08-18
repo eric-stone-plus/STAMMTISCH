@@ -1,0 +1,15 @@
+{
+  "schema": "galahad.brief.v0",
+  "title": "Daily quant research brief",
+  "pipeline": "{{pipeline_id}}",
+  "run_id": "{{run_id}}",
+  "pack_sha256": "{{pack_sha256}}",
+  "objectives": [
+    "Evaluate one candidate strategy against the walkforward doctrine",
+    "Accept only if the review stage passes its gate and delivery is authorized"
+  ],
+  "acceptance_gates": [
+    "quinte_result_21",
+    "packet_authorized"
+  ]
+}

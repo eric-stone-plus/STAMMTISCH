@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.run-event.v0",
+  "title": "STAMMTISCH Run Event v0 (one line of events.jsonl — the authority)",
+  "type": "object",
+  "required": ["schema", "run_id", "seq", "type", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "stammtisch.run-event.v0"},
+    "run_id": {"type": "string"},
+    "seq": {"type": "integer", "minimum": 1},
+    "at": {"type": "string", "format": "date-time"},
+    "type": {
+      "enum": [
+        "run.created", "run.staged", "run.cancelled",
+        "stage.started", "stage.receipt_accepted", "stage.artifact_recorded",
+        "stage.gate_passed", "stage.gate_failed", "stage.failed",
+        "run.gating", "run.completed", "run.blocked", "run.failed",
+        "run.halted", "run.reconciled", "run.resumed"
+      ]
+    },
+    "stage": {"type": "string"},
+    "payload": {
+      "type": "object",
+      "description": "Typed per event: digests, receipt references, gate decisions, error taxonomy. Never model prose.",
+      "additionalProperties": true
+    }
+  }
+}

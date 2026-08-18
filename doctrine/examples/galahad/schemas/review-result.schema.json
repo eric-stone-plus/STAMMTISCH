@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "galahad.review-result.v0",
+  "title": "GALAHAD deterministic review artifact (legacy quantkit review; QUINTE emits Result 2.1 instead)",
+  "type": "object",
+  "required": ["schema", "strategy", "validation", "findings"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {"const": "galahad.review-result.v0"},
+    "strategy": {"type": "string", "minLength": 1},
+    "brief_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "validation": {
+      "type": "object",
+      "required": ["walkforward"],
+      "additionalProperties": false,
+      "properties": {
+        "walkforward": {
+          "type": "object",
+          "required": ["sharpe", "max_drawdown", "windows"],
+          "additionalProperties": false,
+          "properties": {
+            "sharpe": {"type": "number"},
+            "max_drawdown": {"type": "number", "maximum": 0},
+            "windows": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "findings": {"type": "array", "items": {"type": "object"}}
+  }
+}

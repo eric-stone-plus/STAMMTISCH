@@ -1,0 +1,45 @@
+{
+  "schema": "galahad.gates.v0",
+  "gates": [
+    {
+      "id": "galahad_paper_go",
+      "kind": "artifact_flag",
+      "artifact": "galahad.summary.json",
+      "flag": "verdict",
+      "op": "==",
+      "value": "GO",
+      "on_fail": "blocked"
+    },
+    {
+      "id": "brief_schema_valid",
+      "kind": "schema_check",
+      "artifact": "brief.json",
+      "schema": "schemas/brief.schema.json",
+      "on_fail": "halted"
+    },
+    {
+      "id": "walkforward_min_sharpe",
+      "kind": "metric_threshold",
+      "artifact": "review.deterministic.json",
+      "metric": "validation.walkforward.sharpe",
+      "op": ">=",
+      "value": 0,
+      "on_fail": "blocked"
+    },
+    {
+      "id": "quinte_result_21",
+      "kind": "quinte_result",
+      "artifact": "review.result",
+      "on_fail": "blocked"
+    },
+    {
+      "id": "packet_authorized",
+      "kind": "artifact_flag",
+      "artifact": "deliver.packet.json",
+      "flag": "action_decision",
+      "op": "==",
+      "value": "pass",
+      "on_fail": "halted"
+    }
+  ]
+}

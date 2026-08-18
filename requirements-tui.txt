@@ -1,0 +1,4 @@
+# Minimal direct dependencies for the terminal UI.
+# Optional quant/data integrations intentionally live outside this file.
+textual==8.2.8
+rich==15.0.0

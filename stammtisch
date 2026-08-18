@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════
+# stammtisch — unified entry point
+#   No args  → TUI workstation
+#   With args → CLI pipeline engine
+# ═══════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+REPO_ROOT="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+CORE_BIN="$REPO_ROOT/target/release/stammtisch-core"
+
+# Python for the TUI: $STAMMTISCH_PYTHON override > repo .venv > python3.
+# Optional extras (e.g. the quantkit engine bridge) are imported lazily by
+# the TUI and degrade gracefully when absent.
+VENV_PYTHON="${STAMMTISCH_PYTHON:-}"
+if [ -z "$VENV_PYTHON" ] || [ ! -x "$VENV_PYTHON" ]; then
+    if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+        VENV_PYTHON="$REPO_ROOT/.venv/bin/python"
+    else
+        VENV_PYTHON="$(command -v python3 || true)"
+    fi
+fi
+
+tui_deps_ok() {
+    [ -n "$VENV_PYTHON" ] && [ -x "$VENV_PYTHON" ] && \
+        "$VENV_PYTHON" -c "import textual, rich" 2>/dev/null
+}
+
+tui_deps_hint() {
+    echo "stammtisch: TUI python deps missing (textual, rich). Run:"
+    echo "  cd $REPO_ROOT && uv venv --clear --python 3.11 .venv && uv pip sync --python .venv/bin/python --require-hashes requirements-tui.lock"
+}
+
+# ── No arguments: launch TUI ──────────────────────────────────────
+if [ $# -eq 0 ]; then
+    if ! tui_deps_ok; then
+        tui_deps_hint
+        exit 1
+    fi
+    cd "$REPO_ROOT"
+    exec "$VENV_PYTHON" -m tui
+fi
+
+# ── TUI flags: forward to TUI ────────────────────────────────────
+case "${1:-}" in
+    --skip-boot|--state-root|--pipeline-dir|--deepseek-key|--binary)
+        if ! tui_deps_ok; then
+            tui_deps_hint
+            exit 1
+        fi
+        cd "$REPO_ROOT"
+        exec "$VENV_PYTHON" -m tui "$@"
+        ;;
+esac
+
+# ── config subcommand: TUI config file manager (stdlib only) ──────
+case "${1:-}" in
+    config)
+        if [ -z "$VENV_PYTHON" ] || [ ! -x "$VENV_PYTHON" ]; then
+            echo "stammtisch: no python3 interpreter found (needed for 'stammtisch config')" >&2
+            exit 1
+        fi
+        shift
+        cd "$REPO_ROOT"
+        exec "$VENV_PYTHON" -m tui.config_cli "$@"
+        ;;
+esac
+
+# ── CLI: delegate to Rust core ────────────────────────────────────
+if [ ! -x "$CORE_BIN" ]; then
+    echo "stammtisch: core binary not found at $CORE_BIN"
+    echo "Run:  cd $REPO_ROOT && cargo build --release"
+    exit 1
+fi
+exec "$CORE_BIN" "$@"

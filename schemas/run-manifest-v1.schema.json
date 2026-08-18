@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.manifest.v1",
+  "title": "STAMMTISCH Run Manifest v1 (projection; events.jsonl is the authority)",
+  "type": "object",
+  "required": ["schema", "run_id", "pipeline", "state", "created_at", "state_root"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "stammtisch.manifest.v1"},
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "pipeline": {
+      "type": "object",
+      "required": ["id", "canonical_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "canonical_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "doctrine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pack": {"type": "string"},
+        "ref": {"type": "string"},
+        "resolved_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "state": {
+      "type": "object",
+      "required": ["code"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": ["created", "staged", "running", "gating", "completed", "blocked", "failed", "halted", "cancelled"]
+        },
+        "current_stage": {"type": ["string", "null"]},
+        "blockers": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "product", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string"},
+          "product": {"type": "string"},
+          "status": {
+            "enum": ["pending", "running", "gating", "passed", "refused", "failed", "skipped"]
+          },
+          "receipts": {"type": "array", "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+          "artifacts": {"type": "array", "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+          "gate_record_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "state_root": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "bundle_manifest_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"required": ["code"], "properties": {"code": {"const": "completed"}}}}},
+      "then": {"required": ["completed_at", "bundle_manifest_sha256"]}
+    }
+  ]
+}

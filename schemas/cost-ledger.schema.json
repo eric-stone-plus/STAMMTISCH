@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.cost-ledger.v0",
+  "title": "STAMMTISCH Per-Run Cost Ledger v0",
+  "description": "Aggregated per-stage invocation costs for one run. Built by the runner from validated receipts plus runner-observed product-contact wall time (roadmap P3). Receipts that carry no token usage are recorded as null tokens — numbers are never invented.",
+  "type": "object",
+  "required": ["schema", "run_id", "pipeline_id", "stages", "generated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "stammtisch.cost-ledger.v0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "pipeline_id": {"type": "string", "minLength": 1},
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "product", "invocations", "observations", "wall_seconds", "tokens"],
+        "additionalProperties": false,
+        "properties": {
+          "stage": {"type": "string", "minLength": 1},
+          "product": {"type": "string", "minLength": 1},
+          "invocations": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Distinct product invocations: unique task ids for a2a receipts, one per receipt otherwise."
+          },
+          "observations": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total receipts accepted for the stage (wire observations for a2a stages)."
+          },
+          "wall_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Runner-observed product-contact time (preflight through collect)."
+          },
+          "tokens": {
+            "type": "object",
+            "required": ["input", "output", "total"],
+            "additionalProperties": false,
+            "properties": {
+              "input": {"type": ["integer", "null"], "minimum": 0},
+              "output": {"type": ["integer", "null"], "minimum": 0},
+              "total": {"type": ["integer", "null"], "minimum": 0}
+            }
+          },
+          "usage_receipts": {
+            "type": "array",
+            "description": "Receipt files whose recognized usage fields contributed the token totals.",
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "generated_at": {"type": "string", "minLength": 20}
+  }
+}

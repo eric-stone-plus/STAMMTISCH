@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stammtisch.bundle.v0",
+  "title": "STAMMTISCH Deliverable Bundle Manifest v0",
+  "type": "object",
+  "required": [
+    "schema", "run_id", "pipeline", "entries", "gate_log", "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "stammtisch.bundle.v0"},
+    "run_id": {"type": "string"},
+    "pipeline": {
+      "type": "object",
+      "required": ["id", "canonical_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "canonical_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "doctrine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pack": {"type": "string"},
+        "resolved_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered digest chain: pipeline order, artifacts before the receipts that reference them.",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "kind": {"enum": ["artifact", "receipt", "gate_record", "spec", "doctrine", "cost"]},
+          "stage": {"type": "string"}
+        }
+      }
+    },
+    "gate_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate_id", "stage", "decision", "record_sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "gate_id": {"type": "string"},
+          "stage": {"type": "string"},
+          "decision": {"enum": ["pass", "fail"]},
+          "observed": {"description": "Observed value at evaluation time (number or string)."},
+          "record_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

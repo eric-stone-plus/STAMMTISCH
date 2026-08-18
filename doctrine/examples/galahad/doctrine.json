@@ -1,0 +1,7 @@
+{
+  "pack": "galahad",
+  "version": "0.1.0",
+  "kind": "doctrine-pack",
+  "description": "GALAHAD example fixture pack for the STAMMTISCH P0 stock slice: brief template, domain schemas, quantified acceptance gates. Two review artifact eras coexist: review.deterministic.json (legacy galahad.review-result.v0 — a deterministic quantkit walk-forward review) feeds walkforward_min_sharpe; review.result (QUINTE Result 2.1, emitted by the A2A review stage) feeds quinte_result_21. The fixtures block steers the P0 fake adapters only; real adapters ignore it.",
+  "fixtures": {}
+}

@@ -1,0 +1,52 @@
+{
+  "schema": "stammtisch.pipeline.v0",
+  "id": "security-daily",
+  "doctrine": {
+    "pack": "galahad",
+    "ref": "../../doctrine/examples/galahad"
+  },
+  "stages": [
+    {
+      "id": "brief",
+      "product": "doctrine",
+      "out": [
+        "brief.json"
+      ],
+      "gate": "brief_schema_valid"
+    },
+    {
+      "id": "review",
+      "product": "quinte",
+      "in": [
+        "brief.json"
+      ],
+      "out": [
+        "review.result",
+        "highball.route-request.json",
+        "highball.residual-trace.json"
+      ],
+      "gate": "quinte_result_21",
+      "on_block": "blocked",
+      "timeout_seconds": 3600,
+      "poll_seconds": 30,
+      "runtime": {
+        "protocol": "a2a",
+        "endpoint": "https://a2a.example.invalid/",
+        "token_env": "A2A_TOKEN"
+      }
+    },
+    {
+      "id": "deliver",
+      "product": "highball",
+      "in": [
+        "review.result",
+        "highball.route-request.json",
+        "highball.residual-trace.json"
+      ],
+      "out": [
+        "deliver.packet.json"
+      ],
+      "gate": "packet_authorized"
+    }
+  ]
+}

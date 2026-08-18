@@ -1,0 +1,15 @@
+{
+  "schema": "stammtisch.pipeline.v0",
+  "id": "fullstack",
+  "doctrine": {"pack": "galahad", "ref": "../../doctrine/examples/galahad"},
+  "stages": [
+    {"id": "brief", "product": "doctrine", "out": ["brief.json"], "gate": "brief_schema_valid"},
+    {"id": "review", "product": "quinte", "in": ["brief.json"],
+     "out": ["review.result", "highball.route-request.json", "highball.residual-trace.json"],
+     "gate": "quinte_result_21", "on_block": "blocked",
+     "runtime": {"protocol": "a2a", "endpoint": "http://127.0.0.1:8802/", "token_env": "A2A_TOKEN"}},
+    {"id": "deliver", "product": "highball",
+     "in": ["review.result", "highball.route-request.json", "highball.residual-trace.json"],
+     "out": ["deliver.packet.json"], "gate": "packet_authorized", "on_block": "blocked"}
+  ]
+}
