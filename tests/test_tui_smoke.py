@@ -1185,7 +1185,10 @@ class TuiSmokeTest(unittest.TestCase):
                         labels = [str(option.prompt) for option in pipeline_list.options]
                         # Pipelines, built-in modules, and configured
                         # plugins share one alphabetical list.
-                        self.assertEqual(labels[:4], ["CRYPTO", "ENERGY", "FUTURES", "SECURITY"])
+                        self.assertEqual(
+                            labels[:4], ["CRYPTO", "ENERGY", "FULLSTACK", "FUTURES"]
+                        )
+                        self.assertIn("SECURITY", labels)
                         # The list draws a top border, so option row N sits
                         # at y=N+1 relative to the widget region; CRYPTO is
                         # the first row.

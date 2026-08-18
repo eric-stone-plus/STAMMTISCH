@@ -143,6 +143,9 @@ class StammtischDriver:
         env = os.environ.copy()
         if self.state_root:
             env["STAMMTISCH_HOME"] = self.state_root
+        # The core polls its parent pid and exits when the TUI is gone:
+        # the driver's shutdown hooks cannot run after an abrupt TUI death.
+        env["STAMMTISCH_PARENT_PID"] = str(os.getpid())
 
         try:
             with self._process_lock:

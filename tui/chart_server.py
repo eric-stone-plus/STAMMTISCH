@@ -465,6 +465,23 @@ def is_running(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _is_chart_server(port: int) -> bool:
+    """Identify a listener as one of ours by its Server header.
+
+    Reuse is read-only: the caller does not gain ownership, so its
+    shutdown never terminates the shared server. The owning TUI still
+    does; a later chart open after that respawns it via ensure_running.
+    """
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5) as s:
+            s.sendall(b"GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+            data = s.recv(2048)
+    except OSError:
+        return False
+    head = data.split(b"\r\n\r\n", 1)[0].lower()
+    return b"server: stammtisch-chart/" in head
+
+
 def find_available_port(host: str = "127.0.0.1") -> int:
     """Ask the OS for an available loopback port."""
     with socket.socket() as probe:
@@ -619,9 +636,11 @@ def ensure_running(port: int = DEFAULT_PORT) -> int | None:
             # and make application shutdown leak it.
             return None
         if selected > 0 and is_running(selected):
-            # A configured listener that this app did not start is outside our
-            # lifecycle authority. Do not open or later terminate it.
-            return None
+            # A listener already occupies the configured port. If its Server
+            # header identifies it as a stammtisch chart server (another TUI
+            # instance), reuse it without ownership: this app never terminates
+            # it. A genuinely foreign listener stays fail-closed.
+            return selected if _is_chart_server(selected) else None
         if selected <= 0:
             try:
                 selected = find_available_port()
@@ -639,6 +658,8 @@ def ensure_running(port: int = DEFAULT_PORT) -> int | None:
                     str(selected),
                     "--ready-token",
                     ready_token,
+                    "--parent-pid",
+                    str(os.getpid()),
                 ],
                 cwd=str(repo_root),
                 stdout=subprocess.PIPE,
@@ -877,11 +898,46 @@ class ChartHandler(BaseHTTPRequestHandler):
         pass
 
 
+_PARENT_POLL_SECONDS = 2.0
+
+
+def _install_parent_death_watch(parent_pid: int | None) -> None:
+    """Exit when the TUI that spawned us is gone.
+
+    The TUI's ownership registry can only reap this process while the TUI
+    is alive to run its shutdown hooks. A kill -9, a lost terminal, or an
+    OOM kill skips every one of those hooks, and a chart server left behind
+    then serves forever with no UI attached. Poll getppid() instead: the
+    kernel reparents us the moment the TUI exits, so the poll cannot miss
+    a death. (prctl(PR_SET_PDEATHSIG) is unusable here — it fires when the
+    spawning *thread* ends, and the TUI starts us from a short-lived
+    worker.)
+    """
+    if parent_pid is None or not hasattr(os, "getppid"):
+        # Manually started (python -m tui.chart_server): operator-managed
+        # lifecycle, no parent contract.
+        return
+    if os.getppid() != parent_pid:
+        # The parent died between spawn and this point; do not bind at all.
+        sys.exit(0)
+
+    def _watch() -> None:
+        while True:
+            time.sleep(_PARENT_POLL_SECONDS)
+            if os.getppid() != parent_pid:
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
+
+    threading.Thread(target=_watch, name="parent-death-watch", daemon=True).start()
+
+
 def run(
     port: int = DEFAULT_PORT,
     host: str = "127.0.0.1",
     ready_token: str | None = None,
+    parent_pid: int | None = None,
 ) -> None:
+    _install_parent_death_watch(parent_pid)
     server = ThreadingHTTPServer((host, port), ChartHandler)
     bound_port = int(server.server_address[1])
     if ready_token is None:
@@ -916,5 +972,11 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--ready-token", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--parent-pid", type=int, default=None, help=argparse.SUPPRESS)
     args = ap.parse_args()
-    run(port=args.port, host=args.host, ready_token=args.ready_token)
+    run(
+        port=args.port,
+        host=args.host,
+        ready_token=args.ready_token,
+        parent_pid=args.parent_pid,
+    )

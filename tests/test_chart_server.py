@@ -7,12 +7,15 @@ import hashlib
 import http.client
 import json
 import math
+import os
 from pathlib import Path
 import shlex
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
@@ -26,6 +29,7 @@ from tui.chart_server import (
     ChartHandler,
     ThreadingHTTPServer,
     candles_payload,
+    ensure_running,
     find_available_port,
     is_running,
     parse_validated_reference,
@@ -710,21 +714,77 @@ class OwnedServerLifecycleTest(unittest.TestCase):
         self.assertIsInstance(ports[0], int)
         self.assertEqual(ports, [ports[0]] * 4)
 
-    def test_existing_fixed_port_is_never_adopted_or_stopped(self) -> None:
+    def test_existing_chart_server_on_fixed_port_is_reused_not_owned(self) -> None:
+        # Another TUI's chart server already holds the configured port:
+        # reuse it read-only — no spawn, no ownership, and this app's
+        # shutdown must never terminate it.
         server = ThreadingHTTPServer(("127.0.0.1", 0), ChartHandler)
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
             with mock.patch.object(chart_server.subprocess, "Popen") as spawn:
-                self.assertIsNone(chart_server.ensure_running(port))
+                self.assertEqual(chart_server.ensure_running(port), port)
             spawn.assert_not_called()
+            self.assertIsNone(chart_server._owned_process)
+            self.assertIsNone(chart_server._owned_port)
             chart_server.stop_owned_server()
             self.assertTrue(is_running(port))
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_foreign_listener_on_fixed_port_stays_fail_closed(self) -> None:
+        # A non-chart listener on the configured port is outside our
+        # lifecycle authority: never reuse, never terminate.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+
+            def _answer() -> None:
+                conn, _ = listener.accept()
+                with conn:
+                    conn.recv(2048)
+                    conn.sendall(
+                        b"HTTP/1.0 200 OK\r\nServer: some-other-thing/9\r\n"
+                        b"Content-Length: 0\r\n\r\n"
+                    )
+
+            thread = threading.Thread(target=_answer, daemon=True)
+            thread.start()
+            try:
+                with mock.patch.object(chart_server.subprocess, "Popen") as spawn:
+                    self.assertIsNone(chart_server.ensure_running(port))
+                spawn.assert_not_called()
+            finally:
+                listener.close()
+
+    def test_chart_like_server_header_stays_fail_closed(self) -> None:
+        # Identity comes from the exact Server header, not a prefix match.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+
+            def _answer() -> None:
+                conn, _ = listener.accept()
+                with conn:
+                    conn.recv(2048)
+                    conn.sendall(
+                        b"HTTP/1.0 200 OK\r\nServer: stammtisch-chart-fake/1\r\n"
+                        b"Content-Length: 0\r\n\r\n"
+                    )
+
+            thread = threading.Thread(target=_answer, daemon=True)
+            thread.start()
+            try:
+                with mock.patch.object(chart_server.subprocess, "Popen") as spawn:
+                    self.assertIsNone(chart_server.ensure_running(port))
+                spawn.assert_not_called()
+            finally:
+                listener.close()
 
     def test_second_fixed_port_cannot_overwrite_owned_child(self) -> None:
         first_port = chart_server.ensure_running(0)
@@ -864,6 +924,85 @@ class ExternalBarsTest(unittest.TestCase):
         self.assertEqual(first["close"], 727.73)
         self.assertEqual(payload["provenance"]["data_mode"], "external")
         self.assertEqual(payload["provenance"]["unit"], "USD/mt")
+
+
+class ParentDeathWatchTest(unittest.TestCase):
+    """The chart server must not outlive the TUI that spawned it."""
+
+    _REPO_ROOT = Path(__file__).resolve().parent.parent
+
+    @staticmethod
+    def _spawn_chart(parent_pid: int, ready_token: str):
+        return subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "tui.chart_server",
+                "--port",
+                "0",
+                "--ready-token",
+                ready_token,
+                "--parent-pid",
+                str(parent_pid),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=ParentDeathWatchTest._REPO_ROOT,
+            start_new_session=True,
+        )
+
+    def test_already_orphaned_child_exits_without_binding(self):
+        # A parent pid that is not this process: the fork→watch startup
+        # race is closed, the child must exit before binding the port.
+        proc = self._spawn_chart(parent_pid=1, ready_token="t")
+        try:
+            out = proc.stdout.read() if proc.stdout else ""
+            self.assertEqual(proc.wait(timeout=10), 0)
+            self.assertEqual(out, "")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    def test_watchdog_kills_child_after_parent_death(self):
+        # A launcher process spawns the chart server and exits; the server
+        # must self-terminate within a few poll intervals.
+        launcher_code = (
+            "import os, subprocess, sys\n"
+            "p = subprocess.Popen(\n"
+            "    [sys.executable, '-m', 'tui.chart_server',\n"
+            "     '--port', '0', '--ready-token', 't',\n"
+            "     '--parent-pid', str(os.getpid())],\n"
+            "    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)\n"
+            "print(p.stdout.readline().strip())\n"
+            "print(p.pid, flush=True)\n"
+        )
+        launcher = subprocess.Popen(
+            [sys.executable, "-c", launcher_code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=self._REPO_ROOT,
+            start_new_session=True,
+        )
+        try:
+            ready = launcher.stdout.readline().strip()
+            child_pid = int(launcher.stdout.readline().strip())
+            self.assertEqual(launcher.wait(timeout=10), 0)
+            self.assertIn('"port"', ready)
+            # Poll: the watchdog fires within ~2s of the launcher's exit.
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.25)
+            else:  # pragma: no cover - failure path only
+                self.fail(f"chart server {child_pid} survived its parent")
+        finally:
+            if launcher.poll() is None:
+                launcher.kill()
 
 
 if __name__ == "__main__":
