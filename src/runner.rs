@@ -4,7 +4,8 @@
 //! at any time.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde_json::{json, Value};
 
@@ -16,6 +17,229 @@ use crate::gates;
 use crate::ids;
 use crate::pipeline::{self, Pipeline};
 use crate::store::{append_line_fsync, atomic_write, EventWriter, LaunchLock, StateRoot};
+
+struct ActiveRun {
+    run_dir: PathBuf,
+    run_id: String,
+}
+
+static ACTIVE_RUN: Mutex<Option<ActiveRun>> = Mutex::new(None);
+
+fn active_run_lock() -> std::sync::MutexGuard<'static, Option<ActiveRun>> {
+    ACTIVE_RUN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn register_active_run(run_dir: &Path, run_id: &str) {
+    *active_run_lock() = Some(ActiveRun {
+        run_dir: run_dir.to_path_buf(),
+        run_id: run_id.to_string(),
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn register_active_run_for_test(run_dir: &Path, run_id: &str) {
+    register_active_run(run_dir, run_id);
+}
+
+fn clear_active_run() {
+    *active_run_lock() = None;
+}
+
+struct ActiveRunGuard;
+
+impl Drop for ActiveRunGuard {
+    fn drop(&mut self) {
+        clear_active_run();
+    }
+}
+
+/// Parent-death path: the TUI is gone and this core is about to
+/// `exit`. Seal the in-flight run as `halted` so it does not linger
+/// as `running`. Destructors will not run after `process::exit`.
+pub fn seal_active_run_on_parent_loss() {
+    let active = active_run_lock().take();
+    if let Some(active) = active {
+        let _ = seal_run(
+            &active.run_dir,
+            &active.run_id,
+            "run.halted",
+            "parent_lost",
+            "host process vanished; run sealed without advancing work",
+        );
+        if let Some(root) = active
+            .run_dir
+            .parent()
+            .and_then(|runs| runs.parent())
+        {
+            let _ = std::fs::remove_file(root.join("host").join("launch.lock"));
+        }
+    }
+}
+
+fn event_is_terminal(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "run.completed" | "run.blocked" | "run.failed" | "run.halted" | "run.cancelled"
+    )
+}
+
+fn pid_is_alive(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        Path::new(&format!("/proc/{pid}")).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        // Unknown platform: treat as live so we never seal a run the
+        // host may still be driving.
+        true
+    }
+}
+
+fn live_holder_for(root: &StateRoot, run_id: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(LaunchLock::lock_path(root)) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return false;
+    };
+    if value.get("run_id").and_then(Value::as_str) != Some(run_id) {
+        return false;
+    }
+    match value.get("pid").and_then(Value::as_u64) {
+        Some(pid) if pid > 0 && pid <= u64::from(u32::MAX) => pid_is_alive(pid as u32),
+        _ => false,
+    }
+}
+
+/// Append a terminal event to a non-terminal run. Never relaunches a stage.
+pub fn seal_run(
+    run_dir: &Path,
+    run_id: &str,
+    event_type: &str,
+    reason: &str,
+    summary: &str,
+) -> Result<Value, AppError> {
+    let events = crate::store::read_events(run_dir)?;
+    if events.is_empty() {
+        return Err(AppError::integrity(
+            "run_corrupt",
+            format!("run '{run_id}' has an empty event log"),
+        ));
+    }
+    if events
+        .last()
+        .and_then(|event| event.get("type").and_then(Value::as_str))
+        .is_some_and(event_is_terminal)
+    {
+        return Ok(json!({
+            "run_id": run_id,
+            "sealed": false,
+            "already_terminal": true,
+        }));
+    }
+    let remote_cancel = cancel_remote_tasks(run_dir);
+    let mut writer = EventWriter::resume(run_dir, run_id, events.len() as u64);
+    writer.emit(
+        event_type,
+        None,
+        json!({
+            "reason": reason,
+            "summary": summary,
+        }),
+    )?;
+    rewrite_manifest(run_dir)?;
+    Ok(json!({
+        "run_id": run_id,
+        "sealed": true,
+        "event": event_type,
+        "reason": reason,
+        "remote_cancel": remote_cancel,
+    }))
+}
+
+/// Operator cancel of one run. Refuses if a live core still holds the lock.
+pub fn cancel_run(root: &StateRoot, run_id: &str) -> Result<Value, AppError> {
+    let run_dir = root.run_dir(run_id);
+    if !run_dir.is_dir() {
+        return Err(AppError::usage(
+            "run_unknown",
+            format!("no run with id '{run_id}' in this state root"),
+        ));
+    }
+    if live_holder_for(root, run_id) {
+        return Err(AppError::product(
+            "run_live",
+            format!("run '{run_id}' still has a live core; stop the host first"),
+        ));
+    }
+    seal_run(
+        &run_dir,
+        run_id,
+        "run.cancelled",
+        "operator_cancel",
+        "operator cancelled the run",
+    )
+}
+
+/// Seal every non-terminal run whose launch-lock holder is gone.
+/// Called on TUI start and quit so an exited host never leaves `running` rows.
+pub fn cancel_abandoned(root: &StateRoot) -> Result<Value, AppError> {
+    let mut sealed = Vec::new();
+    let mut skipped = Vec::new();
+    for run_id in root.list_run_ids()? {
+        let run_dir = root.run_dir(&run_id);
+        let events = match crate::store::read_events(&run_dir) {
+            Ok(events) => events,
+            Err(error) => {
+                skipped.push(json!({"run_id": run_id, "error": error.message}));
+                continue;
+            }
+        };
+        if events
+            .last()
+            .and_then(|event| event.get("type").and_then(Value::as_str))
+            .is_some_and(event_is_terminal)
+        {
+            continue;
+        }
+        if live_holder_for(root, &run_id) {
+            skipped.push(json!({"run_id": run_id, "live": true}));
+            continue;
+        }
+        match seal_run(
+            &run_dir,
+            &run_id,
+            "run.cancelled",
+            "host_exit",
+            "host exited; abandoned non-terminal run sealed",
+        ) {
+            Ok(row) => sealed.push(row),
+            Err(error) => skipped.push(json!({"run_id": run_id, "error": error.message})),
+        }
+    }
+    let lock_path = LaunchLock::lock_path(root);
+    let mut launch_lock_removed = false;
+    if let Ok(text) = std::fs::read_to_string(&lock_path) {
+        let dead = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|value| {
+                let pid = value.get("pid").and_then(Value::as_u64)?;
+                Some(!pid_is_alive(pid as u32))
+            })
+            .unwrap_or(true);
+        if dead {
+            let _ = std::fs::remove_file(&lock_path);
+            launch_lock_removed = true;
+        }
+    }
+    Ok(json!({
+        "sealed": sealed,
+        "skipped": skipped,
+        "launch_lock_removed": launch_lock_removed,
+    }))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Terminal {
@@ -71,6 +295,8 @@ pub fn run_pipeline(root: &StateRoot, pipeline_path: &Path) -> Result<RunReport,
     let _lock = LaunchLock::acquire(root, &run_id)?;
 
     let run_dir = root.run_dir(&run_id);
+    register_active_run(&run_dir, &run_id);
+    let _active = ActiveRunGuard;
     for d in ["receipts", "artifacts", "gates"] {
         std::fs::create_dir_all(run_dir.join(d))?;
     }
@@ -1605,6 +1831,112 @@ mod tests {
             .collect();
         assert_eq!(ids, vec!["task-123"]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn write_created(run_dir: &Path, run_id: &str) {
+        std::fs::create_dir_all(run_dir).unwrap();
+        let mut w = EventWriter::new(run_dir, run_id);
+        w.emit(
+            "run.created",
+            None,
+            json!({
+                "pipeline": {"id": "p", "canonical_sha256": format!("sha256:{}", "a".repeat(64))},
+                "doctrine": {"pack": "galahad", "resolved_sha256": format!("sha256:{}", "b".repeat(64))},
+                "stages": [{"id": "brief", "product": "doctrine", "gate": Value::Null, "outputs": ["brief.json"]}],
+                "state_root": "/root",
+            }),
+        )
+        .unwrap();
+        w.emit("run.staged", None, json!({})).unwrap();
+        w.emit("stage.started", Some("brief"), json!({"product": "doctrine"}))
+            .unwrap();
+        rewrite_manifest(run_dir).unwrap();
+    }
+
+    #[test]
+    fn parent_loss_seals_the_registered_active_run() {
+        let root = StateRoot {
+            path: std::env::temp_dir()
+                .join(format!("stammtisch-parent-{}", ids::uuid_v7().unwrap())),
+        };
+        root.init().unwrap();
+        let run_id = ids::uuid_v7().unwrap();
+        let run_dir = root.run_dir(&run_id);
+        write_created(&run_dir, &run_id);
+        register_active_run_for_test(&run_dir, &run_id);
+        seal_active_run_on_parent_loss();
+        let manifest = load_manifest(&run_dir).unwrap();
+        assert_eq!(manifest["state"]["code"], "halted");
+        let events = crate::store::read_events(&run_dir).unwrap();
+        let last = events.last().unwrap();
+        assert_eq!(last["type"], "run.halted");
+        assert_eq!(last["payload"]["reason"], "parent_lost");
+        std::fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn cancel_abandoned_seals_dead_holder_as_cancelled() {
+        let root = StateRoot {
+            path: std::env::temp_dir()
+                .join(format!("stammtisch-abandon-{}", ids::uuid_v7().unwrap())),
+        };
+        root.init().unwrap();
+        let run_id = ids::uuid_v7().unwrap();
+        let run_dir = root.run_dir(&run_id);
+        write_created(&run_dir, &run_id);
+
+        let report = cancel_abandoned(&root).unwrap();
+        assert_eq!(report["sealed"].as_array().unwrap().len(), 1);
+        assert_eq!(report["sealed"][0]["run_id"], run_id);
+        assert_eq!(report["sealed"][0]["event"], "run.cancelled");
+        let manifest = load_manifest(&run_dir).unwrap();
+        assert_eq!(manifest["state"]["code"], "cancelled");
+        std::fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn cancel_abandoned_skips_live_lock_holder() {
+        let root = StateRoot {
+            path: std::env::temp_dir()
+                .join(format!("stammtisch-live-{}", ids::uuid_v7().unwrap())),
+        };
+        root.init().unwrap();
+        let run_id = ids::uuid_v7().unwrap();
+        write_created(&root.run_dir(&run_id), &run_id);
+        let lock = LaunchLock::acquire(&root, &run_id).unwrap();
+
+        let report = cancel_abandoned(&root).unwrap();
+        assert!(report["sealed"].as_array().unwrap().is_empty());
+        assert_eq!(report["skipped"][0]["live"], true);
+        let manifest = load_manifest(&root.run_dir(&run_id)).unwrap();
+        assert_eq!(manifest["state"]["code"], "running");
+        drop(lock);
+        std::fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn seal_run_is_idempotent_on_terminal() {
+        let root = StateRoot {
+            path: std::env::temp_dir()
+                .join(format!("stammtisch-seal-{}", ids::uuid_v7().unwrap())),
+        };
+        root.init().unwrap();
+        let run_id = ids::uuid_v7().unwrap();
+        let run_dir = root.run_dir(&run_id);
+        write_created(&run_dir, &run_id);
+        let first = seal_run(&run_dir, &run_id, "run.cancelled", "host_exit", "x").unwrap();
+        assert_eq!(first["sealed"], true);
+        let second = seal_run(&run_dir, &run_id, "run.cancelled", "host_exit", "x").unwrap();
+        assert_eq!(second["already_terminal"], true);
+        let events = crate::store::read_events(&run_dir).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["type"] == "run.cancelled")
+                .count(),
+            1
+        );
+        std::fs::remove_dir_all(&root.path).ok();
     }
 
     #[test]

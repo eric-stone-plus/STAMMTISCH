@@ -1050,6 +1050,120 @@ fn item_delete_run_cleanup() {
     assert!(!dir.exists());
 }
 
+/// Host exit must not leave a `running` row. `cancel --abandoned` seals
+/// a dead-holder interrupted run as `cancelled` and does not relaunch.
+#[test]
+fn item_cancel_abandoned_seals_leftover_running() {
+    let tmp = Tmp::new("cancel-abandoned");
+    init(&tmp.0);
+    let run_id = stammtisch::ids::uuid_v7().unwrap();
+    let run_dir = tmp.0.join("runs").join(&run_id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let mut w = stammtisch::store::EventWriter::new(&run_dir, &run_id);
+    w.emit(
+        "run.created",
+        None,
+        json!({
+            "pipeline": {"id": "p", "canonical_sha256": format!("sha256:{}", "a".repeat(64))},
+            "doctrine": {"pack": "galahad", "resolved_sha256": format!("sha256:{}", "b".repeat(64))},
+            "stages": [{"id": "brief", "product": "doctrine", "gate": Value::Null, "outputs": ["brief.json"]}],
+            "state_root": tmp.0.display().to_string(),
+        }),
+    )
+    .unwrap();
+    w.emit("run.staged", None, json!({})).unwrap();
+    w.emit(
+        "stage.started",
+        Some("brief"),
+        json!({"product": "doctrine"}),
+    )
+    .unwrap();
+
+    let out = sh(&tmp.0, &["cancel", "--abandoned", "--json"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let data = out.json()["data"].clone();
+    assert_eq!(data["sealed"].as_array().unwrap().len(), 1);
+    assert_eq!(data["sealed"][0]["run_id"], run_id);
+    assert_eq!(data["sealed"][0]["event"], "run.cancelled");
+
+    let events = stammtisch::store::read_events(&run_dir).unwrap();
+    assert_eq!(events.last().unwrap()["type"], "run.cancelled");
+    assert_eq!(events.last().unwrap()["payload"]["reason"], "host_exit");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["type"] == "stage.started")
+            .count(),
+        1,
+        "no stage relaunch"
+    );
+
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(run_dir.join("manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["state"]["code"], "cancelled");
+
+    // Idempotent: a second seal reports already-terminal and does not
+    // append another cancelled event.
+    let out = sh(&tmp.0, &["cancel", "--abandoned", "--json"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.json()["data"]["sealed"].as_array().unwrap().is_empty());
+    let events_after = stammtisch::store::read_events(&run_dir).unwrap();
+    assert_eq!(events_after.len(), events.len());
+}
+
+/// A gapped event log must not keep the whole registry from listing,
+/// and must not appear as `running`.
+#[test]
+fn item_status_isolates_corrupt_runs() {
+    let tmp = Tmp::new("status-corrupt");
+    init(&tmp.0);
+    let good = run_example(&tmp.0);
+    let bad = stammtisch::ids::uuid_v7().unwrap();
+    let dir = tmp.0.join("runs").join(&bad);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut w = stammtisch::store::EventWriter::new(&dir, &bad);
+    w.emit(
+        "run.created",
+        None,
+        json!({
+            "pipeline": {"id": "p", "canonical_sha256": format!("sha256:{}", "a".repeat(64))},
+            "doctrine": {"pack": "galahad", "resolved_sha256": format!("sha256:{}", "b".repeat(64))},
+            "stages": [{"id": "brief", "product": "doctrine", "gate": Value::Null, "outputs": ["brief.json"]}],
+            "state_root": tmp.0.display().to_string(),
+        }),
+    )
+    .unwrap();
+    // Duplicate seq → read_events fails closed.
+    stammtisch::runner::append_raw_line(
+        &dir,
+        &serde_json::to_string(&json!({
+            "schema": "stammtisch.run-event.v0",
+            "run_id": bad,
+            "seq": 1,
+            "type": "run.staged",
+            "at": "2026-08-18T00:00:00Z",
+            "payload": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("manifest.json"),
+        serde_json::to_vec(&json!({"state": {"code": "running"}})).unwrap(),
+    )
+    .unwrap();
+
+    let out = sh(&tmp.0, &["status", "--json"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let runs = out.json()["data"]["runs"].as_array().cloned().unwrap();
+    let good_row = runs.iter().find(|r| r["run_id"] == good).expect("good");
+    let bad_row = runs.iter().find(|r| r["run_id"] == bad).expect("bad");
+    assert_eq!(good_row["state"], "completed");
+    assert_eq!(bad_row["state"], "corrupt");
+    assert_ne!(bad_row["state"], "running");
+}
+
 /// Bonus: unknown gate kind is fail-closed at evaluation (§7).
 #[test]
 fn unknown_gate_kind_halts() {

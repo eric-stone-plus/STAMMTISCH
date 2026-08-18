@@ -51,6 +51,7 @@ class StammtischTUI(App):
 
     def on_mount(self) -> None:
         from .screens import DashboardScreen
+        self.driver.prepare()
         self.push_screen(DashboardScreen(self.driver, self.ai, self.engine, self.config))
 
     def on_unmount(self) -> None:

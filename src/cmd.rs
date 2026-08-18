@@ -18,6 +18,7 @@ pub enum Command {
     Status { run_id: Option<String> },
     Inspect { run_id: String },
     Reconcile,
+    Cancel { run_id: Option<String>, abandoned: bool },
     Export { run_id: String, out: PathBuf },
     Verify {
         bundle: PathBuf,
@@ -41,6 +42,8 @@ USAGE:
   stammtisch status [RUN_ID] [--json]
   stammtisch inspect RUN_ID [--json]
   stammtisch reconcile [--json]
+  stammtisch cancel RUN_ID [--json]
+  stammtisch cancel --abandoned [--json]
   stammtisch export RUN_ID --out DIR [--json]
   stammtisch verify --bundle DIR [--signature FILE] [--public-key FILE] [--json]
   stammtisch delete RUN_ID [--force] [--json]
@@ -50,6 +53,7 @@ EXIT CODES: 0 completed/clean · 1 product-failure · 2 blocked/halted/integrity
 pub fn parse_args(args: &[String]) -> Result<Cli, AppError> {
     let mut json = false;
     let mut force = false;
+    let mut abandoned = false;
     let mut positional: Vec<String> = Vec::new();
     let mut pipeline: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
@@ -62,6 +66,7 @@ pub fn parse_args(args: &[String]) -> Result<Cli, AppError> {
         match args[i].as_str() {
             "--json" => json = true,
             "--force" => force = true,
+            "--abandoned" => abandoned = true,
             "--pipeline" => {
                 i += 1;
                 pipeline = Some(PathBuf::from(take_value(args, i, "--pipeline")?));
@@ -116,6 +121,18 @@ pub fn parse_args(args: &[String]) -> Result<Cli, AppError> {
                 .ok_or_else(|| AppError::usage("args_invalid", "inspect requires RUN_ID"))?,
         },
         "reconcile" => Command::Reconcile,
+        "cancel" => {
+            if rest.first().is_none() && !abandoned {
+                return Err(AppError::usage(
+                    "args_invalid",
+                    "cancel requires RUN_ID or --abandoned",
+                ));
+            }
+            Command::Cancel {
+                run_id: rest.first().cloned(),
+                abandoned,
+            }
+        }
         "export" => Command::Export {
             run_id: rest
                 .first()
@@ -171,6 +188,7 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::Status { .. } => "status",
         Command::Inspect { .. } => "inspect",
         Command::Reconcile => "reconcile",
+        Command::Cancel { .. } => "cancel",
         Command::Export { .. } => "export",
         Command::Verify { .. } => "verify",
         Command::Delete { .. } => "delete",
@@ -276,13 +294,20 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
                 None => {
                     let mut runs = Vec::new();
                     for id in root.list_run_ids()? {
-                        let manifest = crate::runner::load_manifest(&root.run_dir(&id))?;
-                        runs.push(json!({
-                            "run_id": id,
-                            "pipeline_id": manifest["pipeline"]["id"],
-                            "state": manifest["state"]["code"],
-                            "created_at": manifest["created_at"],
-                        }));
+                        match crate::runner::load_manifest(&root.run_dir(&id)) {
+                            Ok(manifest) => runs.push(json!({
+                                "run_id": id,
+                                "pipeline_id": manifest["pipeline"]["id"],
+                                "state": manifest["state"]["code"],
+                                "created_at": manifest["created_at"],
+                            })),
+                            Err(error) => runs.push(json!({
+                                "run_id": id,
+                                "pipeline_id": Value::Null,
+                                "state": "corrupt",
+                                "error": error.message,
+                            })),
+                        }
                     }
                     let data = json!({"state_root": root.path.display().to_string(), "runs": runs});
                     let human = format!("{} run(s) in {}", runs_len(&data), root.path.display());
@@ -699,6 +724,28 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
                 receipts.len(),
                 gates.len()
             );
+            Ok((0, data, human))
+        }
+        Command::Cancel { run_id, abandoned } => {
+            let root = require_root()?;
+            let data = if *abandoned && run_id.is_none() {
+                crate::runner::cancel_abandoned(&root)?
+            } else if let Some(run_id) = run_id {
+                crate::runner::cancel_run(&root, run_id)?
+            } else {
+                crate::runner::cancel_abandoned(&root)?
+            };
+            let sealed = data
+                .get("sealed")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .or_else(|| data.get("sealed").and_then(Value::as_bool).map(|b| usize::from(b)))
+                .unwrap_or(0);
+            let human = if *abandoned && run_id.is_none() {
+                format!("cancelled {sealed} abandoned run(s)")
+            } else {
+                format!("cancelled run {}", run_id.as_deref().unwrap_or("?"))
+            };
             Ok((0, data, human))
         }
         Command::Reconcile => {

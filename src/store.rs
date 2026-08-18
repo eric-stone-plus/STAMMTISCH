@@ -91,7 +91,40 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
         f.sync_all()?;
     }
     fs::rename(&tmp, path)?;
+    // A crash after rename but before the directory entry is durable can
+    // lose the file. fsync the parent dir (POSIX O_DIRECTORY) so the
+    // name is as durable as the bytes.
+    fsync_dir(parent)?;
     Ok(())
+}
+
+/// fsync a directory so a just-renamed entry survives a crash.
+pub fn fsync_dir(dir: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Linux/POSIX O_DIRECTORY: fail closed if `dir` is not a directory.
+        const O_DIRECTORY: i32 = 0o200000;
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_DIRECTORY)
+            .open(dir)
+            .map_err(|e| {
+                AppError::internal(format!(
+                    "open parent dir {} for fsync: {e}",
+                    dir.display()
+                ))
+            })?;
+        file.sync_all().map_err(|e| {
+            AppError::internal(format!("fsync parent dir {}: {e}", dir.display()))
+        })?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 /// Append one line to a file and fsync before returning — the events.jsonl
@@ -303,6 +336,27 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
             .collect();
         assert!(leftovers.is_empty());
+        fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn atomic_write_fsyncs_parent_dir_on_the_real_helper() {
+        let root = tmp_root();
+        let parent = root.path.join("runs");
+        let f = parent.join("durable.json");
+        atomic_write(&f, b"payload").unwrap();
+        assert_eq!(fs::read(&f).unwrap(), b"payload");
+        // Same helper atomic_write used after rename: parent is a
+        // directory and fsync succeeds.
+        fsync_dir(&parent).unwrap();
+        let not_a_dir = parent.join("durable.json");
+        let err = fsync_dir(&not_a_dir).unwrap_err();
+        assert_eq!(err.kind, crate::error::Kind::Internal);
+        assert!(
+            err.message.contains("open parent dir"),
+            "fsync_dir must open with O_DIRECTORY, got: {}",
+            err.message
+        );
         fs::remove_dir_all(&root.path).ok();
     }
 

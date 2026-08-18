@@ -72,7 +72,10 @@ class DriverTest(unittest.TestCase):
             root = Path(tmp)
             marker = root / "started"
             binary = self._script(root, f"""
-                import pathlib, time
+                import json, pathlib, sys, time
+                if 'cancel' in sys.argv:
+                    print(json.dumps({{"ok": True, "command": "cancel", "data": {{"sealed": []}}}}))
+                    raise SystemExit(0)
                 pathlib.Path({str(marker)!r}).write_text('started')
                 time.sleep(60)
             """)
@@ -93,6 +96,21 @@ class DriverTest(unittest.TestCase):
             self.assertFalse(thread.is_alive())
             self.assertEqual(1, len(holder))
             self.assertFalse(holder[0].ok)
+
+    def test_close_seals_abandoned_runs_via_cancel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seen = root / "seen"
+            binary = self._script(root, f"""
+                import json, pathlib, sys
+                pathlib.Path({str(seen)!r}).write_text(' '.join(sys.argv[1:]))
+                print(json.dumps({{"ok": True, "command": "cancel", "data": {{"sealed": []}}}}))
+            """)
+            driver = StammtischDriver(binary=binary, state_root=str(root / "state"))
+            driver.close()
+            self.assertTrue(seen.exists())
+            self.assertIn("cancel", seen.read_text())
+            self.assertIn("--abandoned", seen.read_text())
 
 
 if __name__ == "__main__":

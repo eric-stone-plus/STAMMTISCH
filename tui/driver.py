@@ -122,16 +122,79 @@ class StammtischDriver:
             pass
 
     def close(self) -> None:
-        """Stop only the local CLI processes owned by this driver.
+        """Stop local CLI processes owned by this driver and seal leftovers.
 
-        Wire-backed products may continue remotely; the driver never sends an
-        A2A cancellation. Reconcile binds the durable local state afterward.
+        Wire-backed products may continue remotely until cancel --abandoned
+        issues a best-effort CancelTask. Local runs must not stay `running`
+        after the host exits.
         """
         with self._process_lock:
             self._closed = True
             processes = tuple(self._processes)
         for proc in processes:
             self._stop_process(proc)
+        self._seal_abandoned()
+
+    def prepare(self) -> None:
+        """Seal runs left `running` by a previous host that died."""
+        self._seal_abandoned()
+
+    def _seal_abandoned(self) -> None:
+        """Best-effort: never block opening or quitting the workstation."""
+        try:
+            self._invoke(["cancel", "--abandoned"], timeout=15)
+        except (OSError, UnicodeDecodeError):
+            return
+
+    def _invoke(self, args: list[str], timeout: float | None = 30) -> CommandResult:
+        """Run one core command without the closed-driver gate.
+
+        Used by host-exit sealing after close() has already flipped
+        `_closed` so no new pipeline work can start.
+        """
+        cmd = [self.binary] + args + ["--json"]
+        env = os.environ.copy()
+        if self.state_root:
+            env["STAMMTISCH_HOME"] = self.state_root
+        try:
+            completed = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                timeout=timeout,
+                check=False,
+            )
+        except FileNotFoundError:
+            return CommandResult(
+                ok=False,
+                command=args[0] if args else "?",
+                error={"message": f"binary not found: {self.binary}"},
+                returncode=127,
+            )
+        except subprocess.TimeoutExpired:
+            return CommandResult(
+                ok=False,
+                command=args[0] if args else "?",
+                error={"message": "seal-abandoned timed out"},
+                returncode=124,
+            )
+        raw = (completed.stdout or "") + (completed.stderr or "")
+        try:
+            payload = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return CommandResult(
+            ok=bool(payload.get("ok")),
+            command=str(payload.get("command") or (args[0] if args else "?")),
+            data=payload.get("data") if isinstance(payload.get("data"), dict) else {},
+            error=payload.get("error") if isinstance(payload.get("error"), dict) else None,
+            raw=raw,
+            returncode=completed.returncode,
+        )
 
     def _run(
         self,

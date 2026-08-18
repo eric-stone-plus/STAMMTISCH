@@ -12,7 +12,10 @@ developer docs name them, the user surface does not.
 ## Quick start
 
 ```sh
-# Full-stack bootstrap (clones + builds all six repos):
+# One-click base workstation (STAMMTISCH core + examples only).
+# The review orchestrator, rules plane, analysis identity, philosophy,
+# and optional egress gateway are separate opt-in installs —
+# see docs/fullstack-quickstart.md.
 curl -fsSL https://raw.githubusercontent.com/eric-stone-plus/STAMMTISCH/main/scripts/bootstrap-fullstack.sh | sh
 
 # One command does everything:

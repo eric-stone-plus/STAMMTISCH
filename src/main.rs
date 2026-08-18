@@ -19,6 +19,7 @@ fn spawn_parent_death_watch() {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
         if std::os::unix::process::parent_id() != parent {
+            stammtisch::runner::seal_active_run_on_parent_loss();
             exit(0);
         }
     });
@@ -40,7 +41,7 @@ fn main() {
             } else {
                 eprintln!();
                 eprintln!("stammtisch init | validate --pipeline FILE | run --pipeline FILE |");
-                eprintln!("  status [RUN_ID] | inspect RUN_ID | reconcile |");
+                eprintln!("  status [RUN_ID] | inspect RUN_ID | reconcile | cancel |");
                 eprintln!("  export RUN_ID --out DIR | verify --bundle DIR   [--json on any]");
             }
             e.exit_code()

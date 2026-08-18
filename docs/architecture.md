@@ -318,6 +318,8 @@ stammtisch inspect RUN_ID               # receipts, gates, verdicts
 stammtisch reconcile                    # bind durable state after crash
 stammtisch resume RUN_ID                # explicit, audited
 stammtisch cancel RUN_ID                # explicit operator action
+stammtisch cancel --abandoned           # seal leftover non-terminal runs
+                                        # whose core is gone (TUI start/quit)
 stammtisch export RUN_ID --out DIR      # assemble deliverable bundle
 stammtisch verify --bundle DIR          # offline third-party verification
         [--signature FILE] [--public-key FILE]
@@ -406,10 +408,10 @@ Status as of 2026-08-18:
   error — never a silent skip. Export never calls minisign; the hook is
   purely an offline verification step. Tests stub minisign and the error
   paths, so the suite runs without minisign installed.
-- **Remaining: fsync-parent-dir durability.** `atomic_write` fsyncs the
-  renamed file but not its parent directory; a system crash immediately
-  after rename can still lose the directory entry. Follow-up: fsync the
-  parent dir after rename (POSIX `O_DIRECTORY` open + `fsync`).
+- **Landed: fsync-parent-dir durability.** `atomic_write` fsyncs the
+  renamed file and then fsyncs the parent directory (POSIX `O_DIRECTORY`
+  open + `fsync`) so a crash immediately after rename cannot drop the
+  directory entry. Covered by the unit test on the real helper.
 - **Remaining: conformance suite publication.** The conformance suite lives
   in-tree (`tests/conformance.rs`, §11 items 1–10 plus the P3 additions) and
   runs under `cargo test`; it is not published as a standalone artifact.
