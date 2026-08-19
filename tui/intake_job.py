@@ -366,7 +366,7 @@ class IntakeSupervisor:
         argv = tuple(config.intake_argv) if config else ()
         try:
             driver = IntakeDriver(
-                (*argv, "--report-builder", config.get("intake_report_builder", "deepseek")),
+                (*argv, "--report-builder", config.get("intake_report_builder", "ai")),
                 config.workspace_root,
                 timeout_seconds=config.intake_timeout_seconds,
             )

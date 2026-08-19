@@ -220,59 +220,6 @@ def load_daily_path(
     }
 
 
-def format_brief(doc: dict[str, Any]) -> str:
-    """Plain-text rendering for the TUI (not chart HTML)."""
-    if not doc.get("ok"):
-        return f"  brief error: {doc.get('error', '?')}\n"
-    day = doc.get("date") or "?"
-    pretty = f"{day[:4]}-{day[4:6]}-{day[6:]}" if len(day) == 8 else day
-    lines = [f"  Fin-daily {pretty}  model={doc.get('model') or '?'}", ""]
-    lines.append("  --- Brief ---")
-    for i, b in enumerate(doc.get("brief") or [], 1):
-        if not isinstance(b, dict):
-            continue
-        text = str(b.get("text") or "").strip()
-        if not text:
-            continue
-        srcs = ", ".join(str(s) for s in (b.get("sources") or []) if s)
-        lines.append(f"  {i}. {text}")
-        if srcs:
-            lines.append(f"     [{srcs}]")
-    labels = {
-        "ashare": "A-share",
-        "hk": "HK",
-        "us": "US",
-    }
-    for key in DISPLAY_MARKETS:
-        items = [
-            it
-            for it in (doc.get("markets", {}).get(key) or [])
-            if is_displayable_item(it)
-        ]
-        if not items:
-            continue
-        shown = curate_items(items)
-        lines.append("")
-        lines.append(f"  --- {labels[key]} ({len(items)}) ---")
-        for it in shown:
-            title = clean_text(it.get("title"), TITLE_CAP)
-            url = str(it.get("url") or "").strip()
-            summary = clean_text(it.get("summary"), SUMMARY_CAP)
-            lines.append(f"  * {title}")
-            if url:
-                lines.append(f"    {url}")
-            if summary and summary != title:
-                lines.append(f"    {summary}")
-        hidden = len(items) - len(shown)
-        if hidden > 0:
-            lines.append(f"  … +{hidden} more in the full dataset")
-    notes = [str(n).strip() for n in (doc.get("notes") or []) if str(n).strip()]
-    if notes:
-        lines.append("")
-        lines.append("  --- Notes ---")
-        for n in notes:
-            lines.append(f"  - {n}")
-    return "\n".join(lines) + "\n"
 
 
 try:
@@ -282,63 +229,147 @@ try:
     from textual.screen import Screen
     from textual.widgets import Footer, Static
 
-    class BriefScreen(Screen):
-        """Read-only fin-daily surface — not the K-line chart."""
+    class SentimentScreen(Screen):
+        """Market tape + optional per-name overlay, with day history.
 
-        BINDINGS = [Binding("escape", "back", "Back")]
-        CSS = """
-        BriefScreen { layout: vertical; }
-        #brief-body { height: 1fr; border: solid #505050; background: #000000; padding: 1 2; }
+        The terminal no longer renders the daily report itself — reports
+        open in the browser. Sentiment stays a terminal surface and gains
+        ←/→ navigation across the indexed report history.
         """
 
-        def __init__(self, doc: dict[str, Any], **kwargs: Any):
-            super().__init__(**kwargs)
-            self.doc = doc
-
-        def compose(self) -> ComposeResult:
-            day = self.doc.get("date") or "?"
-            yield Static(
-                f"  Fin-daily {day}  (read-only)  |  [Esc] Back",
-                classes="header-bar",
-            )
-            yield ScrollableContainer(Static(format_brief(self.doc), id="brief-text"), id="brief-body")
-            yield Footer()
-
-        def action_back(self) -> None:
-            self.app.pop_screen()
-
-    class SentimentScreen(Screen):
-        """Market tape + optional per-name overlay. Not the chart."""
-
-        BINDINGS = [Binding("escape", "back", "Back")]
+        BINDINGS = [
+            Binding("escape", "back", "Back"),
+            Binding("left", "prev_day", "Prev Day", priority=True),
+            Binding("right", "next_day", "Next Day", priority=True),
+            Binding("o", "open_report", "Open report HTML"),
+        ]
         CSS = """
         SentimentScreen { layout: vertical; }
         #sent-body { height: 1fr; border: solid #505050; background: #000000; padding: 1 2; }
         """
 
-        def __init__(self, doc: dict[str, Any], symbol: str = "", **kwargs: Any):
+        def __init__(self, doc: dict[str, Any], symbol: str = "", config: Any = None,
+                     **kwargs: Any):
             super().__init__(**kwargs)
             self.doc = doc
             self.symbol = symbol
+            self.config = config
+            self._entries: list[Any] | None = None
+            self._index: int | None = None
 
         def compose(self) -> ComposeResult:
-            from .tape import desk_sentiment
+            yield Static(self._header_text(), classes="header-bar", id="sent-header")
+            yield ScrollableContainer(
+                Static(self._body_text(), id="sent-text"), id="sent-body"
+            )
+            yield Footer()
+
+        def _header_text(self) -> str:
+            from .lang import tr
+
+            try:
+                language = str(
+                    (self.config.get("language", "en") if self.config else "en") or "en"
+                )
+            except Exception:
+                language = "en"
             day = self.doc.get("date") or "?"
             title = f"  SENTIMENT {day}"
             if self.symbol:
                 title += f"  {self.symbol}"
             else:
                 title += "  ALL MARKETS"
-            title += "  (READ-ONLY)  |  [Esc] Back"
-            yield Static(title, classes="header-bar")
+            title += "  " + tr(
+                language,
+                "sentiment.history_hint",
+                "(READ-ONLY)  |  ←/→ history  [O] report  [Esc] Back",
+            )
+            return title
+
+        def _body_text(self) -> str:
+            from .tape import desk_sentiment
+
             body = desk_sentiment(self.doc, self.symbol or None)
             if not body.strip():
                 body = "  No daily report or sentiment tape is available.\n"
-            yield ScrollableContainer(Static(body, id="sent-text"), id="sent-body")
-            yield Footer()
+            return body
+
+        def _rerender(self) -> None:
+            self.query_one("#sent-header", Static).update(self._header_text())
+            self.query_one("#sent-text", Static).update(self._body_text())
+
+        def _load_entries(self) -> list[Any]:
+            if self._entries is None:
+                entries: list[Any] = []
+                if self.config is not None:
+                    try:
+                        from .screens import _history_store
+
+                        store, _error = _history_store(self.config)
+                        if store is not None:
+                            entries = list(store.list_reports())
+                    except Exception:
+                        entries = []
+                self._entries = entries  # newest first
+                day = str(self.doc.get("date") or "")
+                self._index = next(
+                    (i for i, item in enumerate(entries) if item.report_date == day),
+                    0,
+                )
+            return self._entries
+
+        def _switch_day(self, delta: int) -> None:
+            entries = self._load_entries()
+            if not entries:
+                self.notify("No indexed report history.", severity="warning")
+                return
+            current = self._index or 0
+            target = max(0, min(len(entries) - 1, current + delta))
+            if target == current:
+                self.notify(
+                    "Oldest report." if delta < 0 else "Newest report.",
+                    severity="information",
+                )
+                return
+            self._index = target
+            entry = entries[target]
+            doc = load_daily_path(
+                entry.json_path,
+                html_path=entry.html_path or None,
+                expected_date=entry.report_date,
+            )
+            if not doc.get("ok"):
+                self.notify(
+                    str(doc.get("error") or "report JSON is invalid"),
+                    severity="error",
+                )
+                return
+            self.doc = doc
+            self._rerender()
+
+        def action_prev_day(self) -> None:
+            self._switch_day(-1)
+
+        def action_next_day(self) -> None:
+            self._switch_day(1)
+
+        def action_open_report(self) -> None:
+            """The daily report renders in the browser, not the terminal."""
+            day = str(self.doc.get("date") or "")
+            html_path = None
+            entries = self._load_entries()
+            for item in entries:
+                if item.report_date == day:
+                    html_path = item.html_path or None
+                    break
+            if html_path is None:
+                self.notify(f"Report {day or '?'} has no HTML edition.", severity="warning")
+                return
+            from .screens import _open_report_html
+
+            _open_report_html(self, html_path, day)
 
         def action_back(self) -> None:
             self.app.pop_screen()
 except ImportError:  # stdlib-only consumers still get load_daily
-    BriefScreen = None  # type: ignore[misc, assignment]
     SentimentScreen = None  # type: ignore[misc, assignment]

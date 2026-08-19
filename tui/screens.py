@@ -16,7 +16,7 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Input, OptionList, Static, TextArea
+from textual.widgets import Button, DataTable, Footer, Input, OptionList, Select, Static, TextArea
 from rich.text import Text
 from textual.widgets.option_list import Option
 
@@ -68,8 +68,10 @@ class PipelineList(OptionList):
 
 
 GENERAL_ITEMS: list[tuple[str, str, str]] = [
-    ("screen.open_chat", "A", "ASK GALAHAD"),
-    ("screen.edit_config", "E", "EDIT CONFIG"),
+    ("screen.open_chat", "A", "quick.ask"),
+    ("screen.edit_config", "E", "quick.config"),
+    ("screen.open_crawlers", "C", "quick.crawlers"),
+    ("screen.toggle_language", "L", "quick.language"),
 ]
 
 
@@ -78,6 +80,8 @@ class DashboardScreen(Screen):
 
     BINDINGS = [
         Binding("a", "open_chat", "Ask"),
+        Binding("c", "open_crawlers", "Crawlers", show=False),
+        Binding("l", "toggle_language", "Language", show=False),
         Binding("e", "edit_config", "Edit"),
         Binding("delete", "delete_selected", "Delete"),
         Binding("shift+d", "delete_all", "Delete all"),
@@ -120,10 +124,7 @@ class DashboardScreen(Screen):
         with Horizontal(id="dash-main"):
             with Vertical(id="dash-left"):
                 with Vertical(id="run-table-wrap"):
-                    yield Static(
-                        "  Run Registry  |  click one  ·  Shift+click range  ·  Ctrl+A all  ·  Del delete",
-                        id="run-table-label",
-                    )
+                    yield Static(self._chrome_text("registry.label", ""), id="run-table-label")
                     yield RegistryTable(id="run-table", cursor_type="row")
             with Vertical(id="dash-right"):
                 yield SystemHud(id="sys-hud")
@@ -133,18 +134,131 @@ class DashboardScreen(Screen):
                 with Vertical():
                     yield Static("  Quick Start", classes="panel-title")
                     yield PipelineList(
-                        *[Option(Text(f"[{key}] {label}"), id=action) for action, key, label in GENERAL_ITEMS],
+                        *[
+                            Option(
+                                Text(f"[{key}] {self._chrome_text(label_key, key)}"),
+                                id=action,
+                            )
+                            for action, key, label_key in GENERAL_ITEMS
+                        ],
                         id="quick-list",
                     )
-                yield Static("  [?] HELP", id="help-hint")
+                yield Static(
+                    "  " + self._chrome_text("help.hint", "[?] HELP"),
+                    id="help-hint",
+                )
+
+    @property
+    def _language(self) -> str:
+        try:
+            language = str(self.config.get("language", "en") or "en")
+        except Exception:
+            language = "en"
+        return "zh" if language == "zh" else "en"
+
+    def _chrome_text(self, key: str, fallback: str) -> str:
+        from .lang import tr
+
+        return tr(self._language, key, fallback)
+
+    def _quick_options(self, crawler_mark: str | None = None) -> list[Option]:
+        """Quick Start rows for the current language (plus an optional
+        live crawlers status mark)."""
+        from .lang import tr
+
+        language = self._language
+        options: list[Option] = []
+        for action, hotkey, label_key in GENERAL_ITEMS:
+            label = tr(language, label_key, hotkey)
+            if action == "screen.open_crawlers" and crawler_mark:
+                label = f"{label} · {crawler_mark}"
+            options.append(Option(Text(f"[{hotkey}] {label}"), id=action))
+        return options
+
+    def _rebuild_quick(self, crawler_mark: str | None = None) -> None:
+        """Rebuild the Quick Start rows (Textual 8.2.8 options are
+        immutable; replacing the set is the supported refresh)."""
+        quick = self.query_one("#quick-list", OptionList)
+        quick.clear_options()
+        for option in self._quick_options(crawler_mark):
+            quick.add_option(option)
+        quick.highlighted = None
+
+    def _relabel(self) -> None:
+        """Re-render language-dependent chrome in place."""
+        from .lang import tr
+
+        language = self._language
+        try:
+            self._rebuild_quick()
+        except Exception:
+            pass
+        try:
+            self.query_one("#run-table-label", Static).update(
+                tr(language, "registry.label")
+            )
+        except Exception:
+            pass
+        try:
+            self.query_one("#help-hint", Static).update(
+                "  " + tr(language, "help.hint", "[?] HELP")
+            )
+        except Exception:
+            pass
+
+    def action_toggle_language(self) -> None:
+        new_language = "zh" if self._language == "en" else "en"
+        try:
+            self.config.update({"language": new_language})
+        except Exception as exc:
+            self.notify(f"Language not saved: {exc}", severity="error")
+            return
+        self._relabel()
+        self._refresh_crawl_status()
+        from .lang import tr
+
+        self.notify(tr(new_language, "lang.name"))
 
     def on_mount(self) -> None:
         # No pre-selected row in Quick Start: hover feedback only on demand.
         self.query_one("#quick-list", OptionList).highlighted = None
+        self._relabel()
         table = self.query_one("#run-table", DataTable)
         table.add_columns("SESSION", "TIME", "STATE")
         self.set_interval(2.0, self._refresh_intake_rows)
+        self.set_interval(30.0, self._refresh_crawl_status)
+        self._refresh_crawl_status()
         self.action_refresh()
+
+    def _refresh_crawl_status(self) -> None:
+        if not self.is_mounted:
+            return
+
+        def _probe():
+            from .crawlers import probe_endpoint
+
+            return probe_endpoint()
+
+        def _apply(result) -> None:
+            try:
+                from .lang import tr
+
+                ok, latency_ms = result
+                language = self._language
+                if ok:
+                    mark = f"● {tr(language, 'crawlers.up', 'UP')} {latency_ms}ms"
+                else:
+                    mark = f"○ {tr(language, 'crawlers.down', 'DOWN')}"
+                self._rebuild_quick(mark)
+            except Exception:
+                pass
+
+        _run_async(self, _probe, _apply)
+
+    def action_open_crawlers(self) -> None:
+        from .crawlers import CrawlerPanelScreen
+
+        self.app.push_screen(CrawlerPanelScreen(self.config))
 
     def _intake_session_rows(self) -> list[dict[str, str]]:
         from .intake_job import list_sessions, supervisor_for
@@ -823,7 +937,7 @@ class DashboardScreen(Screen):
             return
         # Market-wide tape. Do not inherit the last chart ticker — that
         # pinned 600098.SS (and any other empty name) onto every `s`.
-        self.app.push_screen(SentimentScreen(doc, ""))
+        self.app.push_screen(SentimentScreen(doc, "", self.config))
 
     def action_open_crypto(self) -> None:
         """Crypto module — Polymarket tape beside the daily crypto slice."""
@@ -2013,7 +2127,7 @@ class DailyIntakeScreen(Screen):
             # flags), and a raise here must neither kill the app nor wedge
             # the screen in CAPTURING.
             IntakeDriver(
-                (*argv, "--report-builder", self.config.get("intake_report_builder", "deepseek")),
+                (*argv, "--report-builder", self.config.get("intake_report_builder", "ai")),
                 self.config.workspace_root,
                 timeout_seconds=self.config.intake_timeout_seconds,
             )
@@ -2198,18 +2312,15 @@ class DailyIntakeScreen(Screen):
         self._stop_progress_timer()
 
     def action_open_report(self) -> None:
+        """Open the daily report — the browser renders the HTML; the
+        terminal keeps only the sentiment tape."""
         from .intake_job import supervisor_for
 
         if self._capture_running or supervisor_for(self.app).capturing:
             self.notify("Capture is still running.", severity="warning")
             return
-        if self._result is None:
-            self._result = supervisor_for(self.app).result
-        from .brief import BriefScreen, load_daily_path
-
         if self._result is not None and self._result.ok:
             artifacts = self._result.artifacts or {}
-            json_path = artifacts.get("report_json")
             html_path = artifacts.get("report_html")
             day = (self._result.envelope or {}).get("date")
         else:
@@ -2222,14 +2333,9 @@ class DailyIntakeScreen(Screen):
                     severity="warning",
                 )
                 return
-            json_path = entry.json_path
             html_path = entry.html_path or None
             day = entry.report_date
-        doc = load_daily_path(json_path, html_path=html_path, expected_date=day)
-        if not doc.get("ok"):
-            self.notify(str(doc.get("error") or "report JSON is invalid"), severity="error")
-            return
-        self.app.push_screen(BriefScreen(doc))
+        _open_report_html(self, html_path, day)
 
     def action_history(self) -> None:
         self.app.push_screen(ReportHistoryScreen(self.config))
@@ -2298,20 +2404,25 @@ class ReportHistoryScreen(Screen):
         )
         if entry is None:
             return
-        from .brief import BriefScreen, load_daily_path
-
-        doc = load_daily_path(
-            entry.json_path,
-            html_path=entry.html_path or None,
-            expected_date=entry.report_date,
-        )
-        if not doc.get("ok"):
-            self.notify(str(doc.get("error") or "report JSON is invalid"), severity="error")
-            return
-        self.app.push_screen(BriefScreen(doc))
+        _open_report_html(self, entry.html_path or None, entry.report_date)
 
     def action_back(self) -> None:
         self.app.pop_screen()
+
+
+def _open_report_html(screen: Any, html_path: str | None, day: Any) -> None:
+    """Open a daily report in the browser — the terminal keeps sentiment only."""
+    import webbrowser
+
+    if not html_path:
+        screen.notify(f"Report {day} has no HTML edition.", severity="warning")
+        return
+    path = Path(html_path).expanduser()
+    if not path.exists():
+        screen.notify(f"Report HTML is missing: {path}", severity="warning")
+        return
+    webbrowser.open(path.resolve().as_uri())
+    screen.notify(f"Opened report {day} in the browser.")
 
 
 def _history_store(config: Any) -> tuple[Any, str | None]:
@@ -3165,7 +3276,6 @@ class SecurityScreen(Screen):
         Binding("k", "chart", "K-line"),
         Binding("a", "chat", "Ask"),
         Binding("b", "backtest", "Backtest"),
-        Binding("d", "intake", "Daily Intake"),
         Binding("h", "history", "History"),
         Binding("e", "config", "Config"),
         Binding("f", "fetch", "Fetch"),
@@ -4293,6 +4403,20 @@ class AskSessionScreen(Screen):
 class ConfigScreen(Screen):
     """Edit workstation config — API key, model, workspace, backtest defaults."""
 
+    # Known OpenAI-compatible providers: picking one fills Base URL + Model.
+    AI_PROVIDERS = [
+        ("GLM official (bigmodel v4)", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
+        ("DeepSeek official", "https://api.deepseek.com/v1", "deepseek-v4-pro"),
+    ]
+    PROXY_POLICY_KEYS = [
+        ("proxy.off", "off"),
+        ("proxy.all", "all"),
+        ("proxy.poly", "poly"),
+        ("proxy.energy", "energy"),
+        ("proxy.custom", "custom"),
+    ]
+    DEFAULT_EGRESS_PORT = "17878"
+
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("ctrl+s", "save", "Save"),
@@ -4303,6 +4427,7 @@ class ConfigScreen(Screen):
     .cfg-row { height: 3; }
     .cfg-label { width: 16; color: #a0a0a0; padding: 1 0; }
     .cfg-input { width: 1fr; }
+    .cfg-row Select { width: 1fr; }
     #cfg-buttons { height: 3; padding: 0 1; align-horizontal: right; }
     #cfg-buttons Button { margin: 0 0 0 1; }
     """
@@ -4320,11 +4445,94 @@ class ConfigScreen(Screen):
         self.driver = driver
         self.engine = engine
 
+    def _provider_value(self) -> tuple[str, str] | None:
+        """Map the configured base URL to a known provider preset."""
+        base = self.config.deepseek_base_url
+        for _label, preset_base, model in self.AI_PROVIDERS:
+            if preset_base == base:
+                return (preset_base, model)
+        return None
+
+    @property
+    def _language(self) -> str:
+        try:
+            language = str(self.config.get("language", "en") or "en")
+        except Exception:
+            language = "en"
+        return "zh" if language == "zh" else "en"
+
+    def _chrome(self, key: str, fallback: str) -> str:
+        from .lang import tr
+
+        return tr(self._language, key, fallback)
+
+    def _policy_value(self) -> str:
+        poly = str(self.config.get("polymarket_proxy_url", "") or "")
+        energy = str(self.config.get("energy_proxy_url", "") or "")
+
+        def local(url: str) -> bool:
+            return url.startswith("http://127.0.0.1:")
+
+        if poly and energy:
+            return "all" if local(poly) and local(energy) else "custom"
+        if poly:
+            return "poly" if local(poly) else "custom"
+        if energy:
+            return "energy" if local(energy) else "custom"
+        return "off"
+
+    def _egress_port(self) -> str:
+        poly = str(self.config.get("polymarket_proxy_url", "") or "")
+        if poly.startswith("http://127.0.0.1:"):
+            port = poly.rsplit(":", 1)[-1]
+            if port.isdigit():
+                return port
+        return self.DEFAULT_EGRESS_PORT
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "cfg-provider" and event.value:
+            base, model = event.value
+            self.query_one("#cfg-base-url", Input).value = base
+            self.query_one("#cfg-model", Input).value = model
+        elif event.select.id == "cfg-policy":
+            self._apply_proxy_policy(event.value)
+
+    def _apply_proxy_policy(self, policy: str) -> None:
+        port = (
+            self.query_one("#cfg-egress-port", Input).value.strip()
+            or self.DEFAULT_EGRESS_PORT
+        )
+        url = f"http://127.0.0.1:{port}"
+        poly = self.query_one("#cfg-polymarket-proxy", Input)
+        energy = self.query_one("#cfg-energy-proxy", Input)
+        if policy == "off":
+            poly.value = ""
+            energy.value = ""
+        elif policy == "all":
+            poly.value = url
+            energy.value = url
+        elif policy == "poly":
+            poly.value = url
+            energy.value = ""
+        elif policy == "energy":
+            poly.value = ""
+            energy.value = url
+        # "custom": leave both fields exactly as they are.
+
     def compose(self) -> ComposeResult:
         yield Static("  Config  |  [Ctrl+S] Save  [Esc] Cancel", classes="header-bar")
         with ScrollableContainer(id="cfg-scroll"):
             with Vertical(classes="panel"):
-                yield Static("  AI Service", classes="panel-title")
+                yield Static(self._chrome("config.ai", "AI Service"), classes="panel-title")
+                with Horizontal(classes="cfg-row"):
+                    yield Static("  Provider", classes="cfg-label")
+                    yield Select(
+                        [("Custom", None)]
+                        + [(label, (base, model)) for label, base, model in self.AI_PROVIDERS],
+                        value=self._provider_value(),
+                        allow_blank=False,
+                        id="cfg-provider",
+                    )
                 with Horizontal(classes="cfg-row"):
                     yield Static("  API Key", classes="cfg-label")
                     yield Input(value=self.config.get("deepseek_api_key", ""), password=True,
@@ -4336,7 +4544,7 @@ class ConfigScreen(Screen):
                     yield Static("  Model", classes="cfg-label")
                     yield Input(value=self.config.deepseek_model, id="cfg-model", classes="cfg-input")
             with Vertical(classes="panel"):
-                yield Static("  Workspace", classes="panel-title")
+                yield Static(self._chrome("config.workspace", "Workspace"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  State Root", classes="cfg-label")
                     yield Input(value=self.config.state_root or "",
@@ -4345,30 +4553,53 @@ class ConfigScreen(Screen):
                     yield Static("  Data Dir", classes="cfg-label")
                     yield Input(value=self.config.data_dir or "", id="cfg-data-dir", classes="cfg-input")
                 with Horizontal(classes="cfg-row"):
+                    yield Static("  Chart Port", classes="cfg-label")
+                    yield Input(value=str(self.config.get("chart_port", 0)),
+                                placeholder="0 = auto",
+                                id="cfg-chart-port", classes="cfg-input")
+            with Vertical(classes="panel"):
+                yield Static(self._chrome("config.network", "Egress Proxies"), classes="panel-title")
+                with Horizontal(classes="cfg-row"):
+                    yield Static("  Policy", classes="cfg-label")
+                    yield Select(
+                        [
+                            (self._chrome(key, value), value)
+                            for key, value in self.PROXY_POLICY_KEYS
+                        ],
+                        value=self._policy_value(),
+                        allow_blank=False,
+                        id="cfg-policy",
+                    )
+                with Horizontal(classes="cfg-row"):
+                    yield Static("  Port", classes="cfg-label")
+                    yield Input(value=self._egress_port(),
+                                placeholder=self.DEFAULT_EGRESS_PORT,
+                                id="cfg-egress-port", classes="cfg-input")
+                with Horizontal(classes="cfg-row"):
                     yield Static("  Market Proxy", classes="cfg-label")
                     yield Input(
                         value=self.config.get("polymarket_proxy_url", ""),
-                        placeholder="http://proxy.example (empty = off)",
+                        placeholder="http://127.0.0.1:PORT (empty = off)",
                         id="cfg-polymarket-proxy",
                         classes="cfg-input",
                     )
+                with Horizontal(classes="cfg-row"):
+                    yield Static("  Energy Proxy", classes="cfg-label")
+                    yield Input(
+                        value=self.config.get("energy_proxy_url", ""),
+                        placeholder="http://127.0.0.1:PORT (empty = off)",
+                        id="cfg-energy-proxy",
+                        classes="cfg-input",
+                    )
             with Vertical(classes="panel"):
-                yield Static("  Energy (EIA)", classes="panel-title")
+                yield Static(self._chrome("config.energy", "Energy (EIA)"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  EIA API Key", classes="cfg-label")
                     yield Input(value=self.config.get("eia_api_key", ""), password=True,
                                 placeholder="register free at eia.gov/opendata",
                                 id="cfg-eia-key", classes="cfg-input")
-                with Horizontal(classes="cfg-row"):
-                    yield Static("  Energy Proxy", classes="cfg-label")
-                    yield Input(
-                        value=self.config.get("energy_proxy_url", ""),
-                        placeholder="http://proxy.example (empty = off)",
-                        id="cfg-energy-proxy",
-                        classes="cfg-input",
-                    )
             with Vertical(classes="panel"):
-                yield Static("  Daily Data Intake", classes="panel-title")
+                yield Static(self._chrome("config.intake", "Daily Data Intake"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Intake Cmd", classes="cfg-label")
                     yield Input(
@@ -4395,13 +4626,13 @@ class ConfigScreen(Screen):
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Report Builder", classes="cfg-label")
                     yield Input(
-                        value=self.config.get("intake_report_builder", "deepseek"),
-                        placeholder="deepseek or deterministic",
+                        value=self.config.get("intake_report_builder", "ai"),
+                        placeholder="ai or deterministic",
                         id="cfg-intake-builder",
                         classes="cfg-input",
                     )
             with Vertical(classes="panel"):
-                yield Static("  Forecast", classes="panel-title")
+                yield Static(self._chrome("config.forecast", "Forecast"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Forecast Cmd", classes="cfg-label")
                     yield Input(value=self.config.get("kronos_cmd", ""),
@@ -4412,7 +4643,7 @@ class ConfigScreen(Screen):
                     yield Input(value=str(self.config.get("kronos_horizon", 20)),
                                 id="cfg-kronos-horizon", classes="cfg-input")
             with Vertical(classes="panel"):
-                yield Static("  Domains", classes="panel-title")
+                yield Static(self._chrome("config.domains", "Domains"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Security Symbols", classes="cfg-label")
                     yield Input(
@@ -4446,7 +4677,7 @@ class ConfigScreen(Screen):
                         classes="cfg-input",
                     )
             with Vertical(classes="panel"):
-                yield Static("  Backtest Defaults", classes="panel-title")
+                yield Static(self._chrome("config.backtest", "Backtest Defaults"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Strategy", classes="cfg-label")
                     yield Input(value=self.config.default_strategy, id="cfg-strategy", classes="cfg-input")
@@ -4489,18 +4720,25 @@ class ConfigScreen(Screen):
             lookback = int(self.query_one("#cfg-lookback", Input).value.strip())
             horizon = int(self.query_one("#cfg-kronos-horizon", Input).value.strip())
             intake_timeout = int(self.query_one("#cfg-intake-timeout", Input).value.strip())
+            chart_port = int(self.query_one("#cfg-chart-port", Input).value.strip() or "0")
         except ValueError:
             self.notify(
-                "Fast/Slow/Lookback/Horizon/Timeout must be integers.", severity="error"
+                "Fast/Slow/Lookback/Horizon/Timeout/Chart Port must be integers.",
+                severity="error",
             )
             return
         if intake_timeout < 1:
             self.notify("Daily-data timeout must be positive.", severity="error")
             return
+        if not 0 <= chart_port <= 65535:
+            self.notify("Chart port must be 0 (auto) or 1-65535.", severity="error")
+            return
         intake_builder = self.query_one("#cfg-intake-builder", Input).value.strip().lower()
-        if intake_builder not in {"deepseek", "deterministic"}:
+        if intake_builder == "deepseek":
+            intake_builder = "ai"  # legacy alias for the LLM editorial pass
+        if intake_builder not in {"ai", "deterministic"}:
             self.notify(
-                "Report builder must be 'deepseek' or 'deterministic'.", severity="error"
+                "Report builder must be 'ai' or 'deterministic'.", severity="error"
             )
             return
 
@@ -4521,6 +4759,7 @@ class ConfigScreen(Screen):
                 "deepseek_model": self.query_one("#cfg-model", Input).value.strip() or self.config.deepseek_model,
                 "state_root": self.query_one("#cfg-state-root", Input).value.strip(),
                 "data_dir": data_dir,
+                "chart_port": chart_port,
                 "polymarket_proxy_url": self.query_one("#cfg-polymarket-proxy", Input).value.strip(),
                 "eia_api_key": self.query_one("#cfg-eia-key", Input).value.strip(),
                 "energy_proxy_url": self.query_one("#cfg-energy-proxy", Input).value.strip(),

@@ -2057,43 +2057,53 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertIn("cached", status)
 
     async def _brief_scenario(self) -> None:
-        from tui.brief import BriefScreen, load_daily_path
+        """The daily report no longer renders in the terminal: opening it
+        launches the HTML edition in the browser and stays put."""
+        from tui.screens import DailyIntakeScreen
 
         with tempfile.TemporaryDirectory() as tmp:
-            report_json = Path(tmp) / "report.json"
-            report_json.write_text(json.dumps({
+            root = Path(tmp)
+            run_dir = root / "runs" / "20260814T000000Z-fixtur01"
+            run_dir.mkdir(parents=True)
+            (run_dir / "fin-daily-20260814.json").write_text(json.dumps({
+                "schema": "stammtisch.daily-report.v1",
                 "date": "20260814",
-                "model": "fixture",
-                "brief": [{"text": "\u4e2d\u6587\u65e5\u62a5\u6458\u8981", "sources": ["Fixture"]}],
-                "markets": {"ashare": [], "hk": [], "us": [], "crypto": []},
-                "notes": [],
+                "brief": [{"text": "\u4e2d\u6587\u65e5\u62a5", "sources": ["Fixture"]}],
+                "markets": {"ashare": []},
             }, ensure_ascii=False), encoding="utf-8")
-            doc = load_daily_path(report_json, expected_date="20260814")
-            self.assertTrue(doc.get("ok"), doc.get("error"))
-            cfg_path = os.path.join(tmp, "config.json")
-            with open(cfg_path, "w") as f:
-                json.dump({
-                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
-                    "data_dir": os.path.join(tmp, "data"),
-                }, f)
-            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
+            (run_dir / "fin-daily-20260814.html").write_text(
+                "<!doctype html><html></html>", encoding="utf-8"
+            )
+            cfg_path = root / "config.json"
+            cfg_path.write_text(json.dumps({
+                "state_root": str(root / "state"),
+                "workspace_root": str(root),
+                "data_dir": str(root / "data"),
+            }), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                async with app.run_test(size=(100, 30)) as pilot:
-                    await pilot.pause()
-                    app.push_screen(BriefScreen(doc))
-                    await pilot.pause()
-                    self.assertIsInstance(app.screen, BriefScreen)
-                    body = str(app.screen.query_one("#brief-text", Static).render())
-                    self.assertIn("Fin-daily", body)
-                    self.assertNotIn("lightweight-charts", body.lower())
-                    await pilot.press("escape")
-                    await pilot.pause()
-                    self.assertIsInstance(app.screen, DashboardScreen)
+                with mock.patch("webbrowser.open") as open_spy:
+                    async with app.run_test(size=(100, 30)) as pilot:
+                        await pilot.pause()
+                        app.push_screen(
+                            DailyIntakeScreen(app.screen.config, auto_start=False)
+                        )
+                        await pilot.pause()
+                        app.screen.action_open_report()
+                        await pilot.pause()
+                        self.assertEqual(open_spy.call_count, 1)
+                        uri = str(open_spy.call_args[0][0])
+                        self.assertTrue(uri.startswith("file://"), uri)
+                        self.assertIn("fin-daily-20260814.html", uri)
+                        self.assertIsInstance(app.screen, DailyIntakeScreen)
+                        await pilot.press("escape")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, DashboardScreen)
 
     async def _daily_intake_scenario(self) -> None:
         from types import SimpleNamespace
 
-        from tui.brief import BriefScreen, SentimentScreen
+        from tui.brief import SentimentScreen
         from tui.screens import DailyIntakeScreen
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2168,6 +2178,7 @@ class TuiSmokeTest(unittest.TestCase):
             history_run = root / "runs" / "20260813T010203Z-fixtur01"
             history_run.mkdir(parents=True)
             history_json = history_run / "fin-daily-20260813.json"
+            history_html = history_run / "fin-daily-20260813.html"
             history_json.write_text(json.dumps({
                 "schema": "stammtisch.daily-report.v1",
                 "date": "20260813",
@@ -2181,6 +2192,7 @@ class TuiSmokeTest(unittest.TestCase):
                 }]},
                 "market_counts": {"ashare": 1},
             }, ensure_ascii=False), encoding="utf-8")
+            history_html.write_text("<!doctype html><html></html>", encoding="utf-8")
             legacy_output = root / "legacy" / "20260812" / "output"
             legacy_output.mkdir(parents=True)
             (legacy_output / "fin-daily-20260812.refined.json").write_text(json.dumps({
@@ -2218,13 +2230,15 @@ class TuiSmokeTest(unittest.TestCase):
                         landing = str(app.screen.query_one("#intake-text", Static).render())
                         self.assertIn("Status: READY", landing)
                         self.assertIn("Latest report: 2026-08-13", landing)
-                        # Enter opens the indexed latest report (no capture needed).
-                        await pilot.press("enter")
-                        await pilot.pause()
-                        self.assertIsInstance(app.screen, BriefScreen)
-                        self.assertEqual(app.screen.doc["json_path"], str(history_json))
-                        await pilot.press("escape")
-                        await pilot.pause()
+                        # Enter opens the indexed latest report in the
+                        # browser (no capture, no terminal report screen).
+                        with mock.patch("webbrowser.open") as open_spy:
+                            await pilot.press("enter")
+                            await pilot.pause()
+                        self.assertEqual(open_spy.call_count, 1)
+                        self.assertTrue(
+                            str(open_spy.call_args[0][0]).endswith("fin-daily-20260813.html")
+                        )
                         self.assertIsInstance(app.screen, DailyIntakeScreen)
                         # R is the explicit capture trigger.
                         await pilot.press("r")
@@ -2256,14 +2270,15 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertIn("Fed [holds] rates as source reports", body)
                         self.assertIn("\u6e2f\u80a1\u6536\u5e02\u539f\u6587\u6807\u9898", body)
                         self.assertIn("canonical_dataset", body)
-                        await pilot.press("enter")
-                        await pilot.pause()
-                        self.assertIsInstance(app.screen, BriefScreen)
-                        # S must consume the exact report graph just verified
-                        # by IntakeDriver, not rediscover a parallel legacy
-                        # report tree by filename.
-                        await pilot.press("escape")
-                        await pilot.pause()
+                        # Enter again: the just-verified report graph opens
+                        # in the browser, not a terminal brief.
+                        with mock.patch("webbrowser.open") as open_spy:
+                            await pilot.press("enter")
+                            await pilot.pause()
+                        self.assertEqual(open_spy.call_count, 1)
+                        self.assertTrue(
+                            str(open_spy.call_args[0][0]).endswith("report.html")
+                        )
                         self.assertIsInstance(app.screen, DailyIntakeScreen)
                         await pilot.press("escape")
                         await pilot.pause()
@@ -2354,7 +2369,6 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertIsInstance(app.screen, DailyIntakeScreen)
 
     async def _report_history_scenario(self) -> None:
-        from tui.brief import BriefScreen
         from tui.screens import ReportHistoryScreen
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2363,6 +2377,7 @@ class TuiSmokeTest(unittest.TestCase):
             run_dir = workspace / "runs" / "20260817T094921Z-a1b2c3d4"
             run_dir.mkdir(parents=True)
             report_json = run_dir / "fin-daily-20260817.json"
+            report_html = run_dir / "fin-daily-20260817.html"
             report_json.write_text(json.dumps({
                 "schema": "stammtisch.daily-report.v1",
                 "date": "20260817",
@@ -2377,6 +2392,7 @@ class TuiSmokeTest(unittest.TestCase):
                 "market_counts": {"ashare": 1},
                 "intake": {"expected": 14, "succeeded": 10},
             }, ensure_ascii=False), encoding="utf-8")
+            report_html.write_text("<!doctype html><html></html>", encoding="utf-8")
             legacy_output = root / "legacy" / "20260814" / "output"
             legacy_output.mkdir(parents=True)
             (legacy_output / "fin-daily-20260814.refined.json").write_text(json.dumps({
@@ -2412,12 +2428,13 @@ class TuiSmokeTest(unittest.TestCase):
                     self.assertIn("legacy", labels[1])
                     listing.focus()
                     listing.highlighted = 0
-                    await pilot.press("enter")
-                    await pilot.pause()
-                    self.assertIsInstance(app.screen, BriefScreen)
-                    self.assertEqual(app.screen.doc["json_path"], str(report_json))
-                    await pilot.press("escape")
-                    await pilot.pause()
+                    with mock.patch("webbrowser.open") as open_spy:
+                        await pilot.press("enter")
+                        await pilot.pause()
+                    self.assertEqual(open_spy.call_count, 1)
+                    self.assertTrue(
+                        str(open_spy.call_args[0][0]).endswith("fin-daily-20260817.html")
+                    )
                     self.assertIsInstance(app.screen, ReportHistoryScreen)
                     await pilot.press("escape")
                     await pilot.pause()
@@ -2585,7 +2602,12 @@ class TuiSmokeTest(unittest.TestCase):
                     labels = [str(option.prompt) for option in quick.options]
                     self.assertEqual(
                         labels,
-                        ["[A] ASK GALAHAD", "[E] EDIT CONFIG"],
+                        [
+                            "[A] ASK GALAHAD",
+                            "[E] EDIT CONFIG",
+                            "[C] CRAWLERS",
+                            "[L] LANGUAGE",
+                        ],
                     )
 
                     # Init stays a dashboard action (CLI-first recovery),

@@ -66,7 +66,8 @@ managed compatible environment.
 
 ## TUI
 
-Dashboard keys: `A` Ask, `E` edit config, click selects one run,
+Dashboard keys: `A` Ask, `E` edit config, `C` crawlers panel, `L`
+language (English/简体中文), click selects one run,
 `Shift+click` selects a range, `Ctrl+A` selects all, `Delete` removes the
 selection, `Shift+D` delete all listed pipeline runs, `Q` quit; `Enter`
 inspects the cursor row. The registry shows session name and time in

@@ -1,4 +1,9 @@
-"""Daily-report compatibility readers and rendering; offline only."""
+"""Daily-report compatibility readers; offline only.
+
+The terminal no longer renders the daily report (reports open in the
+browser); these tests cover the loaders that feed sentiment and the
+shared curation helpers.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tui.brief import format_brief, list_dates, load_daily, load_daily_path
+from tui.brief import curate_items, list_dates, load_daily, load_daily_path
 from tui.symbols import normalize_symbol, resolve_query
 
 
@@ -48,15 +53,11 @@ class BriefIngestTest(unittest.TestCase):
             doc = load_daily_path(
                 report_json, html_path=report_html, expected_date="20260814"
             )
+            self.assertEqual(doc["html_path"], str(report_html))
 
         self.assertTrue(doc["ok"], doc.get("error"))
         self.assertEqual(doc["date"], "20260814")
         self.assertIn("tape", doc, "sentiment remains a downstream compatibility field")
-        text = format_brief(doc)
-        self.assertIn("\u4e2d\u6587\u6e90\u6807\u9898\u539f\u6837\u4fdd\u7559", text)
-        self.assertIn("English source title stays English", text)
-        self.assertNotIn("MARKET SENTIMENT", text)
-        self.assertNotIn("<html", text.lower())
 
     def test_explicit_report_rejects_date_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,23 +143,16 @@ class BriefIngestTest(unittest.TestCase):
         self.assertTrue(doc["ok"], doc.get("error"))
         self.assertEqual(doc["tape"]["n"], 3, "falls back to the report layer")
 
-    def test_format_brief_curates_long_market_lists(self) -> None:
+    def test_curate_items_keeps_cap_and_source_diversity(self) -> None:
         items = [
             {"title": f"标题{i:02d}", "url": f"https://example.test/{i}",
              "summary": "摘要", "source": "feed-a" if i % 2 else "feed-b"}
             for i in range(14)
         ]
-        doc = {"ok": True, "date": "20260817", "model": "fixture", "brief": [],
-               "markets": {"ashare": items, "hk": [], "us": [], "jp": [],
-                           "kr": [], "sg": [], "crypto": []},
-               "notes": []}
-        text = format_brief(doc)
-        self.assertIn("--- A-share (14) ---", text)
-        self.assertIn("+4 more in the full dataset", text)
-        self.assertEqual(text.count("  * 标题"), 10)
-        # Source diversity: both feeds appear within the curated window.
-        self.assertIn("标题00", text)
-        self.assertIn("标题01", text)
+        shown = curate_items(items)
+        self.assertEqual(len(shown), 10)
+        feeds = {item["source"] for item in shown}
+        self.assertEqual(feeds, {"feed-a", "feed-b"}, "both feeds inside the window")
 
 
 if __name__ == "__main__":

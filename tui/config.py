@@ -23,6 +23,8 @@ def default_config_file() -> Path:
     return DEFAULT_CONFIG_FILE
 
 DEFAULT_CONFIG = {
+    # TUI chrome language: "en" | "zh" (toggled from the dashboard).
+    "language": "en",
     "deepseek_api_key": "",
     "deepseek_base_url": "https://open.bigmodel.cn/api/paas/v4",
     "deepseek_model": "glm-5.3",
@@ -64,7 +66,7 @@ DEFAULT_CONFIG = {
     "intake_cmd": "",
     "workspace_root": str(DEFAULT_WORKSPACE_ROOT),
     "intake_timeout_seconds": 900,
-    "intake_report_builder": "deepseek",
+    "intake_report_builder": "ai",
     # Legacy report-only compatibility. D uses the intake workspace instead.
     "reports_root": str(DEFAULT_WORKSPACE_ROOT / "legacy-reports"),
     # Report history index (SQLite). Empty follows <workspace_root>/history.db.
@@ -99,6 +101,12 @@ DEFAULT_CONFIG = {
     # JSON object on stdout (see tui/racing.py). Empty = disabled; the
     # RACING plugin then falls back to the directory browser.
     "racing_cmd": "",
+    # Crawler panel (operator-local, host-agnostic by default): the panel
+    # is inert until these point at this workstation's crawling runtime.
+    "crawler_url": "http://127.0.0.1:3002/",
+    "crawler_compose_dir": "",
+    "crawler_sources_conf": "",
+    "crawler_heal_cmd": "",
 }
 
 
