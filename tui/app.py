@@ -57,10 +57,12 @@ class StammtischTUI(App):
         self.push_screen(DashboardScreen(self.driver, self.ai, self.engine, self.config))
 
     def on_unmount(self) -> None:
-        """Reap local core/chart processes owned by this application."""
+        """Reap local core/chart/intake processes owned by this application."""
         self.driver.close()
         from .chart_server import stop_owned_server
         stop_owned_server()
+        from .subproc import stop_owned
+        stop_owned()
 
     def compose(self) -> ComposeResult:
         yield Footer()

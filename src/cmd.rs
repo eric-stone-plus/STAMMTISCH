@@ -754,15 +754,16 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
             let report = crate::runner::reconcile(&root)?;
             let corrupt = report["corrupt"].as_array().map(Vec::len).unwrap_or(0);
             let bound = report["runs"].as_array().map(Vec::len).unwrap_or(0);
+            let lock_note = if report["launch_lock"]["removed"].as_bool().unwrap_or(false) {
+                "removed (stale)"
+            } else if report["launch_lock"]["live"].as_bool().unwrap_or(false) {
+                "still held (live holder)"
+            } else {
+                "not held"
+            };
             let human = format!(
                 "reconciled {} run(s), {} corrupt, launch lock {}",
-                bound,
-                corrupt,
-                if report["launch_lock"]["removed"].as_bool().unwrap_or(false) {
-                    "removed (stale)"
-                } else {
-                    "not held"
-                }
+                bound, corrupt, lock_note
             );
             // Corrupt run dirs are reported, not fatal: the launch lock is
             // already released and every readable run is bound above. A
@@ -831,15 +832,31 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
                     format!("no run with id '{run_id}' in this state root"),
                 ));
             }
-            let manifest = crate::runner::load_manifest(&run_dir)?;
-            let state = manifest["state"]["code"]
-                .as_str()
-                .unwrap_or("?")
-                .to_string();
-            let terminal = matches!(
-                state.as_str(),
-                "completed" | "blocked" | "failed" | "halted" | "cancelled"
-            );
+            let manifest = crate::runner::load_manifest(&run_dir);
+            let (state, terminal) = match manifest {
+                Ok(manifest) => {
+                    let state = manifest["state"]["code"]
+                        .as_str()
+                        .unwrap_or("?")
+                        .to_string();
+                    let terminal = matches!(
+                        state.as_str(),
+                        "completed" | "blocked" | "failed" | "halted" | "cancelled"
+                    );
+                    (state, terminal)
+                }
+                Err(error) => {
+                    // A corrupt run dir (events-first: the log is the
+                    // authority) cannot prove a terminal state. Only
+                    // --force may dispose of it — reconcile's report tells
+                    // the operator to do exactly that; without --force the
+                    // corruption stays fail-closed, never guessed away.
+                    if !*force {
+                        return Err(error);
+                    }
+                    ("corrupt".to_string(), true)
+                }
+            };
             if !terminal && !*force {
                 return Err(AppError::usage(
                     "run_active",

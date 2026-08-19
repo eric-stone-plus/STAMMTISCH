@@ -24,7 +24,7 @@ def status_badge(state: str) -> Text:
     styles = {
         "completed": ("black", GREEN), "running": ("black", CYAN),
         "capturing": ("black", CYAN), "accepted": ("black", GREEN),
-        "rejected": ("black", RED),
+        "rejected": ("black", RED), "interrupted": ("black", AMBER),
         "blocked": ("black", AMBER), "failed": ("black", RED),
         "halted": ("black", RED), "staged": ("black", CYAN),
         "created": ("black", CYAN), "unknown": ("black", DIM),

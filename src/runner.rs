@@ -21,7 +21,16 @@ use crate::store::{append_line_fsync, atomic_write, EventWriter, LaunchLock, Sta
 struct ActiveRun {
     run_dir: PathBuf,
     run_id: String,
+    /// Shared with the run thread's `RunWriter`. The watchdog holds this
+    /// mutex for the whole seal and leaves it `true`: the run thread's
+    /// appends either complete first or are refused afterwards — they
+    /// never interleave with the terminal event.
+    claim: RunClaim,
 }
+
+/// `false` while the run thread may append; `true` once the parent-loss
+/// watchdog has taken the run.
+type RunClaim = std::sync::Arc<Mutex<bool>>;
 
 static ACTIVE_RUN: Mutex<Option<ActiveRun>> = Mutex::new(None);
 
@@ -29,16 +38,21 @@ fn active_run_lock() -> std::sync::MutexGuard<'static, Option<ActiveRun>> {
     ACTIVE_RUN.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn register_active_run(run_dir: &Path, run_id: &str) {
+fn lock_claim(claim: &Mutex<bool>) -> std::sync::MutexGuard<'_, bool> {
+    claim.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn register_active_run(run_dir: &Path, run_id: &str, claim: RunClaim) {
     *active_run_lock() = Some(ActiveRun {
         run_dir: run_dir.to_path_buf(),
         run_id: run_id.to_string(),
+        claim,
     });
 }
 
 #[cfg(test)]
 pub(crate) fn register_active_run_for_test(run_dir: &Path, run_id: &str) {
-    register_active_run(run_dir, run_id);
+    register_active_run(run_dir, run_id, std::sync::Arc::new(Mutex::new(false)));
 }
 
 fn clear_active_run() {
@@ -53,26 +67,81 @@ impl Drop for ActiveRunGuard {
     }
 }
 
+/// The run thread's single-writer channel into `events.jsonl`. Every
+/// append holds the run's claim mutex — the same one the parent-loss
+/// watchdog holds while sealing — so appends never interleave with the
+/// watchdog's terminal event, and once the watchdog has taken the run,
+/// further appends are refused instead of corrupting the log (duplicate
+/// seq / event after terminal).
+struct RunWriter {
+    inner: EventWriter,
+    claim: RunClaim,
+}
+
+impl RunWriter {
+    fn new(run_dir: &Path, run_id: &str, claim: RunClaim) -> Self {
+        Self {
+            inner: EventWriter::new(run_dir, run_id),
+            claim,
+        }
+    }
+
+    fn emit(
+        &mut self,
+        event_type: &str,
+        stage: Option<&str>,
+        payload: Value,
+    ) -> Result<Value, AppError> {
+        let sealed = lock_claim(&self.claim);
+        if *sealed {
+            return Err(AppError::internal(format!(
+                "run was sealed by the parent-loss watchdog; \
+                 refusing to append '{event_type}' after it went terminal"
+            )));
+        }
+        self.inner.emit(event_type, stage, payload)
+    }
+}
+
 /// Parent-death path: the TUI is gone and this core is about to
 /// `exit`. Seal the in-flight run as `halted` so it does not linger
 /// as `running`. Destructors will not run after `process::exit`.
+///
+/// The run's claim mutex is held across the whole seal (which can block
+/// for several remote-cancel timeouts): the run thread's appends take the
+/// same mutex, so the terminal event lands exactly once and nothing is
+/// appended after — or interleaved with — it.
 pub fn seal_active_run_on_parent_loss() {
-    let active = active_run_lock().take();
-    if let Some(active) = active {
-        let _ = seal_run(
-            &active.run_dir,
-            &active.run_id,
-            "run.halted",
-            "parent_lost",
-            "host process vanished; run sealed without advancing work",
+    let Some(active) = active_run_lock().take() else {
+        return;
+    };
+    let mut sealed = lock_claim(&active.claim);
+    if *sealed {
+        return; // already sealed (or being sealed) — never twice
+    }
+    *sealed = true;
+    if let Err(e) = seal_run(
+        &active.run_dir,
+        &active.run_id,
+        "run.halted",
+        "parent_lost",
+        "host process vanished; run sealed without advancing work",
+    ) {
+        // Refused (e.g. the state machine would reject the
+        // transition): the run stays non-terminal and the next
+        // `cancel --abandoned` / `reconcile` binds it. Never corrupt
+        // the authority just to leave a terminal record.
+        eprintln!(
+            "stammtisch: parent-loss seal refused for run {}: {}",
+            active.run_id, e.message
         );
-        if let Some(root) = active
-            .run_dir
-            .parent()
-            .and_then(|runs| runs.parent())
-        {
-            let _ = std::fs::remove_file(root.join("host").join("launch.lock"));
-        }
+    }
+    if let Some(root) = active
+        .run_dir
+        .parent()
+        .and_then(|runs| runs.parent())
+    {
+        let _ = std::fs::remove_file(root.join("host").join("launch.lock"));
     }
 }
 
@@ -113,6 +182,19 @@ fn live_holder_for(root: &StateRoot, run_id: &str) -> bool {
     }
 }
 
+/// True when the launch-lock text names a live pid. An unparseable or
+/// pid-less lock is stale by definition (only a live core keeps a valid
+/// lock), so callers may clear it.
+fn lock_holder_is_alive(holder_text: &str) -> bool {
+    serde_json::from_str::<Value>(holder_text)
+        .ok()
+        .and_then(|value| {
+            let pid = value.get("pid").and_then(Value::as_u64)?;
+            Some(pid > 0 && pid <= u64::from(u32::MAX) && pid_is_alive(pid as u32))
+        })
+        .unwrap_or(false)
+}
+
 /// Append a terminal event to a non-terminal run. Never relaunches a stage.
 pub fn seal_run(
     run_dir: &Path,
@@ -139,16 +221,28 @@ pub fn seal_run(
             "already_terminal": true,
         }));
     }
+    // Pre-validate the transition with the real projection before any
+    // bytes are written: an append the state machine would reject (e.g.
+    // `run.halted` before `run.staged`) must be refused, not durably
+    // recorded — once the illegal event hits the log, every later
+    // projection of the run fails forever (P3: fail closed, never guess).
+    let payload = json!({
+        "reason": reason,
+        "summary": summary,
+    });
+    let mut candidate = events.clone();
+    candidate.push(json!({
+        "schema": crate::store::EVENT_SCHEMA,
+        "run_id": run_id,
+        "seq": events.len() as u64 + 1,
+        "type": event_type,
+        "at": crate::time::now_rfc3339(),
+        "payload": payload,
+    }));
+    project(&candidate)?;
     let remote_cancel = cancel_remote_tasks(run_dir);
     let mut writer = EventWriter::resume(run_dir, run_id, events.len() as u64);
-    writer.emit(
-        event_type,
-        None,
-        json!({
-            "reason": reason,
-            "summary": summary,
-        }),
-    )?;
+    writer.emit(event_type, None, payload)?;
     rewrite_manifest(run_dir)?;
     Ok(json!({
         "run_id": run_id,
@@ -222,14 +316,7 @@ pub fn cancel_abandoned(root: &StateRoot) -> Result<Value, AppError> {
     let lock_path = LaunchLock::lock_path(root);
     let mut launch_lock_removed = false;
     if let Ok(text) = std::fs::read_to_string(&lock_path) {
-        let dead = serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|value| {
-                let pid = value.get("pid").and_then(Value::as_u64)?;
-                Some(!pid_is_alive(pid as u32))
-            })
-            .unwrap_or(true);
-        if dead {
+        if !lock_holder_is_alive(&text) {
             let _ = std::fs::remove_file(&lock_path);
             launch_lock_removed = true;
         }
@@ -295,7 +382,8 @@ pub fn run_pipeline(root: &StateRoot, pipeline_path: &Path) -> Result<RunReport,
     let _lock = LaunchLock::acquire(root, &run_id)?;
 
     let run_dir = root.run_dir(&run_id);
-    register_active_run(&run_dir, &run_id);
+    let claim: RunClaim = std::sync::Arc::new(Mutex::new(false));
+    register_active_run(&run_dir, &run_id, std::sync::Arc::clone(&claim));
     let _active = ActiveRunGuard;
     for d in ["receipts", "artifacts", "gates"] {
         std::fs::create_dir_all(run_dir.join(d))?;
@@ -306,7 +394,7 @@ pub fn run_pipeline(root: &StateRoot, pipeline_path: &Path) -> Result<RunReport,
         &canon::canonical_bytes(&pipeline.value),
     )?;
 
-    let mut w = EventWriter::new(&run_dir, &run_id);
+    let mut w = RunWriter::new(&run_dir, &run_id, std::sync::Arc::clone(&claim));
     let stage_list: Vec<Value> = pipeline
         .stages
         .iter()
@@ -461,7 +549,7 @@ enum StageFailureOr {
 }
 
 fn execute_stages(
-    w: &mut EventWriter,
+    w: &mut RunWriter,
     run_dir: &Path,
     run_id: &str,
     pipeline: &Pipeline,
@@ -491,7 +579,7 @@ fn execute_stages(
 /// receipts and artifacts, and evaluate its gate. Every early return is a
 /// terminal (or internal-error) outcome; the caller records the timing.
 fn execute_one_stage(
-    w: &mut EventWriter,
+    w: &mut RunWriter,
     run_dir: &Path,
     run_id: &str,
     pipeline: &Pipeline,
@@ -860,7 +948,7 @@ type AcceptedReceipt = (String, Vec<u8>);
 type ReceiptAcceptance = Result<Vec<AcceptedReceipt>, String>;
 
 fn persist_receipts(
-    w: &mut EventWriter,
+    w: &mut RunWriter,
     run_dir: &Path,
     stage: &pipeline::Stage,
     receipts: &[Value],
@@ -893,7 +981,7 @@ fn persist_receipts(
 /// contract-invalid salvaged receipt overrides the outcome with a
 /// receipt_rejected halt — integrity outranks the original failure.
 fn stage_terminal(
-    w: &mut EventWriter,
+    w: &mut RunWriter,
     run_dir: &Path,
     adapter: &dyn adapters::Adapter,
     stage: &pipeline::Stage,
@@ -1601,7 +1689,12 @@ pub fn load_manifest(run_dir: &Path) -> Result<Value, AppError> {
 /// `stammtisch reconcile` (architecture doc P5): bind durable state and
 /// report — never advance work. Rebuilds every projection from its event
 /// log, marks interrupted runs with a durable `run.reconciled` audit event
-/// (no stage is re-invoked), and clears the launch lock.
+/// (no stage is re-invoked), and clears a stale launch lock. A run (or a
+/// lock) whose holder is still alive is reported, never touched — the
+/// same discipline as `cancel --abandoned`: binding a live run's log here
+/// would race the holder's appends (duplicate seq, event after terminal)
+/// and clearing its lock would allow a second active run on one state
+/// root (§4).
 pub fn reconcile(root: &StateRoot) -> Result<Value, AppError> {
     let mut runs = Vec::new();
     let mut corrupt = Vec::new();
@@ -1624,23 +1717,28 @@ pub fn reconcile(root: &StateRoot) -> Result<Value, AppError> {
                     })
                     .unwrap_or(false);
                 let mut interrupted = false;
+                let mut live = false;
                 let mut remote_cancel: Vec<Value> = Vec::new();
                 if !terminal {
-                    interrupted = true;
-                    // The local run died without reaching a terminal state;
-                    // a remote A2A task it spawned may still be running and
-                    // holding the product's one-active slot. Best-effort
-                    // CancelTask (refusals are recorded, never fatal).
-                    remote_cancel = cancel_remote_tasks(&run_dir);
-                    let mut w = EventWriter::resume(&run_dir, &run_id, events.len() as u64);
-                    w.emit(
-                        "run.reconciled",
-                        None,
-                        json!({
-                            "note": "interrupted run bound to durable state; no work advanced",
-                            "last_seq": events.len(),
-                        }),
-                    )?;
+                    if live_holder_for(root, &run_id) {
+                        live = true;
+                    } else {
+                        interrupted = true;
+                        // The local run died without reaching a terminal state;
+                        // a remote A2A task it spawned may still be running and
+                        // holding the product's one-active slot. Best-effort
+                        // CancelTask (refusals are recorded, never fatal).
+                        remote_cancel = cancel_remote_tasks(&run_dir);
+                        let mut w = EventWriter::resume(&run_dir, &run_id, events.len() as u64);
+                        w.emit(
+                            "run.reconciled",
+                            None,
+                            json!({
+                                "note": "interrupted run bound to durable state; no work advanced",
+                                "last_seq": events.len(),
+                            }),
+                        )?;
+                    }
                 }
                 let manifest = match rewrite_manifest(&run_dir) {
                     Ok(m) => m,
@@ -1655,6 +1753,7 @@ pub fn reconcile(root: &StateRoot) -> Result<Value, AppError> {
                     "run_id": run_id,
                     "state": manifest["state"]["code"],
                     "interrupted": interrupted,
+                    "live": live,
                     "events": crate::store::read_events(&run_dir)?.len(),
                     "remote_cancel": remote_cancel,
                 }));
@@ -1667,12 +1766,16 @@ pub fn reconcile(root: &StateRoot) -> Result<Value, AppError> {
     }
 
     let lock_path = LaunchLock::lock_path(root);
-    let (lock_present, lock_removed, lock_holder) = if lock_path.exists() {
+    let (lock_present, lock_removed, lock_holder, lock_live) = if lock_path.exists() {
         let holder = std::fs::read_to_string(&lock_path).unwrap_or_else(|_| "<unreadable>".into());
-        std::fs::remove_file(&lock_path)?;
-        (true, true, holder)
+        if lock_holder_is_alive(&holder) {
+            (true, false, holder, true)
+        } else {
+            std::fs::remove_file(&lock_path)?;
+            (true, true, holder, false)
+        }
     } else {
-        (false, false, String::new())
+        (false, false, String::new(), false)
     };
 
     Ok(json!({
@@ -1682,6 +1785,7 @@ pub fn reconcile(root: &StateRoot) -> Result<Value, AppError> {
             "present": lock_present,
             "removed": lock_removed,
             "holder": lock_holder,
+            "live": lock_live,
         }
     }))
 }
@@ -1936,6 +2040,104 @@ mod tests {
                 .count(),
             1
         );
+        std::fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn seal_run_refuses_an_illegal_transition_before_appending() {
+        let root = StateRoot {
+            path: std::env::temp_dir()
+                .join(format!("stammtisch-seal-premature-{}", ids::uuid_v7().unwrap())),
+        };
+        root.init().unwrap();
+        let run_id = ids::uuid_v7().unwrap();
+        let run_dir = root.run_dir(&run_id);
+        // State `created`: run.created written, run.staged not yet.
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let mut w = EventWriter::new(&run_dir, &run_id);
+        w.emit(
+            "run.created",
+            None,
+            json!({
+                "pipeline": {"id": "p", "canonical_sha256": format!("sha256:{}", "a".repeat(64))},
+                "doctrine": {"pack": "galahad", "resolved_sha256": format!("sha256:{}", "b".repeat(64))},
+                "stages": [{"id": "brief", "product": "doctrine", "gate": Value::Null, "outputs": ["brief.json"]}],
+                "state_root": "/root",
+            }),
+        )
+        .unwrap();
+        let error = seal_run(&run_dir, &run_id, "run.halted", "parent_lost", "too early")
+            .unwrap_err();
+        assert!(
+            error.message.contains("run.halted"),
+            "refusal must name the rejected transition: {}",
+            error.message
+        );
+        // Nothing was appended: the log still projects, it is not corrupted.
+        let events = crate::store::read_events(&run_dir).unwrap();
+        assert_eq!(events.len(), 1);
+        load_manifest(&run_dir).unwrap();
+        std::fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn run_writer_refuses_appends_once_the_watchdog_claimed_the_run() {
+        let root = StateRoot {
+            path: std::env::temp_dir()
+                .join(format!("stammtisch-claim-{}", ids::uuid_v7().unwrap())),
+        };
+        root.init().unwrap();
+        let run_id = ids::uuid_v7().unwrap();
+        let run_dir = root.run_dir(&run_id);
+        std::fs::create_dir_all(&run_dir).unwrap();
+        // The run thread owns the log from the first event (as in
+        // run_pipeline: fresh RunWriter, empty log).
+        let claim: RunClaim = std::sync::Arc::new(Mutex::new(false));
+        let mut w = RunWriter::new(&run_dir, &run_id, std::sync::Arc::clone(&claim));
+        w.emit(
+            "run.created",
+            None,
+            json!({
+                "pipeline": {"id": "p", "canonical_sha256": format!("sha256:{}", "a".repeat(64))},
+                "doctrine": {"pack": "galahad", "resolved_sha256": format!("sha256:{}", "b".repeat(64))},
+                "stages": [{"id": "brief", "product": "doctrine", "gate": Value::Null, "outputs": ["brief.json"]}],
+                "state_root": "/root",
+            }),
+        )
+        .unwrap();
+        w.emit("run.staged", None, json!({})).unwrap();
+        w.emit(
+            "stage.started",
+            Some("brief"),
+            json!({"product": "doctrine"}),
+        )
+        .unwrap();
+        // Normal append while the claim is live.
+        w.emit(
+            "stage.receipt_accepted",
+            Some("brief"),
+            json!({"digest": format!("sha256:{}", "c".repeat(64))}),
+        )
+        .unwrap();
+        // The watchdog takes the run (mark + seal), then the run thread
+        // wakes from its blocked append and must be refused.
+        register_active_run(&run_dir, &run_id, std::sync::Arc::clone(&claim));
+        seal_active_run_on_parent_loss();
+        let refused = w
+            .emit(
+                "stage.artifact_recorded",
+                Some("brief"),
+                json!({"name": "brief.json", "digest": format!("sha256:{}", "d".repeat(64))}),
+            )
+            .unwrap_err();
+        assert_eq!(refused.kind, crate::error::Kind::Internal);
+        // The authority log stayed exactly what the watchdog sealed:
+        // no duplicate seq, no event after the terminal event, and it
+        // still projects.
+        let events = crate::store::read_events(&run_dir).unwrap();
+        assert_eq!(events.last().unwrap()["type"], "run.halted");
+        let manifest = load_manifest(&run_dir).unwrap();
+        assert_eq!(manifest["state"]["code"], "halted");
         std::fs::remove_dir_all(&root.path).ok();
     }
 

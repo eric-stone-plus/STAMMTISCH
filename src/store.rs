@@ -130,11 +130,23 @@ pub fn fsync_dir(dir: &Path) -> Result<(), AppError> {
 /// Append one line to a file and fsync before returning — the events.jsonl
 /// durability contract: the transition is durable before any in-memory
 /// state is trusted.
+///
+/// The line and its newline go out in a single `write` (O_APPEND makes one
+/// write atomic at end-of-file, so a concurrent reader never sees a torn
+/// line), and the parent directory is fsynced too: without it, the file's
+/// directory entry — the whole fsynced log, on first creation — can be
+/// lost to a crash until some later `atomic_write` happens to fsync the
+/// directory (same rationale as `atomic_write`).
 pub fn append_line_fsync(path: &Path, line: &str) -> Result<(), AppError> {
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-    f.write_all(line.as_bytes())?;
-    f.write_all(b"\n")?;
+    let mut buf = Vec::with_capacity(line.len() + 1);
+    buf.extend_from_slice(line.as_bytes());
+    buf.push(b'\n');
+    f.write_all(&buf)?;
     f.sync_data()?;
+    if let Some(parent) = path.parent() {
+        fsync_dir(parent)?;
+    }
     Ok(())
 }
 
@@ -356,6 +368,21 @@ mod tests {
             err.message.contains("open parent dir"),
             "fsync_dir must open with O_DIRECTORY, got: {}",
             err.message
+        );
+        fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn append_line_fsync_roundtrip_single_write_lines() {
+        let root = tmp_root();
+        let run_dir = root.path.join("runs").join("r0");
+        fs::create_dir_all(&run_dir).unwrap();
+        let path = run_dir.join("events.jsonl");
+        append_line_fsync(&path, r#"{"seq":1}"#).unwrap();
+        append_line_fsync(&path, r#"{"seq":2}"#).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "{\"seq\":1}\n{\"seq\":2}\n"
         );
         fs::remove_dir_all(&root.path).ok();
     }

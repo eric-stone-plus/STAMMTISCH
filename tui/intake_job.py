@@ -11,7 +11,7 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, time as dt_time, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -42,33 +42,29 @@ def new_session_id() -> str:
 
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
-_ASHARE_OPEN = dt_time(9, 30)
 
 
 def today_yyyymmdd() -> str:
     return datetime.now(_SHANGHAI).strftime("%Y%m%d")
 
 
-def report_session_date(now: datetime | None = None) -> str:
-    """Date stamped on a desk capture.
+def report_session_date(now: datetime | None = None) -> str | None:
+    """Date stamped on a desk capture, or None when it cannot be known.
 
     Pre-open of the next session (or a closed day) belongs to the previous
-    trading date. After the A-share open, the capture is that session.
+    trading date; after the A-share open, the capture is that session. Both
+    answers need the offline exchange calendar. Without it a weekday or
+    fixed-clock guess is exactly what the intake contract forbids
+    (finance/reports/README.md), so the caller leaves the session date to
+    the product: no ``--date`` is passed and the accepted envelope's
+    certified date is adopted instead.
     """
     current = now or datetime.now(_SHANGHAI)
     if current.tzinfo is None:
         current = current.replace(tzinfo=_SHANGHAI)
     else:
         current = current.astimezone(_SHANGHAI)
-    dated = _calendar_session_date(current)
-    if dated:
-        return dated
-    cursor = current
-    if current.timetz().replace(tzinfo=None) < _ASHARE_OPEN:
-        cursor = current - timedelta(days=1)
-    while cursor.weekday() >= 5:
-        cursor -= timedelta(days=1)
-    return cursor.strftime("%Y%m%d")
+    return _calendar_session_date(current)
 
 
 def _calendar_session_date(current: datetime) -> str | None:
@@ -94,7 +90,8 @@ def _calendar_session_date(current: datetime) -> str | None:
 
 
 def session_title(date: str, started_at: str | None = None) -> str:
-    day = date if len(date) == 8 else report_session_date()
+    # Display label only; an unresolved session date falls back to today.
+    day = date if len(date) == 8 else (report_session_date() or today_yyyymmdd())
     pretty = f"{day[:4]}-{day[4:6]}-{day[6:]}"
     clock = ""
     stamp = started_at or ""
@@ -106,7 +103,10 @@ def session_title(date: str, started_at: str | None = None) -> str:
 
 
 def empty_session(workspace_root: str | Path, date: str | None = None) -> dict[str, Any]:
-    day = date or report_session_date()
+    # An unresolved date stays empty: it is display/sort state only, the
+    # progress watcher treats "" as "no date filter", and the accepted
+    # envelope's certified date replaces it in `_finish`.
+    day = date or report_session_date() or ""
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return {
         "schema": SCHEMA,
@@ -311,7 +311,37 @@ class IntakeSupervisor:
                 return None
             return dict(self.active)
 
+    def is_capturing_session(self, session_id: str) -> bool:
+        """True when `session_id` is the in-memory session still capturing.
+
+        Checked under the lock at call time — never from a stale snapshot —
+        so a capture that started after a dialog opened is still protected.
+        """
+        with self._lock:
+            session = self.active
+            return bool(
+                session
+                and session.get("id") == session_id
+                and session.get("state") == "capturing"
+            )
+
+    def forget(self, session_id: str) -> bool:
+        """Drop the in-memory session/result — only under the lock, only if
+        it is still `session_id` and no longer capturing. A live capture
+        (or a newer session started meanwhile) is never clobbered."""
+        with self._lock:
+            session = self.active
+            if session is None or session.get("id") != session_id:
+                return False
+            if session.get("state") == "capturing":
+                return False
+            self.active = None
+            self.result = None
+            return True
+
     def start(self, app: Any, config: Any, date: str | None = None) -> dict[str, Any]:
+        # `report_session_date()` may be None (no offline calendar): the
+        # product then certifies the session date itself.
         report_date = date or report_session_date()
         with self._lock:
             if self.active is not None and self.active.get("state") == "capturing":
@@ -330,7 +360,7 @@ class IntakeSupervisor:
         worker.start()
         return session
 
-    def _run(self, app: Any, config: Any, session_id: str, date: str) -> None:
+    def _run(self, app: Any, config: Any, session_id: str, date: str | None) -> None:
         from .intake import IntakeDriver
 
         argv = tuple(config.intake_argv) if config else ()

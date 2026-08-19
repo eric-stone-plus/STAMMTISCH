@@ -152,8 +152,40 @@ class TuiSmokeTest(unittest.TestCase):
         shanghai = ZoneInfo("Asia/Shanghai")
         pre_open = datetime(2026, 8, 19, 0, 50, tzinfo=shanghai)
         after_open = datetime(2026, 8, 19, 10, 0, tzinfo=shanghai)
-        self.assertEqual(report_session_date(pre_open), "20260818")
-        self.assertEqual(report_session_date(after_open), "20260819")
+        # The offline exchange calendar is the only date authority: with it
+        # the pre-open capture belongs to the previous session; without it
+        # there is no answer at all — a weekday or fixed-clock guess is
+        # what the intake contract forbids, so the product certifies the
+        # date instead (no `--date` is passed).
+        try:
+            import exchange_calendars  # noqa: F401
+            import pandas  # noqa: F401
+        except ImportError:
+            have_calendar = False
+        else:
+            have_calendar = True
+        if have_calendar:
+            self.assertEqual(report_session_date(pre_open), "20260818")
+            self.assertEqual(report_session_date(after_open), "20260819")
+        else:
+            self.assertIsNone(report_session_date(pre_open))
+            self.assertIsNone(report_session_date(after_open))
+            with mock.patch(
+                "tui.intake_job._calendar_session_date", return_value="20260817"
+            ) as calendar:
+                self.assertEqual(report_session_date(pre_open), "20260817")
+                calendar.assert_called_once()
+            # An unresolved session date still renders a display label...
+            self.assertTrue(session_title("", "2026-08-19T09:05:00Z").startswith(
+                "daily-intake · "
+            ))
+            # ...and an empty date means "the product certifies it", never
+            # a guess.
+            from tui.intake_job import empty_session
+
+            with tempfile.TemporaryDirectory() as tmp:
+                session = empty_session(tmp)
+                self.assertEqual(session["date"], "")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             markdown = root / "runs" / "rid" / "normalized-markdown"
@@ -191,6 +223,9 @@ class TuiSmokeTest(unittest.TestCase):
 
     def test_dashboard_delete_selected_run(self) -> None:
         asyncio.run(self._dashboard_delete_scenario())
+
+    def test_dashboard_intake_rows_and_locked_delete(self) -> None:
+        asyncio.run(self._intake_rows_delete_scenario())
 
     def test_dashboard_shift_click_selects_range(self) -> None:
         asyncio.run(self._dashboard_shift_select_scenario())
@@ -1845,6 +1880,75 @@ class TuiSmokeTest(unittest.TestCase):
                         spy.call_args[0][0],
                         "01a012e6-bb8c-75f3-8597-c55291876dc5",
                     )
+
+    async def _intake_rows_delete_scenario(self) -> None:
+        from tui.intake_job import (
+            empty_session,
+            save_session,
+            session_path,
+            supervisor_for,
+        )
+        from tui.screens import ConfirmScreen
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({
+                    "state_root": os.path.join(tmp, "state"),
+                    "workspace_root": str(workspace),
+                }, handle)
+            # A session file left `capturing` on disk by an app that died
+            # mid-capture, plus one finished session.
+            stale = empty_session(workspace, "20260818")
+            save_session(stale)
+            finished = empty_session(workspace, "20260818")
+            finished["state"] = "rejected"
+            save_session(finished)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    dashboard = app.screen
+                    rows = {row["key"]: row for row in dashboard._intake_session_rows()}
+                    self.assertEqual(
+                        rows[f"intake:{stale['id']}"]["state"],
+                        "interrupted",
+                        "an ownerless capturing file must not render as live",
+                    )
+                    self.assertEqual(rows[f"intake:{finished['id']}"]["state"], "rejected")
+
+                    # The supervisor's live session still shows capturing.
+                    job = supervisor_for(app)
+                    live = empty_session(workspace, "20260819")
+                    save_session(live)
+                    with job._lock:
+                        job.active = live
+                    rows = {row["key"]: row for row in dashboard._intake_session_rows()}
+                    self.assertEqual(rows[f"intake:{live['id']}"]["state"], "capturing")
+
+                    # Deleting the live capture is refused, file and memory
+                    # intact, no confirm dialog.
+                    dashboard._delete_intake_session(str(live["id"]))
+                    await pilot.pause()
+                    self.assertFalse(isinstance(app.screen, ConfirmScreen))
+                    self.assertTrue(session_path(workspace, str(live["id"])).exists())
+                    self.assertEqual(job.active.get("id"), live["id"])
+
+                    # Deleting a finished session removes the file and the
+                    # in-memory copy through the supervisor's lock.
+                    dashboard._delete_intake_session(str(finished["id"]))
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, ConfirmScreen)
+                    await pilot.press("y")
+                    await pilot.pause()
+                    self.assertFalse(
+                        session_path(workspace, str(finished["id"])).exists()
+                    )
+                    self.assertFalse(job.forget(str(finished["id"])))
+                    # The live capture was never clobbered by that delete.
+                    self.assertEqual(job.active.get("id"), live["id"])
+                    self.assertTrue(job.is_capturing_session(str(live["id"])))
 
     async def _dashboard_shift_select_scenario(self) -> None:
         class _Status:

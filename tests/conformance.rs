@@ -258,10 +258,12 @@ fn item2_one_active_refuses_second() {
     let tmp = Tmp::new("item2");
     init(&tmp.0);
 
-    // Simulate a crashed/live holder.
+    // Simulate a crashed holder: a lock whose pid no longer exists.
+    // (A live pid must NOT be treated as stale — see
+    // reconcile_refuses_to_clear_a_live_holders_lock below.)
     std::fs::write(
         tmp.0.join("host").join("launch.lock"),
-        r#"{"run_id":"ghost","pid":1}"#,
+        r#"{"run_id":"ghost","pid":4000000}"#,
     )
     .unwrap();
     let pack = tmp.0.join("pack-offline");
@@ -289,6 +291,106 @@ fn item2_one_active_refuses_second() {
         out.code, 0,
         "run after reconcile must succeed: {}",
         out.stderr
+    );
+}
+
+/// `reconcile` must never clear a launch lock whose holder is still
+/// alive, and must never bind (append `run.reconciled` to) a run owned
+/// by a live core — that would break the one-active-run guarantee and
+/// could interleave with the holder's event appends.
+#[test]
+fn reconcile_refuses_to_clear_a_live_holders_lock() {
+    let tmp = Tmp::new("reconcile-live");
+    init(&tmp.0);
+
+    // A non-terminal run owned by a live core: this test process itself.
+    let run_id = stammtisch::ids::uuid_v7().unwrap();
+    let run_dir = tmp.0.join("runs").join(&run_id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let mut w = stammtisch::store::EventWriter::new(&run_dir, &run_id);
+    w.emit(
+        "run.created",
+        None,
+        json!({
+            "pipeline": {"id": "p", "canonical_sha256": format!("sha256:{}", "a".repeat(64))},
+            "doctrine": {"pack": "galahad", "resolved_sha256": format!("sha256:{}", "b".repeat(64))},
+            "stages": [{"id": "brief", "product": "doctrine", "gate": Value::Null, "outputs": ["brief.json"]}],
+            "state_root": tmp.0.display().to_string(),
+        }),
+    )
+    .unwrap();
+    w.emit("run.staged", None, json!({})).unwrap();
+    w.emit(
+        "stage.started",
+        Some("brief"),
+        json!({"product": "doctrine"}),
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.0.join("host").join("launch.lock"),
+        format!(r#"{{"run_id":"{run_id}","pid":{}}}"#, std::process::id()),
+    )
+    .unwrap();
+
+    let out = sh(&tmp.0, &["reconcile", "--json"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let report = out.json()["data"].clone();
+    assert_eq!(report["launch_lock"]["removed"], false, "live lock cleared");
+    assert_eq!(report["launch_lock"]["live"], true);
+    assert!(
+        tmp.0.join("host").join("launch.lock").exists(),
+        "live holder's lock must survive reconcile"
+    );
+    let entry = report["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["run_id"] == run_id)
+        .expect("live run is still reported")
+        .clone();
+    assert_eq!(entry["live"], true);
+    assert_eq!(entry["interrupted"], false);
+    // The live holder's authority log was not appended to.
+    let events = stammtisch::store::read_events(&run_dir).unwrap();
+    assert_eq!(events.len(), 3);
+    assert!(
+        events.iter().all(|e| e["type"] != "run.reconciled"),
+        "reconcile must not bind a run owned by a live core"
+    );
+}
+
+/// A corrupt run dir is disposable with `delete --force` — reconcile's
+/// report tells the operator to do exactly that, so the recovery path
+/// must not dead-end on the corruption it reported.
+#[test]
+fn delete_force_removes_a_corrupt_run_dir() {
+    let tmp = Tmp::new("delete-corrupt");
+    init(&tmp.0);
+    let run_id = run_example(&tmp.0);
+    let events_path = tmp.0.join("runs").join(&run_id).join("events.jsonl");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&events_path)
+        .map(|mut f| {
+            use std::io::Write;
+            f.write_all(b"garbage line\n")
+        })
+        .unwrap()
+        .unwrap();
+
+    // Without --force the corruption stays fail-closed.
+    let out = sh(&tmp.0, &["delete", &run_id, "--json"]);
+    assert_eq!(out.code, 2, "corrupt delete must fail closed without --force");
+    assert_eq!(out.json()["error"]["code"], "run_corrupt");
+    assert!(tmp.0.join("runs").join(&run_id).exists());
+
+    // With --force the operator can dispose of the corrupt dir.
+    let out = sh(&tmp.0, &["delete", &run_id, "--force", "--json"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.json()["data"]["state"], "corrupt");
+    assert!(
+        !tmp.0.join("runs").join(&run_id).exists(),
+        "corrupt run dir must be removed by delete --force"
     );
 }
 

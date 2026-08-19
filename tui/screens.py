@@ -179,10 +179,17 @@ class DashboardScreen(Screen):
                 stamp = str(session.get("updated_at") or session.get("started_at") or "")
                 created = stamp[:10]
                 name, when = _intake_session_parts(session)
+                state = str(session.get("state") or "unknown")
+                if state == "capturing":
+                    # Only the live supervisor session can still be
+                    # capturing; a `capturing` row on disk belongs to an
+                    # app that died mid-capture. Show it as interrupted
+                    # instead of a capture that will never finish.
+                    state = "interrupted"
                 rows.append({
                     "title": name,
                     "when": when,
-                    "state": str(session.get("state") or "unknown"),
+                    "state": state,
                     "created": created,
                     "key": f"intake:{sid}",
                     "sort": stamp,
@@ -596,18 +603,19 @@ class DashboardScreen(Screen):
 
                 root = str(self.config.workspace_root or "") if self.config else ""
                 job = supervisor_for(self.app)
-                live = job.snapshot()
                 for key in keys:
                     if key.startswith("intake:"):
                         sid = key.split(":", 1)[1]
-                        if live and live.get("id") == sid and live.get("state") == "capturing":
+                        if job.is_capturing_session(sid):
                             failed.append(f"{sid[:12]}: capture running")
                             continue
                         if root and delete_session(root, sid):
                             deleted += 1
-                            if live and live.get("id") == sid:
-                                job.active = None
-                                job.result = None
+                            # Drop the in-memory session only through the
+                            # supervisor's lock: an unlocked write here
+                            # could clobber a newer capture started while
+                            # this batch ran.
+                            job.forget(sid)
                         else:
                             failed.append(f"{sid[:12]}: not removed")
                         continue
@@ -653,8 +661,7 @@ class DashboardScreen(Screen):
         from .intake_job import delete_session, supervisor_for
 
         job = supervisor_for(self.app)
-        live = job.snapshot()
-        if live and live.get("id") == session_id and live.get("state") == "capturing":
+        if job.is_capturing_session(session_id):
             self.notify("Capture is still running; wait for it to finish.", severity="warning")
             return
         root = str(self.config.workspace_root or "") if self.config else ""
@@ -663,10 +670,13 @@ class DashboardScreen(Screen):
             return
 
         def _confirmed() -> None:
+            # Re-check under the supervisor's lock: the dialog can sit
+            # open long enough for a capture to (re)start.
+            if job.is_capturing_session(session_id):
+                self.notify("Capture is still running; wait for it to finish.", severity="warning")
+                return
             delete_session(root, session_id)
-            if live and live.get("id") == session_id:
-                job.active = None
-                job.result = None
+            job.forget(session_id)
             self.action_refresh()
             self.notify(f"Removed intake session {session_id[:16]}")
 
@@ -1852,11 +1862,17 @@ class DailyIntakeScreen(Screen):
         from .intake_job import report_session_date, today_yyyymmdd
 
         day = report_session_date()
-        pretty = f"{day[:4]}-{day[4:6]}-{day[6:]}" if len(day) == 8 else day
-        if day == today_yyyymmdd():
-            capture_hint = f"R captures {pretty} (current session)"
+        if day is None:
+            # No offline calendar is importable in this environment: the
+            # product certifies the session date itself (a weekday or
+            # fixed-clock guess is forbidden), so the hint stays undated.
+            capture_hint = "R captures the session the product calendar certifies"
         else:
-            capture_hint = f"R captures {pretty} (last session — pre-open / closed)"
+            pretty = f"{day[:4]}-{day[4:6]}-{day[6:]}" if len(day) == 8 else day
+            if day == today_yyyymmdd():
+                capture_hint = f"R captures {pretty} (current session)"
+            else:
+                capture_hint = f"R captures {pretty} (last session — pre-open / closed)"
         lines.extend([
             "",
             f"  Enter opens the latest report, {capture_hint}, H shows history.",

@@ -1548,7 +1548,14 @@ class IntakeDriver:
         if requested_date is not None:
             command.extend(("--date", requested_date))
         out = run_bounded(
-            command, self.timeout_seconds, label="daily intake command", text=False
+            command,
+            self.timeout_seconds,
+            label="daily intake command",
+            text=False,
+            # The capture runs for minutes; without a parent-death watch a
+            # TUI that dies mid-capture leaves the product writing the
+            # workspace with nobody to verify or stop it.
+            parent_death=True,
         )
         if not out["ok"]:
             if "not found" in out["error"]:
