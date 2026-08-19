@@ -65,9 +65,11 @@ managed compatible environment.
 
 ## TUI
 
-Dashboard keys: `A` Ask, `E` edit config, `D`/`X` delete the selected run,
-`Shift+D` delete all listed runs, `Q` quit; `Enter` on a run row inspects
-it. The registry shows a session title (pipeline + created time).
+Dashboard keys: `A` Ask, `E` edit config, click selects one run,
+`Shift+click` selects a range, `Ctrl+A` selects all, `D`/`X` delete the
+selection, `Shift+D` delete all listed pipeline runs, `Q` quit; `Enter`
+inspects the cursor row. The registry shows session name and time in
+separate columns.
 The Plugins sidebar (alphabetical) lists pipeline workbenches plus the
 CRYPTO (Polymarket tape) and ENERGY (EIA watchlist) modules. The quant and
 daily-report functions live inside the SECURITY (equity board by market

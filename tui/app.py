@@ -48,6 +48,8 @@ class StammtischTUI(App):
         # graph. Downstream sentiment may reuse this exact report in-process;
         # it must not rediscover an unverified JSON file by filename.
         self.last_daily_intake_result = None
+        from .intake_job import IntakeSupervisor
+        self.intake_supervisor = IntakeSupervisor()
 
     def on_mount(self) -> None:
         from .screens import DashboardScreen

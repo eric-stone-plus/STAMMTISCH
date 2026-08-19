@@ -28,7 +28,7 @@ from .analysis import _run_async
 from .widgets import (
     GRAY, DIM, GREEN, AMBER, RED, CYAN, WHITE,
     status_badge, DigestWidget, EventTimeline, GateCard,
-    StageFlowWidget, SystemHud, TypingText,
+    StageFlowWidget, SystemHud,
 )
 
 import logging
@@ -83,6 +83,9 @@ class DashboardScreen(Screen):
         Binding("x", "delete_selected", "Delete"),
         Binding("delete", "delete_selected", "Delete"),
         Binding("shift+d", "delete_all", "Delete all"),
+        Binding("ctrl+a", "check_all", "Select all", show=False, priority=True),
+        Binding("shift+up", "extend_up", "Extend", show=False, priority=True),
+        Binding("shift+down", "extend_down", "Extend", show=False, priority=True),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -110,6 +113,8 @@ class DashboardScreen(Screen):
         self.engine = engine
         self.config = config
         self._runs: list[dict[str, Any]] = []
+        self._checked: set[str] = set()
+        self._select_anchor: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static("", id="dash-status")
@@ -117,10 +122,10 @@ class DashboardScreen(Screen):
             with Vertical(id="dash-left"):
                 with Vertical(id="run-table-wrap"):
                     yield Static(
-                        "  Run Registry  |  Enter inspect  ·  D delete  ·  Shift+D all",
+                        "  Run Registry  |  click one  ·  Shift+click range  ·  Ctrl+A all  ·  D delete",
                         id="run-table-label",
                     )
-                    yield DataTable(id="run-table", cursor_type="row")
+                    yield RegistryTable(id="run-table", cursor_type="row")
             with Vertical(id="dash-right"):
                 yield SystemHud(id="sys-hud")
                 with Vertical(classes="panel"):
@@ -138,8 +143,103 @@ class DashboardScreen(Screen):
         # No pre-selected row in Quick Start: hover feedback only on demand.
         self.query_one("#quick-list", OptionList).highlighted = None
         table = self.query_one("#run-table", DataTable)
-        table.add_columns("SESSION", "STATE", "CREATED")
+        table.add_columns("SESSION", "TIME", "STATE")
+        self.set_interval(2.0, self._refresh_intake_rows)
         self.action_refresh()
+
+    def _intake_session_rows(self) -> list[dict[str, str]]:
+        from .intake_job import list_sessions, supervisor_for
+
+        root = ""
+        if self.config:
+            root = str(self.config.workspace_root or "")
+        rows: list[dict[str, str]] = []
+        seen: set[str] = set()
+        live = supervisor_for(self.app).snapshot()
+        if live is not None:
+            sid = str(live.get("id") or "")
+            if sid:
+                seen.add(sid)
+                stamp = str(live.get("updated_at") or live.get("started_at") or "")
+                created = stamp[:10]
+                name, when = _intake_session_parts(live)
+                rows.append({
+                    "title": name,
+                    "when": when,
+                    "state": str(live.get("state") or "capturing"),
+                    "created": created,
+                    "key": f"intake:{sid}",
+                    "sort": stamp,
+                })
+        if root:
+            for session in list_sessions(root):
+                sid = str(session.get("id") or "")
+                if not sid or sid in seen:
+                    continue
+                stamp = str(session.get("updated_at") or session.get("started_at") or "")
+                created = stamp[:10]
+                name, when = _intake_session_parts(session)
+                rows.append({
+                    "title": name,
+                    "when": when,
+                    "state": str(session.get("state") or "unknown"),
+                    "created": created,
+                    "key": f"intake:{sid}",
+                    "sort": stamp,
+                })
+        return rows
+
+    def _registry_rows(self, runs: list[dict[str, Any]]) -> list[dict[str, str]]:
+        rows = list(self._intake_session_rows())
+        for run in runs:
+            created_raw = str(run.get("created_at") or "")
+            created = created_raw.split("T")[0] if "T" in created_raw else created_raw
+            run_id = str(run.get("_full_id") or run.get("run_id") or "")
+            name, when = run_session_parts(run)
+            rows.append({
+                "title": name,
+                "when": when,
+                "state": str(run.get("state") or "?"),
+                "created": created,
+                "key": run_id,
+                "sort": created_raw or run_id,
+            })
+        rows.sort(key=lambda item: item.get("sort") or "", reverse=True)
+        return rows
+
+    def _paint_registry(self, runs: list[dict[str, Any]]) -> None:
+        table = self.query_one("#run-table", DataTable)
+        cursor = self._cursor_run_id() if table.row_count else ""
+        table.clear()
+        rows = self._registry_rows(runs)
+        valid = {item["key"] for item in rows if item.get("key")}
+        self._checked &= valid
+        try:
+            self.query_one("#sys-hud", SystemHud).run_count = len(rows)
+        except Exception:
+            pass
+        for item in rows:
+            table.add_row(
+                item["title"],
+                item.get("when") or item.get("created") or "",
+                status_badge(item["state"]),
+                key=item["key"],
+            )
+        if cursor:
+            for index, item in enumerate(rows):
+                if item["key"] == cursor:
+                    table.move_cursor(row=index)
+                    break
+        if isinstance(table, RegistryTable):
+            table.refresh_selection()
+
+    def _refresh_intake_rows(self) -> None:
+        job = getattr(self.app, "intake_supervisor", None)
+        if job is None or not getattr(job, "capturing", False):
+            return
+        if not self.is_mounted:
+            return
+        self._paint_registry(list(self._runs))
 
     def action_refresh(self) -> None:
         hud = self.query_one("#sys-hud", SystemHud)
@@ -174,19 +274,7 @@ class DashboardScreen(Screen):
                 hints.append(f"Run registry unavailable: {registry_error}")
             status.update("  " + "  |  ".join(hints) if hints else "")
             self._runs = list(runs)
-            hud.run_count = len(runs)
-            table = self.query_one("#run-table", DataTable)
-            table.clear()
-            for run in runs:
-                created = run.get("created_at", "")
-                if "T" in str(created):
-                    created = str(created).split("T")[0]
-                table.add_row(
-                    run_session_title(run),
-                    status_badge(run.get("state", "?")),
-                    created,
-                    key=run.get("_full_id", run.get("run_id", "")),
-                )
+            self._paint_registry(self._runs)
 
         # The registry walk spawns the core CLI; keep it off the UI thread
         # so a slow state root or a wedged subprocess cannot freeze the TUI.
@@ -361,6 +449,11 @@ class DashboardScreen(Screen):
         if not run_id:
             self.notify("No run selected. Use arrow keys to select.", severity="warning")
             return
+        if run_id.startswith("intake:"):
+            self.app.push_screen(
+                DailyIntakeScreen(self.config, session_id=run_id.split(":", 1)[1])
+            )
+            return
         self.app.push_screen(RunInspectorScreen(self.driver, self.ai, run_id))
 
     def action_init_state(self) -> None:
@@ -374,37 +467,212 @@ class DashboardScreen(Screen):
 
         self._run_async(self.driver.init, _apply_init, drop_stale=False)
 
-    def action_delete_selected(self) -> None:
-        """Delete the selected run (with confirmation)."""
+    def _cursor_run_id(self) -> str:
         table = self.query_one("#run-table", DataTable)
         if table.row_count == 0:
-            self.notify("No runs to delete.", severity="warning")
-            return
+            return ""
         row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
-        run_id = str(row_key.value) if row_key.value is not None else ""
-        if not run_id:
-            self.notify("No run selected. Use arrow keys to select.", severity="warning")
+        return str(row_key.value) if row_key.value is not None else ""
+
+    def on_registry_row_click(self, row_key: str, *, shift: bool) -> None:
+        """Plain click selects one row. Shift+click selects the range from the anchor."""
+        if not row_key:
             return
-        short = run_id[:16] + "..."
+        if shift:
+            self._select_range_to(row_key)
+        else:
+            self._checked = {row_key}
+            self._select_anchor = row_key
+        self._refresh_registry_selection()
 
-        def _confirmed():
-            def _deliver(r):
-                # r is a CommandResult (or an error dict from the worker guard).
-                if isinstance(r, dict):
-                    self.notify(f"Delete failed: {r.get('error')}", severity="error")
-                elif r.ok:
+    def on_registry_cursor_move(self) -> None:
+        """Arrow keys move the single selection with the cursor."""
+        row_key = self._cursor_run_id()
+        if not row_key:
+            return
+        self._checked = {row_key}
+        self._select_anchor = row_key
+        self._refresh_registry_selection()
+
+    def _refresh_registry_selection(self) -> None:
+        table = self.query_one("#run-table", DataTable)
+        if isinstance(table, RegistryTable):
+            table.refresh_selection()
+        else:
+            self._paint_registry(self._runs)
+
+    def _select_range_to(self, row_key: str) -> None:
+        keys = [item["key"] for item in self._registry_rows(self._runs) if item.get("key")]
+        if row_key not in keys:
+            return
+        if not self._select_anchor or self._select_anchor not in keys:
+            self._select_anchor = row_key
+        start = keys.index(self._select_anchor)
+        end = keys.index(row_key)
+        lo, hi = sorted((start, end))
+        self._checked = set(keys[lo : hi + 1])
+
+    def action_check_all(self) -> None:
+        keys = [item["key"] for item in self._registry_rows(self._runs) if item.get("key")]
+        if keys and self._checked.issuperset(keys):
+            self._checked.clear()
+            self._select_anchor = ""
+        else:
+            self._checked = set(keys)
+            self._select_anchor = keys[0] if keys else ""
+        self._refresh_registry_selection()
+
+    def action_extend_up(self) -> None:
+        self._extend_selection(-1)
+
+    def action_extend_down(self) -> None:
+        self._extend_selection(1)
+
+    def _extend_selection(self, delta: int) -> None:
+        rows = self._registry_rows(self._runs)
+        keys = [item["key"] for item in rows if item.get("key")]
+        if not keys:
+            return
+        current = self._cursor_run_id()
+        if current not in keys:
+            current = keys[0]
+        if not self._select_anchor or self._select_anchor not in keys:
+            self._select_anchor = current
+        index = keys.index(current)
+        nxt = max(0, min(len(keys) - 1, index + delta))
+        anchor = keys.index(self._select_anchor)
+        lo, hi = sorted((anchor, nxt))
+        self._checked = set(keys[lo : hi + 1])
+        table = self.query_one("#run-table", DataTable)
+        table.move_cursor(row=nxt)
+        self._refresh_registry_selection()
+
+    def action_delete_selected(self) -> None:
+        """Delete checked rows, or the cursor row if none are checked."""
+        keys = []
+        if self._checked:
+            keys = list(self._checked)
+        else:
+            run_id = self._cursor_run_id()
+            if run_id:
+                keys = [run_id]
+        if not keys:
+            self.notify("No run selected. Ctrl+A highlights all, or arrow to a row.", severity="warning")
+            return
+        if len(keys) == 1 and keys[0].startswith("intake:"):
+            self._delete_intake_session(keys[0].split(":", 1)[1])
+            return
+        if len(keys) == 1:
+            run_id = keys[0]
+            short = run_id[:16] + "..."
+
+            def _confirmed_one():
+                def _deliver(r):
+                    if isinstance(r, dict):
+                        self.notify(f"Delete failed: {r.get('error')}", severity="error")
+                    elif r.ok:
+                        self._checked.discard(run_id)
+                        self.action_refresh()
+                        self.notify(f"Deleted run {short}", severity="information")
+                    else:
+                        self.notify(f"Delete failed: {r.error_message}", severity="error")
+
+                self._run_async(lambda: self.driver.delete(run_id), _deliver, drop_stale=False)
+
+            self.app.push_screen(ConfirmScreen(
+                f"  Delete run {short}?\n\n  This removes the run directory and its evidence.\n\n"
+                f"  [Y] Confirm  [N]/[Esc] Cancel",
+                _confirmed_one,
+            ))
+            return
+
+        count = len(keys)
+
+        def _confirmed_many() -> None:
+            def _work() -> dict[str, Any]:
+                deleted = 0
+                failed: list[str] = []
+                from .intake_job import delete_session, supervisor_for
+
+                root = str(self.config.workspace_root or "") if self.config else ""
+                job = supervisor_for(self.app)
+                live = job.snapshot()
+                for key in keys:
+                    if key.startswith("intake:"):
+                        sid = key.split(":", 1)[1]
+                        if live and live.get("id") == sid and live.get("state") == "capturing":
+                            failed.append(f"{sid[:12]}: capture running")
+                            continue
+                        if root and delete_session(root, sid):
+                            deleted += 1
+                            if live and live.get("id") == sid:
+                                job.active = None
+                                job.result = None
+                        else:
+                            failed.append(f"{sid[:12]}: not removed")
+                        continue
+                    try:
+                        result = self.driver.delete(key)
+                    except Exception as exc:
+                        failed.append(f"{key[:12]}: {exc}")
+                        continue
+                    if getattr(result, "ok", False):
+                        deleted += 1
+                    else:
+                        failed.append(
+                            f"{key[:12]}: {getattr(result, 'error_message', None) or 'failed'}"
+                        )
+                return {"deleted": deleted, "failed": failed}
+
+            def _deliver(result: Any) -> None:
+                self._checked.clear()
+                if isinstance(result, dict) and "deleted" in result:
                     self.action_refresh()
-                    self.notify(f"Deleted run {short}", severity="information")
-                else:
-                    self.notify(f"Delete failed: {r.error_message}", severity="error")
+                    failed = result.get("failed") or []
+                    if failed:
+                        self.notify(
+                            f"Deleted {result['deleted']}/{count}; {failed[0]}",
+                            severity="warning",
+                        )
+                    else:
+                        self.notify(f"Deleted {result['deleted']} item(s).", severity="information")
+                    return
+                if isinstance(result, dict):
+                    self.notify(f"Delete failed: {result.get('error')}", severity="error")
 
-            # The delete result must always surface: the confirm pop resumes
-            # the dashboard and refreshes it, which bumps the generation —
-            # a stale-drop would swallow a "Delete failed" error.
-            self._run_async(lambda: self.driver.delete(run_id), _deliver, drop_stale=False)
+            self._run_async(_work, _deliver, drop_stale=False)
 
         self.app.push_screen(ConfirmScreen(
-            f"  Delete run {short}?\n\n  This removes the run directory and its evidence.\n\n"
+            f"  Delete {count} selected rows?\n\n"
+            f"  Pipeline runs remove evidence. Intake Home rows drop the session only.\n\n"
+            f"  [Y] Confirm  [N]/[Esc] Cancel",
+            _confirmed_many,
+        ))
+
+    def _delete_intake_session(self, session_id: str) -> None:
+        from .intake_job import delete_session, supervisor_for
+
+        job = supervisor_for(self.app)
+        live = job.snapshot()
+        if live and live.get("id") == session_id and live.get("state") == "capturing":
+            self.notify("Capture is still running; wait for it to finish.", severity="warning")
+            return
+        root = str(self.config.workspace_root or "") if self.config else ""
+        if not root:
+            self.notify("No workspace is configured.", severity="warning")
+            return
+
+        def _confirmed() -> None:
+            delete_session(root, session_id)
+            if live and live.get("id") == session_id:
+                job.active = None
+                job.result = None
+            self.action_refresh()
+            self.notify(f"Removed intake session {session_id[:16]}")
+
+        self.app.push_screen(ConfirmScreen(
+            f"  Remove intake session {session_id[:16]}… from Home?\n\n"
+            f"  Workspace evidence is kept; only the Home session row is removed.\n\n"
             f"  [Y] Confirm  [N]/[Esc] Cancel",
             _confirmed,
         ))
@@ -1526,13 +1794,22 @@ class DailyIntakeScreen(Screen):
     #intake-body { height: 1fr; border: solid #505050; background: #000000; padding: 1 2; }
     """
 
-    def __init__(self, config: Any, *, auto_start: bool = False, **kwargs: Any):
+    def __init__(
+        self,
+        config: Any,
+        *,
+        auto_start: bool = False,
+        session_id: str | None = None,
+        **kwargs: Any,
+    ):
         super().__init__(**kwargs)
         self.config = config
         self.auto_start = auto_start
+        self._session_id = session_id
         self._auto_started = False
         self._capture_running = False
         self._result: Any = None
+        self._progress_timer = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -1556,8 +1833,10 @@ class DailyIntakeScreen(Screen):
         self._auto_started = True
         if self.auto_start:
             self.action_capture()
-        else:
-            self._show_latest_report()
+            return
+        if self._attach_live_job() or self._show_named_session():
+            return
+        self._show_latest_report()
 
     def _show_latest_report(self) -> None:
         """Landing view: the newest indexed report, without capture side effects."""
@@ -1570,18 +1849,125 @@ class DailyIntakeScreen(Screen):
             lines.append(f"  History index: {error}")
         else:
             lines.append("  No daily report is indexed yet.")
+        from .intake_job import report_session_date, today_yyyymmdd
+
+        day = report_session_date()
+        pretty = f"{day[:4]}-{day[4:6]}-{day[6:]}" if len(day) == 8 else day
+        if day == today_yyyymmdd():
+            capture_hint = f"R captures {pretty} (current session)"
+        else:
+            capture_hint = f"R captures {pretty} (last session — pre-open / closed)"
         lines.extend([
             "",
-            "  Enter opens the latest report, R captures today, H shows history.",
+            f"  Enter opens the latest report, {capture_hint}, H shows history.",
+            "  Capture feeds the Chinese daily report and Sentiment. It stays on Home.",
         ])
         self.query_one("#intake-text", Static).update("\n".join(lines) + "\n")
+
+    def _attach_live_job(self) -> bool:
+        from .intake_job import render_progress, supervisor_for
+
+        job = supervisor_for(self.app)
+        live = job.snapshot()
+        if live is None:
+            return False
+        if live.get("state") == "capturing":
+            self._capture_running = True
+            self._session_id = str(live.get("id") or "")
+            self.query_one("#intake-text", Static).update(render_progress(live))
+            self._start_progress_timer()
+            return True
+        if job.result is not None:
+            self._result = job.result
+            self._capture_running = False
+            self.query_one("#intake-text", Static).update(self._format_result(job.result))
+            return True
+        return False
+
+    def _show_named_session(self) -> bool:
+        from .intake_job import load_session, render_progress
+
+        if not self._session_id or not self.config:
+            return False
+        session = load_session(self.config.workspace_root, self._session_id)
+        if session is None:
+            return False
+        if session.get("state") == "capturing":
+            self._capture_running = True
+            self.query_one("#intake-text", Static).update(render_progress(session))
+            self._start_progress_timer()
+            return True
+        self.query_one("#intake-text", Static).update(render_progress(session))
+        return True
+
+    def _start_progress_timer(self) -> None:
+        if self._progress_timer is not None:
+            return
+        self._progress_timer = self.set_interval(1.0, self._tick_progress)
+
+    def _stop_progress_timer(self) -> None:
+        timer = self._progress_timer
+        if timer is not None:
+            timer.stop()
+            self._progress_timer = None
+
+    def _tick_progress(self) -> None:
+        from .intake_job import render_progress, supervisor_for
+
+        if not self.is_mounted:
+            return
+        live = supervisor_for(self.app).snapshot()
+        if live is None:
+            self._stop_progress_timer()
+            return
+        if live.get("state") != "capturing":
+            self._stop_progress_timer()
+            return
+        self._capture_running = True
+        self.query_one("#intake-text", Static).update(render_progress(live))
+
+    def on_intake_job_finished(self, result: Any) -> None:
+        if not self.is_mounted:
+            return
+        self._stop_progress_timer()
+        self._capture_running = False
+        self._result = result
+        if result is None:
+            live = None
+            try:
+                from .intake_job import supervisor_for
+
+                live = supervisor_for(self.app).snapshot()
+            except Exception:
+                live = None
+            message = (live or {}).get("error") or "Daily intake failed."
+            self.query_one("#intake-text", Static).update(
+                f"  Status: REJECTED\n\n  {message}\n"
+            )
+            self.notify(message, severity="error")
+            return
+        self._refresh_history_index()
+        self.query_one("#intake-text", Static).update(self._format_result(result))
+        if result.ok:
+            self.notify("Daily data accepted. Press Enter to open the report.")
+        else:
+            self.notify(f"Daily intake failed: {result.error}", severity="error")
 
     def _refresh_history_index(self) -> None:
         """Fold the just-accepted run into the history index (best effort)."""
         _history_store(self.config)
 
     def action_capture(self) -> None:
-        if self._capture_running:
+        from .intake_job import render_progress, supervisor_for
+
+        job = supervisor_for(self.app)
+        if job.capturing:
+            live = job.snapshot() or {}
+            self._capture_running = True
+            self._session_id = str(live.get("id") or "")
+            self.query_one("#intake-text", Static).update(render_progress(live))
+            self._start_progress_timer()
+            self.notify("Capture already running; showing live progress.")
             return
         argv = tuple(self.config.intake_argv) if self.config else ()
         if not argv:
@@ -1600,7 +1986,7 @@ class DailyIntakeScreen(Screen):
             # values the editor accepts (timeout ceiling, driver-owned
             # flags), and a raise here must neither kill the app nor wedge
             # the screen in CAPTURING.
-            driver = IntakeDriver(
+            IntakeDriver(
                 (*argv, "--report-builder", self.config.get("intake_report_builder", "deepseek")),
                 self.config.workspace_root,
                 timeout_seconds=self.config.intake_timeout_seconds,
@@ -1609,42 +1995,12 @@ class DailyIntakeScreen(Screen):
             self.notify(f"Invalid intake configuration: {exc}", severity="error")
             return
 
+        session = job.start(self.app, self.config)
         self._capture_running = True
         self._result = None
-        self.query_one("#intake-text", Static).update(
-            "  Status: CAPTURING\n\n"
-            "  Firecrawl responses are being stored as append-only evidence.\n"
-            "  The canonical dataset and coverage gates will be checked before reporting.\n"
-        )
-        screen = self
-
-        def _worker() -> None:
-            result = driver.run()
-
-            def _deliver() -> None:
-                if not screen.is_mounted:
-                    return
-                screen._capture_running = False
-                screen._result = result
-                if result.ok:
-                    screen.app.last_daily_intake_result = result
-                    screen._refresh_history_index()
-                screen.query_one("#intake-text", Static).update(screen._format_result(result))
-                if result.ok:
-                    screen.notify("Daily data accepted. Press Enter to open the report.")
-                else:
-                    screen.notify(f"Daily intake failed: {result.error}", severity="error")
-
-            try:
-                screen.app.call_from_thread(_deliver)
-            except Exception as exc:
-                # Preserve a terminal diagnostic even if the application is
-                # torn down between product completion and UI delivery.
-                screen._capture_running = False
-                screen._result = result
-                screen._delivery_error = str(exc)
-
-        threading.Thread(target=_worker, daemon=True).start()
+        self._session_id = str(session.get("id") or "")
+        self.query_one("#intake-text", Static).update(render_progress(session))
+        self._start_progress_timer()
 
     @staticmethod
     def _format_result(result: Any) -> str:
@@ -1808,10 +2164,21 @@ class DailyIntakeScreen(Screen):
                 exceptions[status].append(source)
         return exceptions, None
 
+    def action_back(self) -> None:
+        self._stop_progress_timer()
+        self.app.pop_screen()
+
+    def on_unmount(self) -> None:
+        self._stop_progress_timer()
+
     def action_open_report(self) -> None:
-        if self._capture_running:
+        from .intake_job import supervisor_for
+
+        if self._capture_running or supervisor_for(self.app).capturing:
             self.notify("Capture is still running.", severity="warning")
             return
+        if self._result is None:
+            self._result = supervisor_for(self.app).result
         from .brief import BriefScreen, load_daily_path
 
         if self._result is not None and self._result.ok:
@@ -1841,9 +2208,6 @@ class DailyIntakeScreen(Screen):
     def action_history(self) -> None:
         self.app.push_screen(ReportHistoryScreen(self.config))
 
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
 
 class ReportHistoryScreen(Screen):
     """Session-list style picker over the indexed daily reports."""
@@ -1864,7 +2228,7 @@ class ReportHistoryScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "  REPORT HISTORY  |  [Enter] Open  [R] Reindex  [Esc] Back",
+            "  REPORT HISTORY  |  newest first  |  [Enter] Open  [R] Reindex  [Esc] Back",
             classes="header-bar",
         )
         yield OptionList(id="history-list")
@@ -2253,15 +2617,93 @@ class PipelineRunScreen(Screen):
 # ═══════════════════════════════════════════════════════════════════
 
 
+def format_run_session_summary(run_id: str, snapshot: dict[str, Any]) -> str:
+    """Plain-text session summary from a verified inspect snapshot."""
+    manifest = snapshot.get("manifest") if isinstance(snapshot.get("manifest"), dict) else {}
+    events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
+    gates = snapshot.get("gates") if isinstance(snapshot.get("gates"), list) else []
+    receipts = snapshot.get("receipts") if isinstance(snapshot.get("receipts"), list) else []
+    state = manifest.get("state") if isinstance(manifest.get("state"), dict) else {}
+    pipeline = manifest.get("pipeline") if isinstance(manifest.get("pipeline"), dict) else {}
+    name, when = run_session_parts({
+        "pipeline_id": pipeline.get("id"),
+        "created_at": manifest.get("created_at"),
+        "run_id": run_id,
+    })
+    lines = [
+        f"  {name}  {when}",
+        f"  Run     {run_id}",
+        f"  State   {state.get('code', '?')}",
+    ]
+    terminal = manifest.get("terminal") if isinstance(manifest.get("terminal"), dict) else {}
+    if terminal.get("code"):
+        lines.append(f"  End     {terminal.get('code')}  {terminal.get('at') or ''}".rstrip())
+    blockers = state.get("blockers") if isinstance(state.get("blockers"), list) else []
+    for blocker in blockers[:6]:
+        if blocker:
+            lines.append(f"  Blocker {blocker}")
+    stages: dict[str, str] = {}
+    first_at = ""
+    last_at = ""
+    last_type = ""
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        at = str(event.get("at") or "")
+        if at and not first_at:
+            first_at = at
+        if at:
+            last_at = at
+        last_type = str(event.get("type") or last_type)
+        stage = event.get("stage")
+        kind = str(event.get("type") or "")
+        if isinstance(stage, str) and stage and kind:
+            stages[stage] = kind
+    if stages:
+        lines.append("  Stages")
+        for stage, kind in stages.items():
+            short = kind.rsplit(".", 1)[-1] if "." in kind else kind
+            lines.append(f"    {stage}  {short}")
+    if gates:
+        lines.append("  Gates")
+        for item in gates:
+            record = item.get("record") if isinstance(item, dict) else None
+            if not isinstance(record, dict):
+                continue
+            gate_id = str(record.get("gate_id") or record.get("id") or "?")
+            decision = str(
+                record.get("decision")
+                or record.get("outcome")
+                or record.get("result")
+                or "?"
+            )
+            lines.append(f"    {gate_id}  {decision}")
+    lines.append(f"  Evidence  events={len(events)}  gates={len(gates)}  receipts={len(receipts)}")
+    if last_type:
+        lines.append(f"  Last     {last_type}  {_created_stamp(last_at) or last_at}")
+    return "\n".join(lines) + "\n"
+
+
 class RunInspectorScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("e", "export_run", "Export"),
         Binding("v", "verify_bundle", "Verify"),
-        Binding("a", "ai_analyze", "Ask"),
+        Binding("a", "open_chat", "Ask"),
         Binding("x", "delete_run", "Delete"),
     ]
-    CSS = "RunInspectorScreen { layout: vertical; } #ri-scroll { height: 1fr; }"
+    CSS = """
+    RunInspectorScreen { layout: vertical; }
+    #ri-scroll { height: 1fr; }
+    #ri-summary {
+        height: auto;
+        max-height: 14;
+        border: solid #505050;
+        background: #000000;
+        padding: 0 1 1 1;
+        overflow-y: auto;
+    }
+    """
 
     driver: StammtischDriver
     ai: DeepSeekDriver
@@ -2280,7 +2722,7 @@ class RunInspectorScreen(Screen):
     def compose(self) -> ComposeResult:
         short_id = self.run_id[:20] + "..." if len(self.run_id) > 20 else self.run_id
         yield Static(
-            f"  Run: {short_id}  |  [E]xport [V]erify [A]I Analyze [X] Delete [Esc] back",
+            f"  Run: {short_id}  |  [E]xport [V]erify [A]sk [X] Delete [Esc] back",
             classes="header-bar",
             id="ri-header",
         )
@@ -2299,9 +2741,8 @@ class RunInspectorScreen(Screen):
             with Vertical(classes="panel"):
                 yield Static("  Receipts", classes="panel-title")
                 yield Static(id="ri-receipts")
-            with Vertical(classes="panel panel-green"):
-                yield Static("  AI Analysis", classes="panel-title")
-                yield TypingText("  Press [A] to ask", id="ri-ai-text")
+        yield Static("  Session summary", classes="panel-title")
+        yield Static("  Loading session summary…\n", id="ri-summary", markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -2431,18 +2872,15 @@ class RunInspectorScreen(Screen):
         })
         short_id = self.run_id[:20] + "..." if len(self.run_id) > 20 else self.run_id
         self.query_one("#ri-header", Static).update(
-            f"  {title}  ·  {short_id}  |  [E]xport [V]erify [A]I Analyze [X] Delete [Esc] back"
+            f"  {title}  ·  {short_id}  |  [E]xport [V]erify [A]sk [X] Delete [Esc] back"
         )
         self.query_one("#ri-status", Static).update(
             f"  Verified snapshot: {len(events)} events, "
             f"{len(gates)} gates, {len(receipts)} receipts"
         )
-
-        # Non-completed runs are exactly where analysis pays off.  Trigger
-        # only after the verified snapshot has arrived; completed runs keep
-        # manual [A].
-        if self.ai.available and s.get("code") not in ("completed", None, "?"):
-            self._run_ai_analysis()
+        self.query_one("#ri-summary", Static).update(
+            format_run_session_summary(self.run_id, snapshot)
+        )
 
     def _show_inspect_error(self, error: str) -> None:
         self._snapshot = None
@@ -2457,8 +2895,8 @@ class RunInspectorScreen(Screen):
         self.query_one("#ri-timeline", EventTimeline).events = []
         self.query_one("#ri-gates").remove_children()
         self.query_one("#ri-receipts", Static).update("  (unavailable)")
-        self.query_one("#ri-ai-text", TypingText).set_text(
-            "  Analysis disabled: no verified run snapshot."
+        self.query_one("#ri-summary", Static).update(
+            "  Session summary unavailable: run evidence could not be verified.\n"
         )
 
     def action_back(self) -> None:
@@ -2535,45 +2973,15 @@ class RunInspectorScreen(Screen):
         # export + verify both shell out: keep them off the UI thread.
         _run_async(self, _verify, _deliver)
 
-    def action_ai_analyze(self) -> None:
+    def action_open_chat(self) -> None:
         if not self.ai.available:
             self.notify("DeepSeek API key not set.", severity="error")
             return
-        self._run_ai_analysis()
+        self.app.push_screen(ChatScreen(self.ai))
 
     def _run_ai_analysis(self) -> None:
-        """Ask to explain this run (auto-triggered on open for
-        non-completed runs, manual [A] for everything else)."""
-        if self._snapshot is None:
-            detail = self._inspect_error or "snapshot is still loading"
-            self.notify(f"Cannot analyze: {detail}", severity="error")
-            return
-        if self._ai_running:
-            return
-        self._ai_running = True
-        ai_text = self.query_one("#ri-ai-text", TypingText)
-        ai_text.set_text("  Asking...")
-        snapshot = self._snapshot
-        manifest = snapshot["manifest"]
-        gates = [item["record"] for item in snapshot["gates"]]
-        events = snapshot["events"]
-        run_data = {"pipeline_id": manifest.get("pipeline", {}).get("id", "?"), "run_id": self.run_id, "terminal": manifest.get("state", {}).get("code", "?"), "detail": ""}
-        context = build_run_context(run_data, gates, events)
-        def _query():
-            try:
-                r = self.ai.chat("Analyze this pipeline run. Explain gate results, identify issues, suggest improvements.", context=context)
-            except Exception as e:
-                r = ChatResponse(content="", error=str(e))
-            def _deliver():
-                if not self.is_mounted:
-                    return
-                self._ai_running = False
-                ai_text.set_text(f"  {r.content}" if r.ok else f"  Error: {r.error}")
-            try:
-                self.app.call_from_thread(_deliver)
-            except Exception:
-                pass
-        threading.Thread(target=_query, daemon=True).start()
+        # Kept for older tests: inspector chat was removed.
+        self._ai_running = False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -3072,17 +3480,170 @@ _INPUT_HISTORY_CAP = 200
 _SESSION_KEEP = 80
 
 
-def run_session_title(run: dict[str, Any]) -> str:
-    """Display title for one registry row. Not stored in events.jsonl."""
+class RegistryTable(DataTable):
+    """Run list with full-row highlight for the current selection.
+
+    Click or arrow keys select one row. Shift+click / Shift+arrows select
+    the range from the last anchor. Ctrl+A selects all. Selected rows use
+    the same full-cell cursor background as the focused row.
+    """
+
+    BINDINGS = [
+        Binding("ctrl+a", "screen.check_all", "Select all", show=False),
+        Binding("shift+up", "screen.extend_up", "Extend", show=False),
+        Binding("shift+down", "screen.extend_down", "Extend", show=False),
+    ]
+
+    def _selected_keys(self) -> set[str]:
+        checked = getattr(self.screen, "_checked", None)
+        return checked if isinstance(checked, set) else set()
+
+    def _key_at(self, row_index: int) -> str:
+        if row_index < 0:
+            return ""
+        try:
+            value = self.ordered_rows[row_index].key.value
+        except Exception:
+            return ""
+        return "" if value is None else str(value)
+
+    def _row_is_selected(self, row_index: int) -> bool:
+        key = self._key_at(row_index)
+        return bool(key) and key in self._selected_keys()
+
+    def _should_highlight(self, cursor, target_cell, type_of_cursor) -> bool:
+        if super()._should_highlight(cursor, target_cell, type_of_cursor):
+            return True
+        if type_of_cursor == "row":
+            return self._row_is_selected(target_cell.row)
+        return False
+
+    def refresh_selection(self) -> None:
+        self._update_count += 1
+        clear = getattr(self._get_styles_to_render_cell, "cache_clear", None)
+        if callable(clear):
+            clear()
+        cache = getattr(self, "_row_render_cache", None)
+        if cache is not None:
+            cache.clear()
+        self.refresh()
+
+    def _apply_click(self, row_index: int, shift: bool) -> None:
+        if row_index < 0:
+            return
+        key = self._key_at(row_index)
+        handler = getattr(self.screen, "on_registry_row_click", None)
+        if handler is not None and key:
+            handler(key, shift=shift)
+
+    def _follow_cursor(self) -> None:
+        handler = getattr(self.screen, "on_registry_cursor_move", None)
+        if handler is not None:
+            handler()
+
+    def action_cursor_up(self) -> None:
+        super().action_cursor_up()
+        self._follow_cursor()
+
+    def action_cursor_down(self) -> None:
+        super().action_cursor_down()
+        self._follow_cursor()
+
+    def action_page_up(self) -> None:
+        super().action_page_up()
+        self._follow_cursor()
+
+    def action_page_down(self) -> None:
+        super().action_page_down()
+        self._follow_cursor()
+
+    def action_scroll_home(self) -> None:
+        super().action_scroll_home()
+        self._follow_cursor()
+
+    def action_scroll_end(self) -> None:
+        super().action_scroll_end()
+        self._follow_cursor()
+
+    def _event_shift(self, event: Any) -> bool:
+        if bool(getattr(event, "shift", False)):
+            return True
+        # Some terminals encode Shift on the button number (SGR +4).
+        try:
+            return bool(int(getattr(event, "button", 0)) & 4)
+        except (TypeError, ValueError):
+            return False
+
+    def _row_from_event(self, event: Any) -> int | None:
+        meta = getattr(getattr(event, "style", None), "meta", None) or {}
+        row_index = meta.get("row")
+        if row_index is None or int(row_index) < 0:
+            return None
+        return int(row_index)
+
+    async def _on_mouse_down(self, event) -> None:
+        row_index = self._row_from_event(event)
+        if row_index is None:
+            await super()._on_mouse_down(event)
+            return
+        from textual.coordinate import Coordinate
+
+        column = 0
+        meta = getattr(getattr(event, "style", None), "meta", None) or {}
+        try:
+            column = int(meta.get("column") or 0)
+        except (TypeError, ValueError):
+            column = 0
+        self.cursor_coordinate = Coordinate(row_index, column)
+        event.stop()
+        self._ignore_next_click = True
+        self._apply_click(row_index, self._event_shift(event))
+
+    async def _on_click(self, event) -> None:
+        if getattr(self, "_ignore_next_click", False):
+            self._ignore_next_click = False
+            event.stop()
+            return
+        row_index = self._row_from_event(event)
+        if row_index is None:
+            await super()._on_click(event)
+            return
+        from textual.coordinate import Coordinate
+
+        meta = getattr(getattr(event, "style", None), "meta", None) or {}
+        self.cursor_coordinate = Coordinate(row_index, int(meta.get("column") or 0))
+        event.stop()
+        self._apply_click(row_index, self._event_shift(event))
+
+
+def run_session_parts(run: dict[str, Any]) -> tuple[str, str]:
+    """Name and aligned timestamp for a registry row."""
     explicit = run.get("title")
     if isinstance(explicit, str) and explicit.strip():
-        return " ".join(explicit.split())
-    pipeline = str(run.get("pipeline_id") or "").strip() or "run"
+        name = " ".join(explicit.split())
+    else:
+        name = str(run.get("pipeline_id") or "").strip() or "run"
     stamp = _created_stamp(run.get("created_at"))
-    if stamp:
-        return f"{pipeline} · {stamp}"
-    rid = str(run.get("run_id") or "")
-    return f"{pipeline} · {rid[:8]}" if rid else pipeline
+    if not stamp:
+        rid = str(run.get("run_id") or "")
+        stamp = rid[:8]
+    return name, stamp
+
+
+def run_session_title(run: dict[str, Any]) -> str:
+    """Single-line title kept for tests and inspector headers."""
+    name, stamp = run_session_parts(run)
+    return f"{name}  {stamp}".rstrip() if stamp else name
+
+
+def _intake_session_parts(session: dict[str, Any]) -> tuple[str, str]:
+    title = str(session.get("title") or "daily-intake")
+    name = title.split(" · ", 1)[0].strip() or "daily-intake"
+    when = _created_stamp(session.get("started_at") or session.get("updated_at"))
+    day = str(session.get("date") or "")
+    if not when and len(day) == 8:
+        when = f"{day[:4]}-{day[4:6]}-{day[6:]}"
+    return name, when
 
 
 def _created_stamp(created: Any) -> str:
@@ -3372,10 +3933,10 @@ class ChatScreen(Screen):
     def on_mount(self) -> None:
         self._ask_dir = _ask_dir(self.app)
         self._input_history = load_input_history(self._ask_dir)
-        pointer = self._asked_session_id or _load_json(
-            self._ask_dir / "current.json", {}
-        ).get("id")
-        loaded = load_ask_session(self._ask_dir, str(pointer)) if pointer else None
+        # A opens a fresh turn. Prior conversations stay in Ctrl+O.
+        loaded = None
+        if self._asked_session_id:
+            loaded = load_ask_session(self._ask_dir, str(self._asked_session_id))
         if loaded is not None:
             self._session = loaded
         self._chat_log = render_ask_session(self._session)
@@ -4058,11 +4619,14 @@ class HelpScreen(Screen):
                 "    other domain plugins from config 'plugins' (directory view).\n\n"
                 "  Quick Start (bottom list):\n"
                 "    a  Ask (GALAHAD chat)      e  Edit config\n\n"
-                "  Dashboard keys: a Ask · e Edit · d/x delete run · Shift+D delete all · q Quit.\n"
+                "  Dashboard keys: a Ask · e Edit · d/x delete · Shift+D delete all · q Quit.\n"
+                "    Click selects one run; Shift+click selects the range; Ctrl+A selects all.\n"
                 "    Enter inspects the selected run. Session titles are pipeline + time.\n"
                 "    FULLSTACK is the example pipeline, not a sidebar workbench.\n\n"
                 "  Chat: Enter send · Shift-Enter newline · ↑↓ history · Ctrl+O sessions\n"
                 "    Ctrl+N new session · PgUp/PgDn scroll. Thinking is collapsed with time.\n\n"
+                "  Daily: R captures the last session before the A-share open,\n"
+                "    otherwise today's session. Progress stays on Home.\n\n"
                 "  Press Esc to close"
             )
 

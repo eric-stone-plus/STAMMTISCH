@@ -11,7 +11,10 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from textual.widgets import DataTable, Input, OptionList, Static
@@ -128,6 +131,48 @@ class TuiSmokeTest(unittest.TestCase):
     def test_daily_intake_invalid_config_fails_visibly(self) -> None:
         asyncio.run(self._intake_invalid_config_scenario())
 
+    def test_intake_session_progress_stays_on_home(self) -> None:
+        asyncio.run(self._intake_session_progress_scenario())
+
+    def test_intake_workspace_observation(self) -> None:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from tui.intake_job import (
+            observe_workspace,
+            render_progress,
+            report_session_date,
+            session_title,
+        )
+
+        self.assertEqual(
+            session_title("20260818", "2026-08-18T16:58:00Z"),
+            "daily-intake · 2026-08-18 · 16:58",
+        )
+        shanghai = ZoneInfo("Asia/Shanghai")
+        pre_open = datetime(2026, 8, 19, 0, 50, tzinfo=shanghai)
+        after_open = datetime(2026, 8, 19, 10, 0, tzinfo=shanghai)
+        self.assertEqual(report_session_date(pre_open), "20260818")
+        self.assertEqual(report_session_date(after_open), "20260819")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            markdown = root / "runs" / "rid" / "normalized-markdown"
+            markdown.mkdir(parents=True)
+            (markdown / "eastmoney.md").write_text("x", encoding="utf-8")
+            seen = observe_workspace(root, time.time() - 10, "20260818")
+            self.assertGreaterEqual(seen["accepted"], 1)
+            self.assertIn("eastmoney", seen["summary"])
+            text = render_progress({
+                "state": "capturing",
+                "elapsed_s": 75,
+                "title": "daily-intake · 2026-08-18",
+                "summary": seen["summary"],
+                "lines": seen["lines"],
+            })
+            self.assertIn("CAPTURING", text)
+            self.assertIn("1m 15s", text)
+            self.assertIn("daily-intake · 2026-08-18", text)
+
     def test_chat_input_page_keys_scroll_the_log(self) -> None:
         asyncio.run(self._chat_page_scenario())
 
@@ -140,12 +185,15 @@ class TuiSmokeTest(unittest.TestCase):
                 "created_at": "2026-08-18T03:25:06.320Z",
                 "run_id": "01a012e6-bb8c-75f3-8597-c55291876dc5",
             }),
-            "stock-quinte-local · 2026-08-18 03:25",
+            "stock-quinte-local  2026-08-18 03:25",
         )
         self.assertEqual(run_session_title({"title": " coal screen "}), "coal screen")
 
     def test_dashboard_delete_selected_run(self) -> None:
         asyncio.run(self._dashboard_delete_scenario())
+
+    def test_dashboard_shift_click_selects_range(self) -> None:
+        asyncio.run(self._dashboard_shift_select_scenario())
 
     def test_security_board_reuses_cached_quotes(self) -> None:
         asyncio.run(self._security_cache_scenario())
@@ -1572,6 +1620,10 @@ class TuiSmokeTest(unittest.TestCase):
                             "Verified snapshot",
                             str(screen.query_one("#ri-status", Static).render()),
                         )
+                        summary = str(screen.query_one("#ri-summary", Static).render())
+                        self.assertIn("State", summary)
+                        self.assertIn("completed", summary)
+                        self.assertIn("review", summary)
 
     async def _run_inspector_error_scenario(self) -> None:
         from tui.screens import RunInspectorScreen
@@ -1651,6 +1703,67 @@ class TuiSmokeTest(unittest.TestCase):
                     text = str(screen.query_one("#intake-text", Static).render())
                     self.assertNotIn("CAPTURING", text)
 
+    async def _intake_session_progress_scenario(self) -> None:
+        from tui.screens import DailyIntakeScreen
+
+        started = threading.Event()
+        release = threading.Event()
+        accepted = SimpleNamespace(
+            ok=True,
+            error=None,
+            envelope={"date": "20260818", "market_counts": {"ashare": 1}, "quality": {"status": "passed", "issues": []}},
+            counts={"expected": 1, "succeeded": 1, "failed": 0, "pruned": 0, "canonical_records": 0},
+            artifacts={},
+        )
+
+        def _slow_run(self, date=None):
+            started.set()
+            release.wait(timeout=5)
+            return accepted
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ws").mkdir()
+            cfg_path = root / "config.json"
+            cfg_path.write_text(json.dumps({
+                "state_root": str(root / "state"),
+                "intake_cmd": "fixture-intake",
+                "workspace_root": str(root / "ws"),
+            }), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                with mock.patch("tui.intake.IntakeDriver.run", _slow_run):
+                    async with app.run_test(size=(120, 40)) as pilot:
+                        await pilot.pause()
+                        app.push_screen(DailyIntakeScreen(app.screen.config, auto_start=False))
+                        await pilot.pause()
+                        await pilot.press("r")
+                        for _ in range(40):
+                            await asyncio.sleep(0.025)
+                            await pilot.pause()
+                            if started.is_set():
+                                break
+                        self.assertTrue(started.is_set())
+                        body = str(app.screen.query_one("#intake-text", Static).render())
+                        self.assertIn("CAPTURING", body)
+                        self.assertIn("daily-intake", body)
+                        await pilot.press("escape")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, DashboardScreen)
+                        titles = []
+                        table = app.screen.query_one("#run-table", DataTable)
+                        for index in range(table.row_count):
+                            titles.append(str(table.get_row_at(index)[0]))
+                        self.assertTrue(any("daily-intake" in title for title in titles))
+                        release.set()
+                        for _ in range(40):
+                            await asyncio.sleep(0.025)
+                            await pilot.pause()
+                            if not app.intake_supervisor.capturing:
+                                break
+                        self.assertFalse(app.intake_supervisor.capturing)
+                        self.assertTrue(app.intake_supervisor.result.ok)
+
     async def _chat_page_scenario(self) -> None:
         from tui.deepseek import DeepSeekDriver
         from tui.screens import ChatScreen
@@ -1712,8 +1825,9 @@ class TuiSmokeTest(unittest.TestCase):
                     table = dashboard.query_one("#run-table")
                     self.assertEqual(table.row_count, 1)
                     title = str(table.get_row_at(0)[0])
+                    when = str(table.get_row_at(0)[1])
                     self.assertIn("stock-quinte-local", title)
-                    self.assertIn("2026-08-18 03:25", title)
+                    self.assertIn("2026-08-18 03:25", when)
                     dashboard.query_one("#run-table").focus()
                     with mock.patch.object(dashboard.driver, "delete", return_value=_Deleted()) as spy:
                         await pilot.press("d")
@@ -1731,6 +1845,54 @@ class TuiSmokeTest(unittest.TestCase):
                         spy.call_args[0][0],
                         "01a012e6-bb8c-75f3-8597-c55291876dc5",
                     )
+
+    async def _dashboard_shift_select_scenario(self) -> None:
+        class _Status:
+            ok = True
+            error_message = None
+            data = {
+                "runs": [
+                    {
+                        "run_id": f"01a012e6-bb8c-75f3-8597-c55291876dc{i}",
+                        "pipeline_id": "stock-quinte-local",
+                        "state": "blocked",
+                        "created_at": f"2026-08-18T03:2{i}:06Z",
+                    }
+                    for i in range(3)
+                ]
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    dashboard = app.screen
+                    with mock.patch.object(dashboard.driver, "status", return_value=_Status()):
+                        dashboard.action_refresh()
+                        for _ in range(40):
+                            await asyncio.sleep(0.025)
+                            await pilot.pause()
+                            if dashboard.query_one("#run-table").row_count == 3:
+                                break
+                    rows = dashboard._registry_rows(dashboard._runs)
+                    first = rows[0]["key"]
+                    last = rows[2]["key"]
+                    dashboard.on_registry_row_click(first, shift=False)
+                    dashboard.on_registry_row_click(last, shift=True)
+                    self.assertEqual(dashboard._checked, {item["key"] for item in rows})
+                    dashboard.query_one("#run-table").move_cursor(row=0)
+                    dashboard.on_registry_cursor_move()
+                    self.assertEqual(dashboard._checked, {first})
+                    dashboard.on_registry_row_click(first, shift=False)
+                    dashboard.on_registry_row_click(last, shift=True)
+                    dashboard.action_check_all()
+                    self.assertEqual(dashboard._checked, set())
+                    dashboard.action_check_all()
+                    self.assertEqual(len(dashboard._checked), 3)
 
     async def _security_cache_scenario(self) -> None:
         from tui.screens import SecurityScreen
@@ -2443,7 +2605,10 @@ class ChatScreenTest(unittest.TestCase):
                 return ChatResponse(content=f"echo:{query}")
 
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": os.path.join(tmp, "config.json")}):
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(100, 30)) as pilot:
                     app.push_screen(ChatScreen(_FakeAI()))
@@ -2485,7 +2650,10 @@ class ChatScreenTest(unittest.TestCase):
                 return ChatResponse(content="done", reasoning_content="先拆解证据再下结论")
 
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": os.path.join(tmp, "config.json")}):
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(100, 30)) as pilot:
                     app.push_screen(ChatScreen(_SlowAI()))
@@ -2528,9 +2696,12 @@ class ChatScreenTest(unittest.TestCase):
 
         ai = _BlockingAI()
         with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as handle:
+                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
             with mock.patch.dict(
                 os.environ,
-                {"STAMMTISCH_CONFIG": os.path.join(tmp, "config.json")},
+                {"STAMMTISCH_CONFIG": cfg_path},
             ):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(100, 30)) as pilot:
@@ -2623,7 +2794,7 @@ class ChatScreenTest(unittest.TestCase):
                     session_id = screen._session["id"]
                     app.pop_screen()
                     await pilot.pause()
-                    app.push_screen(ChatScreen(_FakeAI()))
+                    app.push_screen(ChatScreen(_FakeAI(), session_id=session_id))
                     await pilot.pause()
                     self.assertIn("first pick", app.screen._chat_log)
                     self.assertIn("second pick", app.screen._chat_log)

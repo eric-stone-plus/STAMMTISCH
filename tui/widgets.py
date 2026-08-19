@@ -23,6 +23,8 @@ BG_HEADER = "#303030"
 def status_badge(state: str) -> Text:
     styles = {
         "completed": ("black", GREEN), "running": ("black", CYAN),
+        "capturing": ("black", CYAN), "accepted": ("black", GREEN),
+        "rejected": ("black", RED),
         "blocked": ("black", AMBER), "failed": ("black", RED),
         "halted": ("black", RED), "staged": ("black", CYAN),
         "created": ("black", CYAN), "unknown": ("black", DIM),
