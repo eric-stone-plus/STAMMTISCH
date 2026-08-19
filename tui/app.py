@@ -55,9 +55,15 @@ class StammtischTUI(App):
         from .screens import DashboardScreen
         self.driver.prepare()
         self.push_screen(DashboardScreen(self.driver, self.ai, self.engine, self.config))
+        # Resident auto-capture: GALAHAD judges from a digest whether a
+        # daily-data capture is due; deterministic gates run first.
+        from .intake_steward import steward_for
+        steward_for(self).start(self)
 
     def on_unmount(self) -> None:
         """Reap local core/chart/intake processes owned by this application."""
+        from .intake_steward import steward_for
+        steward_for(self).stop()
         self.driver.close()
         from .chart_server import stop_owned_server
         stop_owned_server()
