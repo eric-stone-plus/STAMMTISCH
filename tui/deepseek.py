@@ -1,4 +1,4 @@
-"""DeepSeek API driver — OpenAI-compatible chat completions."""
+"""AI chat driver — OpenAI-compatible chat completions."""
 
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ import urllib.request
 import urllib.error
 
 
-DEEPSEEK_BASE = "https://api.deepseek.com/v1"
-DEEPSEEK_MODEL = "deepseek-v4-pro"
+# Default backend: Zhipu GLM's official OpenAI-compatible entry. Any
+# OpenAI-compatible endpoint works through config/env overrides.
+DEEPSEEK_BASE = "https://open.bigmodel.cn/api/paas/v4"
+DEEPSEEK_MODEL = "glm-5.3"
 DEEPSEEK_MAX_TOKENS = 16384
 
 SYSTEM_PROMPT = """# Charter
@@ -61,9 +63,9 @@ Each discipline carries its own evidence discipline: what it may use and what it
 
 
 def _get_api_key() -> str | None:
-    """Resolve DeepSeek API key from env var or the TUI config file."""
-    # 1. Environment variables
-    for var in ["DEEPSEEK_API_KEY", "DEEPSEEK_KEY", "DEEPSEEK_TOKEN"]:
+    """Resolve the AI API key from env vars or the TUI config file."""
+    # 1. Environment variables (current names first, legacy names still honored)
+    for var in ["GLM_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY", "DEEPSEEK_KEY", "DEEPSEEK_TOKEN"]:
         key = os.environ.get(var)
         if key:
             return key
@@ -111,7 +113,7 @@ class ChatResponse:
 
 
 class DeepSeekDriver:
-    """Thin wrapper around DeepSeek chat completions API."""
+    """Thin wrapper around the configured OpenAI-compatible chat API."""
 
     def __init__(
         self,
@@ -172,7 +174,7 @@ class DeepSeekDriver:
         """Run one transactional user turn while ``_chat_lock`` is held."""
         with self._lock:
             if not self.api_key:
-                return ChatResponse(content="", error="DEEPSEEK_API_KEY not set")
+                return ChatResponse(content="", error="AI API key not set")
             key = self.api_key
             model = self.model
             base_url = self.base_url

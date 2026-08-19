@@ -24,8 +24,8 @@ def default_config_file() -> Path:
 
 DEFAULT_CONFIG = {
     "deepseek_api_key": "",
-    "deepseek_base_url": "https://api.deepseek.com/v1",
-    "deepseek_model": "deepseek-v4-pro",
+    "deepseek_base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "deepseek_model": "glm-5.3",
     "state_root": "",
     "data_dir": str(Path.home() / ".quant_cache"),
     "recent_symbols": [],
@@ -128,8 +128,14 @@ class Config:
             except (json.JSONDecodeError, UnicodeDecodeError, OSError):
                 pass  # Use defaults on corrupt config
 
-        # Environment variable overrides (never persisted to disk)
-        env_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_KEY")
+        # Environment variable overrides (never persisted to disk).
+        # Current GLM names first; legacy DeepSeek names stay honored.
+        env_key = (
+            os.environ.get("GLM_API_KEY")
+            or os.environ.get("ZHIPU_API_KEY")
+            or os.environ.get("DEEPSEEK_API_KEY")
+            or os.environ.get("DEEPSEEK_KEY")
+        )
         if env_key:
             self._data["deepseek_api_key"] = env_key
             self._from_env.add("deepseek_api_key")

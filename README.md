@@ -27,7 +27,7 @@ stammtisch inspect RUN   # → receipts, gates, verdicts
 stammtisch export RUN --out /tmp/bundle
 stammtisch verify --bundle /tmp/bundle
 stammtisch config        # → show TUI config (API key masked)
-stammtisch config set-key sk-...   # → save DeepSeek key (prompts if omitted)
+stammtisch config set-key sk-...   # → save the AI key (prompts if omitted)
 ```
 
 No args = TUI. With args = CLI.
@@ -50,7 +50,8 @@ Optional integrations (the TUI degrades gracefully without them):
 
 ```sh
 export STAMMTISCH_PYTHON=/path/to/python   # interpreter used for the TUI
-export DEEPSEEK_API_KEY=...                # chat + run analysis
+export GLM_API_KEY=...                     # chat + run analysis (GLM default;
+                                           #  DEEPSEEK_API_KEY still honored)
 # or persist the key in the config file instead: stammtisch config set-key
 # quantkit importable in the TUI python → quant engine commands
 ```
@@ -113,7 +114,7 @@ stammtisch              ← unified launcher (TUI / CLI)
 │   ├── widgets.py      ← stage flow, gate cards, HUD
 │   ├── driver.py       ← stammtisch-core CLI driver
 │   ├── engine.py       ← quantkit bridge (optional)
-│   ├── deepseek.py     ← DeepSeek AI driver (optional)
+│   ├── deepseek.py     ← AI chat driver, OpenAI-compatible (optional)
 │   ├── config.py       ← file config + env overrides (0600)
 │   └── theme.py        ← grayscale CSS
 ├── schemas/            ← JSON Schema contracts (versioned)

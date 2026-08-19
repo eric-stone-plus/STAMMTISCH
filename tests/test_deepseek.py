@@ -52,8 +52,8 @@ def _completion(
 
 
 class DeepSeekDriverTest(unittest.TestCase):
-    def test_ds_pro_is_the_consistent_default_and_config_can_override(self):
-        self.assertEqual(DEEPSEEK_MODEL, "deepseek-v4-pro")
+    def test_glm_is_the_consistent_default_and_config_can_override(self):
+        self.assertEqual(DEEPSEEK_MODEL, "glm-5.3")
         self.assertEqual(DEFAULT_CONFIG["deepseek_model"], DEEPSEEK_MODEL)
         self.assertEqual(DeepSeekDriver(api_key="sk-test").model, DEEPSEEK_MODEL)
 

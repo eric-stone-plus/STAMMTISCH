@@ -1,4 +1,4 @@
-"""Hot-pluggable chat tools (DeepSeek function calling).
+"""Hot-pluggable chat tools (AI function calling).
 
 A tool is a name, a JSON Schema description the model reads to decide
 whether to call, and a local handler. Register or remove entries in

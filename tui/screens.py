@@ -263,7 +263,7 @@ class DashboardScreen(Screen):
             hints.append("quantkit not installed — quant commands disabled "
                          "(pip install -e <quantkit>)")
         if not self.ai.available:
-            hints.append("DeepSeek API key not set. Press [E]dit or run: "
+            hints.append("AI API key not set. Press [E]dit or run: "
                          "stammtisch config set-key")
         elif not self.driver.is_initialized():
             hints.append("State root not initialized. Press [I] to initialize.")
@@ -754,7 +754,7 @@ class DashboardScreen(Screen):
 
     def action_open_chat(self) -> None:
         if not self.ai.available:
-            self.notify("DeepSeek API key not set.", severity="error")
+            self.notify("AI API key not set.", severity="error")
             return
         self.app.push_screen(ChatScreen(self.ai))
 
@@ -2975,7 +2975,7 @@ class RunInspectorScreen(Screen):
 
     def action_open_chat(self) -> None:
         if not self.ai.available:
-            self.notify("DeepSeek API key not set.", severity="error")
+            self.notify("AI API key not set.", severity="error")
             return
         self.app.push_screen(ChatScreen(self.ai))
 
@@ -4298,7 +4298,7 @@ class ConfigScreen(Screen):
         yield Static("  Config  |  [Ctrl+S] Save  [Esc] Cancel", classes="header-bar")
         with ScrollableContainer(id="cfg-scroll"):
             with Vertical(classes="panel"):
-                yield Static("  DeepSeek", classes="panel-title")
+                yield Static("  AI Service", classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  API Key", classes="cfg-label")
                     yield Input(value=self.config.get("deepseek_api_key", ""), password=True,

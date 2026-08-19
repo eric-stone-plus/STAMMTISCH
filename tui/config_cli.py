@@ -6,8 +6,8 @@ edits the same file the TUI reads/writes (default
 
 Usage:
   stammtisch config                 show current config (API key masked)
-  stammtisch config set-key [KEY]   set the DeepSeek API key (prompts if omitted)
-  stammtisch config unset-key       remove the DeepSeek API key
+  stammtisch config set-key [KEY]   set the AI API key (prompts if omitted)
+  stammtisch config unset-key       remove the AI API key
   stammtisch config set KEY VALUE   set any config key (see below)
   stammtisch config get KEY         print one value
   stammtisch config unset KEY       remove a key (falls back to default)
@@ -63,7 +63,7 @@ def mask_secret(value: str) -> str:
     return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
 
 
-def _prompt_secret(prompt: str = "DeepSeek API key: ") -> str:
+def _prompt_secret(prompt: str = "AI API key: ") -> str:
     """Read a secret with getpass (hidden echo), stdin fallback for non-tty."""
     try:
         import getpass
@@ -104,13 +104,13 @@ def _set_key(config: Config, args: list[str]) -> int:
         print("stammtisch config: no key provided; nothing changed", file=sys.stderr)
         return 2
     config.set("deepseek_api_key", key)
-    print(f"DeepSeek API key saved to {config.path} (0600).")
+    print(f"AI API key saved to {config.path} (0600).")
     return 0
 
 
 def _unset_key(config: Config) -> int:
     config.set("deepseek_api_key", "")
-    print("DeepSeek API key removed.")
+    print("AI API key removed.")
     return 0
 
 
