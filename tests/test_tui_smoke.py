@@ -241,7 +241,7 @@ class TuiSmokeTest(unittest.TestCase):
             with open(cfg_path, "w") as handle:
                 json.dump({
                     "polymarket_proxy_url": "http://proxy.example",
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                 }, handle)
             failed = {
                 "ok": False,
@@ -267,7 +267,7 @@ class TuiSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
-                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+                json.dump({"state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws")}, handle)
             fake_pm = {
                 "ok": True,
                 "markets": [{
@@ -341,7 +341,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
                     "workspace_root": str(workspace),
                     "reports_root": os.path.join(tmp, "legacy"),
@@ -396,7 +396,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "eia_api_key": "KEY123",
                     "energy_proxy_url": "http://proxy.example:8080",
                 }, handle)
@@ -502,7 +502,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "security_symbols": ["600188.SS", "1088.HK", "BTU", "BADSUSP.SS"],
                 }, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
@@ -566,7 +566,7 @@ class TuiSmokeTest(unittest.TestCase):
             casino.mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "racing_cmd": "fixture-racing",
                 "plugins": [{"label": "CASINO", "root": str(casino)}],
             }), encoding="utf-8")
@@ -616,7 +616,7 @@ class TuiSmokeTest(unittest.TestCase):
             casino.mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 # Empty futures list pins the legacy directory-browser
                 # fallback; a configured list opens the FuturesScreen instead.
                 "futures_symbols": [],
@@ -662,7 +662,7 @@ class TuiSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
-                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+                json.dump({"state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws")}, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(100, 30)) as pilot:
@@ -724,7 +724,7 @@ class TuiSmokeTest(unittest.TestCase):
             futures.mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 # Default futures_symbols (["BZ=F"]) applies.
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
@@ -812,7 +812,7 @@ class TuiSmokeTest(unittest.TestCase):
             futures.mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
@@ -894,7 +894,7 @@ class TuiSmokeTest(unittest.TestCase):
             futures.mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "external_bars_root": str(root / "export"),
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
@@ -965,7 +965,7 @@ class TuiSmokeTest(unittest.TestCase):
             )
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "external_bars_root": str(root / "export"),
                 "shipping_cmd": f"{sys.executable} {adapter}",
                 "plugins": [{"label": "shipping", "root": str(root / "shipping")}],
@@ -1034,7 +1034,7 @@ class TuiSmokeTest(unittest.TestCase):
             )
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "shipping_cmd": f"{sys.executable} {adapter}",
                 "plugins": [{"label": "shipping", "root": str(shipping)}],
             }), encoding="utf-8")
@@ -1145,7 +1145,7 @@ class TuiSmokeTest(unittest.TestCase):
                 encoding="utf-8")
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "shipping_cmd": f"{sys.executable} {ffa_adapter}",
                 "spval_cmd": f"{sys.executable} {spval_adapter}",
                 "plugins": [{"label": "shipping", "root": str(root / "shipping")}],
@@ -1246,7 +1246,7 @@ class TuiSmokeTest(unittest.TestCase):
             shipping.mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 # No shipping_cmd: the plugin keeps the directory browser.
                 "plugins": [{"label": "shipping", "root": str(shipping)}],
             }), encoding="utf-8")
@@ -1274,7 +1274,7 @@ class TuiSmokeTest(unittest.TestCase):
             futures.mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
             fake_pm = {"ok": True, "markets": [], "error": None}
@@ -1312,7 +1312,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
                 }, f)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
@@ -1448,7 +1448,7 @@ class TuiSmokeTest(unittest.TestCase):
             }), encoding="utf-8")
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
             }), encoding="utf-8")
             started = _threading.Event()
             release = _threading.Event()
@@ -1524,7 +1524,7 @@ class TuiSmokeTest(unittest.TestCase):
             root = Path(tmp)
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
             }), encoding="utf-8")
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
@@ -1712,7 +1712,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "intake_cmd": "some-daily-data-product",
                     # Above the driver's ceiling: the config editor accepts
                     # it, IntakeDriver rejects it.
@@ -1761,7 +1761,7 @@ class TuiSmokeTest(unittest.TestCase):
             (root / "ws").mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "intake_cmd": "fixture-intake",
                 "workspace_root": str(root / "ws"),
             }), encoding="utf-8")
@@ -1844,7 +1844,7 @@ class TuiSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
-                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+                json.dump({"state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws")}, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(120, 40)) as pilot:
@@ -1865,7 +1865,7 @@ class TuiSmokeTest(unittest.TestCase):
                     self.assertIn("2026-08-18 03:25", when)
                     dashboard.query_one("#run-table").focus()
                     with mock.patch.object(dashboard.driver, "delete", return_value=_Deleted()) as spy:
-                        await pilot.press("d")
+                        await pilot.press("delete")
                         await pilot.pause()
                         from tui.screens import ConfirmScreen
                         self.assertIsInstance(app.screen, ConfirmScreen)
@@ -1895,7 +1895,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "workspace_root": str(workspace),
                 }, handle)
             # A session file left `capturing` on disk by an app that died
@@ -1969,7 +1969,7 @@ class TuiSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
-                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+                json.dump({"state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws")}, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(120, 40)) as pilot:
@@ -2023,7 +2023,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "security_symbols": ["BTU"],
                 }, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
@@ -2073,7 +2073,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
                 }, f)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
@@ -2192,7 +2192,7 @@ class TuiSmokeTest(unittest.TestCase):
             }, ensure_ascii=False), encoding="utf-8")
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "data_dir": str(root / "data"),
                 "intake_cmd": "fixture-intake",
                 "workspace_root": str(root),
@@ -2318,7 +2318,7 @@ class TuiSmokeTest(unittest.TestCase):
             )
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "data_dir": str(root / "data"),
                 "intake_cmd": "fixture-intake",
                 "workspace_root": str(root),
@@ -2388,7 +2388,7 @@ class TuiSmokeTest(unittest.TestCase):
             }, ensure_ascii=False), encoding="utf-8")
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"),
+                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "data_dir": str(root / "data"),
                 "workspace_root": str(workspace),
                 "reports_root": str(root / "legacy"),
@@ -2459,7 +2459,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
                     "reports_root": str(reports),
                     "workspace_root": str(workspace),
@@ -2491,7 +2491,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
                 }, f)
             spec = os.path.join(tmp, "spec.json")
@@ -2525,7 +2525,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
                 }, f)
 
@@ -2565,7 +2565,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"),
+                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
                 }, f)
 
@@ -2711,7 +2711,7 @@ class ChatScreenTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
-                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+                json.dump({"state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws")}, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(100, 30)) as pilot:
@@ -2756,7 +2756,7 @@ class ChatScreenTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
-                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+                json.dump({"state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws")}, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(100, 30)) as pilot:
@@ -2802,7 +2802,7 @@ class ChatScreenTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
-                json.dump({"state_root": os.path.join(tmp, "state")}, handle)
+                json.dump({"state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws")}, handle)
             with mock.patch.dict(
                 os.environ,
                 {"STAMMTISCH_CONFIG": cfg_path},

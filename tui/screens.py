@@ -79,8 +79,6 @@ class DashboardScreen(Screen):
     BINDINGS = [
         Binding("a", "open_chat", "Ask"),
         Binding("e", "edit_config", "Edit"),
-        Binding("d", "delete_selected", "Delete"),
-        Binding("x", "delete_selected", "Delete"),
         Binding("delete", "delete_selected", "Delete"),
         Binding("shift+d", "delete_all", "Delete all"),
         Binding("ctrl+a", "check_all", "Select all", show=False, priority=True),
@@ -115,6 +113,7 @@ class DashboardScreen(Screen):
         self._runs: list[dict[str, Any]] = []
         self._checked: set[str] = set()
         self._select_anchor: str = ""
+        self._last_intake_signature: tuple[str, str] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="dash-status")
@@ -122,7 +121,7 @@ class DashboardScreen(Screen):
             with Vertical(id="dash-left"):
                 with Vertical(id="run-table-wrap"):
                     yield Static(
-                        "  Run Registry  |  click one  ·  Shift+click range  ·  Ctrl+A all  ·  D delete",
+                        "  Run Registry  |  click one  ·  Shift+click range  ·  Ctrl+A all  ·  Del delete",
                         id="run-table-label",
                     )
                     yield RegistryTable(id="run-table", cursor_type="row")
@@ -242,10 +241,21 @@ class DashboardScreen(Screen):
 
     def _refresh_intake_rows(self) -> None:
         job = getattr(self.app, "intake_supervisor", None)
-        if job is None or not getattr(job, "capturing", False):
+        if job is None or not self.is_mounted:
             return
-        if not self.is_mounted:
+        capturing = getattr(job, "capturing", False)
+        live = job.snapshot() if capturing else None
+        signature = (
+            (str(live.get("id")), str(live.get("state"))) if live else None
+        )
+        # Repaint on transitions (capture start and completion) instead of
+        # every tick: a full-table repaint plus the session-dir walk it
+        # triggers is wasted work while a capture quietly progresses.
+        # Completion repaints once so the final accepted/rejected row is
+        # visible without a manual refresh.
+        if signature == getattr(self, "_last_intake_signature", None):
             return
+        self._last_intake_signature = signature
         self._paint_registry(list(self._runs))
 
     def action_refresh(self) -> None:
@@ -4635,7 +4645,7 @@ class HelpScreen(Screen):
                 "    other domain plugins from config 'plugins' (directory view).\n\n"
                 "  Quick Start (bottom list):\n"
                 "    a  Ask (GALAHAD chat)      e  Edit config\n\n"
-                "  Dashboard keys: a Ask · e Edit · d/x delete · Shift+D delete all · q Quit.\n"
+                "  Dashboard keys: a Ask · e Edit · Del delete · Shift+D delete all · q Quit.\n"
                 "    Click selects one run; Shift+click selects the range; Ctrl+A selects all.\n"
                 "    Enter inspects the selected run. Session titles are pipeline + time.\n"
                 "    FULLSTACK is the example pipeline, not a sidebar workbench.\n\n"
