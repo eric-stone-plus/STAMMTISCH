@@ -522,6 +522,7 @@ class FuturesScreen(Screen):
 
     def action_portfolio(self) -> None:
         self.app.push_screen(PortfolioScreen(self.engine, self.config))
+
 class ShippingScreen(Screen):
     """Freight boards with category switching (←/→).
 
@@ -947,6 +948,8 @@ class SecurityScreen(Screen):
         Binding("p", "portfolio", "Portfolio"),
         Binding("s", "sentiment", "Sentiment"),
         Binding("t", "indicators", "Indicators"),
+        Binding("g", "strategy_scan", "Strategy scan"),
+        Binding("question_mark", "show_help", "Keys"),
         # Priority: the board table would otherwise consume the arrows as
         # horizontal scrolling whenever its rows overflow the terminal.
         Binding("left", "prev_zone", "Prev Zone", priority=True),
@@ -974,7 +977,8 @@ class SecurityScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static(
             "  SECURITY  |  [←→] Zone  [R] Refresh  [K] K-line  "
-            "[B/F/T/P] Quant  [D/H/S] Daily  [A] Ask  [E] Config  [Esc] Back",
+            "[G] Strategy scan  [B/F/T/P] Quant  [S] Sentiment  "
+            "[A] Ask  [E] Config  [?] Keys  [Esc] Back",
             classes="header-bar",
         )
         yield Static("", id="sec-cats")
@@ -1256,6 +1260,34 @@ class SecurityScreen(Screen):
         self.app.pop_screen()
 
     def action_chat(self) -> None: self._dash.action_open_chat()
+    def action_strategy_scan(self) -> None:
+        symbols = [
+            str(item.get("key") or "")
+            for item in self._by_zone.get(self._zones[self._zone_idx], [])
+            if item.get("key")
+        ] if self._zones else []
+        if not symbols:
+            self.notify("This zone has no symbols to scan.", severity="warning")
+            return
+        self.app.push_screen(
+            StrategyScanScreen(self.engine, self.config, self._zones[self._zone_idx], symbols)
+        )
+
+    def action_show_help(self) -> None:
+        from .modals import KeyHelpScreen
+
+        self.app.push_screen(KeyHelpScreen("SECURITY — KEYS", [
+            ("← →", "switch market zone (A-SHARE / HK / US / OTHER)"),
+            ("r", "refresh quotes"),
+            ("g", "strategy scan: run the default strategy across this zone"),
+            ("k", "browser K-line chart for the highlighted row"),
+            ("b / f / t / p", "quant screens: backtest / fetch / indicators / portfolio"),
+            ("s", "sentiment board (daily report)"),
+            ("a", "ask GALAHAD"),
+            ("e", "edit config"),
+            ("Esc", "back to the dashboard"),
+        ]))
+
     def action_backtest(self) -> None: self._dash.action_run_backtest()
     def action_intake(self) -> None: self._dash.action_open_intake()
     def action_config(self) -> None: self._dash.action_edit_config()
@@ -1263,3 +1295,193 @@ class SecurityScreen(Screen):
     def action_portfolio(self) -> None: self._dash.action_run_portfolio()
     def action_sentiment(self) -> None: self._dash.action_open_sentiment()
     def action_indicators(self) -> None: self._dash.action_show_indicators()
+
+
+class StrategyScanScreen(Screen):
+    """Strategy capability scan: the default strategy across one zone.
+
+    One backtest per symbol (config defaults: strategy, fast/slow, cost
+    tier), gates evaluated per result, rows sorted by total return so the
+    first glance answers "where does this strategy actually work".
+    """
+
+    BINDINGS = [
+        Binding("escape", "back", "Back"),
+        Binding("r", "rescan", "Rescan"),
+        Binding("question_mark", "show_help", "Keys"),
+    ]
+    CSS = """
+    StrategyScanScreen { layout: vertical; }
+    #scan-head { height: 1; padding: 0 1; background: #202020; }
+    #scan-status { height: 1; padding: 0 1; color: #808080; }
+    #scan-table-wrap { height: 1fr; border: solid #505050; background: #000000; }
+    .scan-label { dock: top; height: 1; padding: 0 1; background: #303030; text-style: bold; color: #ffffff; }
+    """
+
+    def __init__(self, engine, config, zone: str, symbols: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self.engine = engine
+        self.config = config
+        self.zone = zone
+        self.symbols = list(symbols)
+
+    # ── scan parameters from the workstation defaults ──────────────
+
+    def _params(self) -> dict[str, Any]:
+        cfg = self.config or {}
+        try:
+            strategy = cfg.get("default_strategy") or "dual_ma"
+            fast = int(cfg.get("default_fast") or 20)
+            slow = int(cfg.get("default_slow") or 50)
+            cost_tier = cfg.get("default_cost_tier") or "low"
+        except Exception:
+            strategy, fast, slow, cost_tier = "dual_ma", 20, 50, "low"
+        start = (date.today() - timedelta(days=730)).isoformat()
+        return {
+            "strategy": str(strategy), "fast": fast, "slow": slow,
+            "cost_tier": str(cost_tier), "start": start,
+        }
+
+    def compose(self) -> ComposeResult:
+        p = self._params()
+        yield Static(
+            f"  STRATEGY SCAN  |  {self.zone}  ·  {p['strategy']} "
+            f"({p['fast']}/{p['slow']})  ·  cost {p['cost_tier']}  ·  "
+            f"2y window  ·  sorted by TR",
+            id="scan-head",
+        )
+        yield Static("  starting…", id="scan-status")
+        with Vertical(id="scan-table-wrap"):
+            yield Static(
+                "  Strategy capability by symbol (long-only)", classes="scan-label"
+            )
+            yield DataTable(id="scan-table", cursor_type="row")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#scan-table", DataTable)
+        table.add_columns(
+            "CODE", "TR%", "CAGR%", "SHARPE", "MAXDD%", "WIN%", "TRADES", "GATES"
+        )
+        self.action_rescan()
+
+    def _status(self, text: str) -> None:
+        def _ui() -> None:
+            if self.is_mounted:
+                try:
+                    self.query_one("#scan-status", Static).update(f"  {text}")
+                except Exception:
+                    pass
+        try:
+            self.app.call_from_thread(_ui)
+        except Exception:
+            pass
+
+    # ── worker ─────────────────────────────────────────────────────
+
+    def action_rescan(self) -> None:
+        _run_async(self, self._scan, self._done, dedup_key="strategy-scan")
+
+    def _scan(self) -> dict[str, Any]:
+        p = self._params()
+        rows: list[dict[str, Any]] = []
+        total = len(self.symbols)
+        for index, symbol in enumerate(self.symbols, 1):
+            self._status(f"scanning {index}/{total}  {symbol}")
+            result = self.engine.run_backtest(
+                symbol, strategy=p["strategy"], fast=p["fast"], slow=p["slow"],
+                start=p["start"], cost_tier=p["cost_tier"],
+            )
+            if not result.get("ok"):
+                rows.append({"symbol": symbol, "error": str(result.get("error"))[:40]})
+                self._emit_row(rows[-1])
+                continue
+            summary = result["summary"]
+            metrics = {
+                "total_return": summary.total_return,
+                "cagr": summary.cagr,
+                "sharpe": summary.sharpe,
+                "max_drawdown": summary.max_drawdown,
+                "win_rate": summary.win_rate,
+                "trades": summary.trades,
+            }
+            gates = self.engine.evaluate_gates(metrics)
+            report = gates.get("report") or {}
+            gates_passed = getattr(report, "n_passed", 0)
+            gates_total = getattr(report, "n_total", 0)
+            gates_ok = bool(getattr(report, "all_passed", False))
+            row = {"symbol": symbol, **metrics,
+                   "gates": f"{gates_passed}/{gates_total}",
+                   "gates_ok": gates_ok}
+            rows.append(row)
+            self._emit_row(row)
+        ok_rows = [r for r in rows if "error" not in r]
+        ok_rows.sort(key=lambda r: r["total_return"], reverse=True)
+        return {"ok": True, "rows": rows, "ranked": ok_rows}
+
+    def _add_row(self, row: dict[str, Any]) -> None:
+        """UI-thread row insertion; no threading wrapper inside."""
+        if not self.is_mounted:
+            return
+        table = self.query_one("#scan-table", DataTable)
+        if "error" in row:
+            table.add_row(row["symbol"], f"error: {row['error']}",
+                          "", "", "", "", "", "", key=row["symbol"])
+        else:
+            table.add_row(
+                row["symbol"],
+                f"{row['total_return'] * 100:+.1f}",
+                f"{row['cagr'] * 100:+.1f}",
+                f"{row['sharpe']:+.2f}",
+                f"{row['max_drawdown'] * 100:.1f}",
+                f"{row['win_rate'] * 100:.0f}",
+                str(row["trades"]),
+                row["gates"],
+                key=row["symbol"],
+            )
+
+    def _emit_row(self, row: dict[str, Any]) -> None:
+        """Worker-thread entry: hop to the UI thread for the insertion."""
+        try:
+            self.app.call_from_thread(self._add_row, row)
+        except Exception:
+            pass
+
+    def _done(self, result: dict[str, Any]) -> None:
+        if not result.get("ok"):
+            self.query_one("#scan-status", Static).update(
+                f"  scan failed: {str(result.get('error'))[:120]}  ·  [R] rescan"
+            )
+            return
+        table = self.query_one("#scan-table", DataTable)
+        table.clear()
+        ranked = result.get("ranked") or []
+        for row in ranked:
+            self._add_row(row)  # UI thread already: no hop
+        errors = [r for r in result.get("rows") or [] if "error" in r]
+        for row in errors:
+            self._add_row(row)
+        summary = (
+            f"done — {len(ranked)} scanned"
+            + (f", {len(errors)} failed" if errors else "")
+            + "  ·  [R] rescan  ·  [?] keys"
+        )
+        self.query_one("#scan-status", Static).update(f"  {summary}")
+
+    def action_show_help(self) -> None:
+        from .modals import KeyHelpScreen
+
+        p = self._params()
+        self.app.push_screen(KeyHelpScreen("STRATEGY SCAN — KEYS", [
+            ("r", "rescan (re-run every symbol in this zone)"),
+            ("↑ ↓", "move in the results table"),
+            ("Esc", "back to the security board"),
+            ("", ""),
+            (f"strategy: {p['strategy']} ({p['fast']}/{p['slow']})",
+             "set via default_strategy / default_fast / default_slow"),
+            ("cost model", f"default_cost_tier = {p['cost_tier']}"),
+            ("gates", "quantkit gate suite per result; N/M = gates passed"),
+        ]))
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
