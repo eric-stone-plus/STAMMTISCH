@@ -2637,7 +2637,7 @@ class ChatScreenTest(unittest.TestCase):
         class _FakeAI:
             available = True
 
-            def chat(self, query, context=None):
+            def chat(self, query, context=None, **kwargs):
                 return ChatResponse(content=f"echo:{query}")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2681,7 +2681,7 @@ class ChatScreenTest(unittest.TestCase):
         class _SlowAI:
             available = True
 
-            def chat(self, query, context=None):
+            def chat(self, query, context=None, **kwargs):
                 _time.sleep(0.6)
                 return ChatResponse(content="done", reasoning_content="先拆解证据再下结论")
 
@@ -2720,7 +2720,7 @@ class ChatScreenTest(unittest.TestCase):
                 self.first_started = _threading.Event()
                 self.release_first = _threading.Event()
 
-            def chat(self, query, context=None):
+            def chat(self, query, context=None, **kwargs):
                 self.calls.append(query)
                 if query == "first":
                     self.first_started.set()
@@ -2792,7 +2792,7 @@ class ChatScreenTest(unittest.TestCase):
         class _FakeAI:
             available = True
 
-            def chat(self, query, context=None):
+            def chat(self, query, context=None, **kwargs):
                 return ChatResponse(content=f"echo:{query}")
 
         with tempfile.TemporaryDirectory() as tmp:

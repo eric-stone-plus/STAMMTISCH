@@ -287,12 +287,26 @@ class ChatScreen(Screen):
         # log and new answers look like the conversation stalled.
         self._scroller().scroll_end(animate=False)
 
+    def _pending_events_tail(self, limit: int = 4) -> str:
+        """Live tool-call stream under the spinner; deep-verification turns
+        run minutes and a bare timer reads as hung."""
+        events = getattr(self, "_live_events", [])
+        if not events:
+            return ""
+        shown = events[-limit:]
+        rows = [f"  | {event}" for event in shown]
+        extra = len(events) - limit
+        if extra > 0:
+            rows.insert(0, f"  | ... {extra} earlier calls")
+        return "\n" + "\n".join(rows) + "\n"
+
+
     def _tick_thinking(self) -> None:
         if self._active_request is None:
             return
         self._spin_frame += 1
         elapsed = int(time.monotonic() - self._pending_started)
-        self._pending = _thinking_line(elapsed, self._spin_frame)
+        self._pending = _thinking_line(elapsed, self._spin_frame) + self._pending_events_tail()
         self._refresh_log()
 
     def _stop_thinking(self, request_token: object | None = None) -> None:
@@ -369,9 +383,18 @@ class ChatScreen(Screen):
         box.disabled = True
         self._refresh_log()
 
+        def _on_tool_event(event: str) -> None:
+            def _ui() -> None:
+                if self.is_mounted and self._active_request is not None:
+                    self._live_events = getattr(self, "_live_events", [])[-20:] + [event]
+            try:
+                self.app.call_from_thread(_ui)
+            except Exception:
+                pass
+
         def _query():
             try:
-                r = self.ai.chat(query, context=context)
+                r = self.ai.chat(query, context=context, on_event=_on_tool_event)
             except Exception as e:
                 r = ChatResponse(content="", error=str(e))
             result = r.content if r.ok else f"Error: {r.error}"

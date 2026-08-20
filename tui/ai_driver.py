@@ -163,15 +163,26 @@ class AIDriver:
         except Exception as e:
             return None, str(e)
 
-    def chat(self, user_message: str, context: str | None = None) -> ChatResponse:
-        """Send a message and get a complete response (tool-call aware)."""
+    def chat(
+        self,
+        user_message: str,
+        context: str | None = None,
+        on_event=None,
+    ) -> ChatResponse:
+        """Send a message and get a complete response (tool-call aware).
+
+        ``on_event(text)`` fires once per tool call from the worker thread
+        so long verification turns are visibly alive; it must never block
+        and must marshal to the UI thread itself.
+        """
         with self._chat_lock:
-            return self._chat_serialized(user_message, context)
+            return self._chat_serialized(user_message, context, on_event)
 
     def _chat_serialized(
         self,
         user_message: str,
         context: str | None = None,
+        on_event=None,
     ) -> ChatResponse:
         """Run one transactional user turn while ``_chat_lock`` is held."""
         with self._lock:
@@ -337,6 +348,11 @@ class AIDriver:
                             except Exception as e:
                                 result = f"error: {e}"
                                 tool_events.append(f"{name}(…) ✗ {e}")
+                            if on_event is not None:
+                                try:
+                                    on_event(tool_events[-1])
+                                except Exception:
+                                    pass  # progress must never break a turn
                     tool_history = ChatMessage(
                         "tool",
                         result[:8000],
