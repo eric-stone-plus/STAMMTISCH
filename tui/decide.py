@@ -2,9 +2,12 @@
 
 One invocation per day (systemd timer, or ``--force`` to redo today):
 
-- every zone of the configured ``security_symbols`` universe is scanned
-  with the workstation's default strategy (per-symbol fetch retry, a
-  transient provider hiccup costs one retry, not the zone);
+- every zone of the configured ``security_symbols`` watchlist is scanned
+  with the workstation's default strategy — or, with no watchlist
+  configured, the whole parquet cache is screened (same strategy
+  semantics) and the quality-floor survivors per zone become the
+  candidates (per-symbol fetch retry, a transient provider hiccup costs
+  one retry, not the zone);
 - the latest crawled daily report contributes a per-market headline
   digest, and Kronos forecasts (when ``kronos_cmd`` is configured) cover
   each zone's top scan candidates — the decision sees quant evidence,
@@ -192,11 +195,25 @@ def run(force: bool = False) -> int:
         return 0
 
     # ── universe by zone ───────────────────────────────────────────
+    # Manual watchlist when configured; otherwise a full-market screen —
+    # every cached symbol gets the same dual_ma backtest and only the
+    # quality-floor survivors per zone reach the decision.
     universe: dict[str, list[str]] = {}
-    for symbol in config.security_symbols:
-        universe.setdefault(security_zone(symbol), []).append(symbol)
+    manual = [s for s in config.security_symbols if str(s).strip()]
+    screened_from: dict[str, int] = {}
+    if manual:
+        for symbol in manual:
+            universe.setdefault(security_zone(symbol), []).append(symbol)
+    else:
+        from .screener import screen_market
+        print("decide: no manual watchlist — screening the full cache…", flush=True)
+        screened = screen_market(engine)
+        for zone, rows in screened.items():
+            universe[zone] = [r["symbol"] for r in rows]
+            screened_from[zone] = len(rows)
     if not universe:
-        print("decide: security_symbols is empty", file=sys.stderr)
+        print("decide: empty universe (no watchlist, screen found nothing)",
+              file=sys.stderr)
         return 2
 
     from .ai_driver import AIDriver
@@ -209,7 +226,10 @@ def run(force: bool = False) -> int:
     failures = 0
 
     for zone, symbols in universe.items():
-        print(f"[{zone}] scanning {len(symbols)} symbols…", flush=True)
+        origin = (f"{len(symbols)} screened finalists (top of a full-market "
+                  f"dual_ma screen, quality floors applied)"
+                  if zone in screened_from else f"{len(symbols)} watchlist symbols")
+        print(f"[{zone}] scanning {origin}…", flush=True)
         rows = _scan_zone(engine, symbols)
         ok_rows = [r for r in rows if "error" not in r]
         if not ok_rows:
@@ -226,8 +246,15 @@ def run(force: bool = False) -> int:
         headlines = _headlines(config, market_by_zone.get(zone, ""))
 
         context_parts = [
-            f"Today strategy scan — zone {zone}, dual_ma 20/50, cost low, 2y window, "
-            f"sorted by TR:\n{_table(ok_rows)}",
+            (f"Today strategy scan — zone {zone}, full-market screen "
+             f"(dual_ma 20/50, cost low, 2y window), sorted by TR. Candidates "
+             f"are the top backtest performers of the whole cached market — "
+             f"screen rankings reward recent momentum and contain survivorship "
+             f"and multiple-comparison bias, so demand regime and liquidity "
+             f"evidence before trusting any single number:\n{_table(ok_rows)}"
+             if zone in screened_from else
+             f"Today strategy scan — zone {zone}, dual_ma 20/50, cost low, 2y window, "
+             f"sorted by TR:\n{_table(ok_rows)}"),
             f"Yesterday's decision: {_prior_context(latest, zone)}",
         ]
         if headlines:
@@ -243,6 +270,10 @@ def run(force: bool = False) -> int:
             "你是每日配置决策人。基于扫描表、昨日决策、今日新闻与预测曲线,"
             "把昨日的持仓调整为今日决策:权重变化给理由,新增/剔除给证据,"
             "价格与回测数字一律以工具核实为准(优先用 scan_backtests 批量核实)。"
+            + ("候选来自全市场回测筛选(非人工偏好域):入选唯一依据是回测质量,"
+               "你的职责是核实与风控——近期动量与幸存者偏差高发,单票重仓前必须有"
+               "流动性/趋势持续性证据,脆弱的就剔除,不必凑满仓位。"
+               if zone in screened_from else "")
             "先给简短论述,然后必须以一个 ```json 代码块结尾,结构:"
             '{"zone":"…","stance":"proceed|cautious|defensive",'
             '"positions":[{"symbol":"…","weight_pct":0,"action":"hold|buy|add|trim|cut|watch","note":"…"}],'

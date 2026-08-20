@@ -14,4 +14,4 @@ ExecStart=%h/Documents/Public/STAMMTISCH/.venv/bin/python -m tui.decide
 # One round = three zones x (scan + one model pass); Kronos forecasts add
 # minutes more. The runner is idempotent per day, so a timeout just skips
 # today's redo.
-TimeoutStartSec=1800
+TimeoutStartSec=2700
