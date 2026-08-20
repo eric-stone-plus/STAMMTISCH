@@ -109,7 +109,7 @@ stammtisch              ← unified launcher (TUI / CLI)
 │   └── cmd.rs          ← CLI surface
 ├── tui/                ← Python TUI (textual + rich, nmtui style)
 │   ├── app.py          ← app + global bindings
-│   ├── screens.py      ← dashboard, run, inspector, validate, chat
+│   ├── screens/        ← screen package: dashboard, domains, intake, runs, chat, config
 │   ├── analysis.py     ← quant screens (data/backtest/indicators/portfolio/gates)
 │   ├── intake.py       ← verified daily-data product adapter
 │   ├── widgets.py      ← stage flow, gate cards, HUD

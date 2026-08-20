@@ -314,7 +314,9 @@ class FrameworkLanguageTest(unittest.TestCase):
             "tui/config_cli.py",
             "tui/ai_driver.py",
             "tui/polymarket.py",
-            "tui/screens.py",
+            "tui/screens/__init__.py",
+            "tui/screens/chat.py",
+            "tui/screens/dashboard.py",
             "tui/theme.py",
             "tui/web_chart.html",
             "tui/widgets.py",
@@ -333,7 +335,9 @@ class FrameworkLanguageTest(unittest.TestCase):
         framework_files = (
             "tui/config.py",
             "tui/polymarket.py",
-            "tui/screens.py",
+            "tui/screens/__init__.py",
+            "tui/screens/chat.py",
+            "tui/screens/dashboard.py",
             "tui/README.md",
             "README.md",
         )

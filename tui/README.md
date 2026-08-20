@@ -266,7 +266,15 @@ tui/
 ├── __init__.py     # Package metadata
 ├── __main__.py     # CLI entry point (argparse → run_tui)
 ├── app.py          # Textual App, global bindings, screen wiring
-├── screens.py      # Dashboard, pipeline run, run inspector, validate, chat, help
+├── screens/        # Screen package (facade re-exports):
+│   ├── dashboard.py      # Dashboard + run registry table
+│   ├── domains.py        # Futures, shipping, security boards, plugin browser
+│   ├── daily_intake.py   # Daily intake screen + report-history helpers
+│   ├── runs.py           # Pipeline run, inspector, validate, pipeline view
+│   ├── chat.py           # Chat + ask-session screens
+│   ├── config_screen.py  # Workstation config editor
+│   ├── sessions.py       # Session-record helpers (ask sessions, run titles)
+│   └── modals.py         # Confirm and help modals
 ├── intake.py       # Fail-closed daily-data product adapter
 ├── domaindata.py   # Fail-closed domain board adapter (SHIPPING screen)
 ├── polymarket.py   # Read-only Polymarket Gamma tape (in-terminal)
