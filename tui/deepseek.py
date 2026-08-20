@@ -410,33 +410,6 @@ class DeepSeekDriver:
                 self.history = [ChatMessage("system", SYSTEM_PROMPT)]
 
 
-def build_run_context(
-    run_data: dict[str, Any],
-    gates: list[dict[str, Any]],
-    events: list[dict[str, Any]],
-) -> str:
-    """Build a context string from run data for the AI."""
-    parts = []
-    parts.append(f"Pipeline: {run_data.get('pipeline_id', '?')}")
-    parts.append(f"Run ID: {run_data.get('run_id', '?')}")
-    parts.append(f"Terminal state: {run_data.get('terminal', '?')}")
-    parts.append(f"Detail: {run_data.get('detail', '?')}")
-
-    if gates:
-        parts.append("\nGate evaluations:")
-        for g in gates:
-            parts.append(f"  - {g.get('gate_id', '?')}: {g.get('decision', '?')} "
-                         f"({g.get('kind', '?')}) — {g.get('detail', '')}")
-
-    if events:
-        parts.append(f"\nEvent log: {len(events)} events")
-        for e in events[-10:]:  # last 10
-            parts.append(f"  #{e.get('seq', '?')} {e.get('type', '?')} "
-                         f"stage={e.get('stage', '-')}")
-
-    return "\n".join(parts)
-
-
 # --- market data bridge -----------------------------------------------------
 
 import re

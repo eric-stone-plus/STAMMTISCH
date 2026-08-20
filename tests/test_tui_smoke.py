@@ -1660,9 +1660,6 @@ class TuiSmokeTest(unittest.TestCase):
                             screen.query_one("#ri-status", Static).render()
                         )
                         self.assertIn("CORRUPT / UNAVAILABLE", status)
-                        screen._run_ai_analysis()
-                        await pilot.pause()
-                        self.assertFalse(screen._ai_running)
 
     async def _intake_invalid_config_scenario(self) -> None:
         from tui.screens import DailyIntakeScreen

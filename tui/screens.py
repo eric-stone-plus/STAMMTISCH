@@ -21,7 +21,7 @@ from rich.text import Text
 from textual.widgets.option_list import Option
 
 from .driver import StammtischDriver
-from .deepseek import ChatResponse, DeepSeekDriver, build_run_context
+from .deepseek import ChatResponse, DeepSeekDriver
 from .engine import QuantEngine
 from .analysis import DataFetchScreen, BacktestScreen, IndicatorsScreen, PortfolioScreen, GatesScreen
 from .analysis import _run_async
@@ -1896,7 +1896,7 @@ class DailyIntakeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "  DAILY DATA INTAKE  |  [R] Capture  [Enter] Open Report  [H] History  [Esc] Back",
+            "  DAILY DATA INTAKE  |  [R] Capture  [Enter] Analyze (GALAHAD)  [Esc] Back",
             classes="header-bar",
         )
         yield ScrollableContainer(
@@ -2785,7 +2785,6 @@ class RunInspectorScreen(Screen):
         self._snapshot: dict[str, Any] | None = None
         self._inspect_error: str | None = None
         self._inspect_token: object | None = None
-        self._ai_running = False
 
     def compose(self) -> ComposeResult:
         short_id = self.run_id[:20] + "..." if len(self.run_id) > 20 else self.run_id
@@ -3047,9 +3046,6 @@ class RunInspectorScreen(Screen):
             return
         self.app.push_screen(ChatScreen(self.ai))
 
-    def _run_ai_analysis(self) -> None:
-        # Kept for older tests: inspector chat was removed.
-        self._ai_running = False
 
 
 # ═══════════════════════════════════════════════════════════════════
