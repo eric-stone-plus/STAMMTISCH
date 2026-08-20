@@ -6,7 +6,7 @@ single-module surface so `from tui.screens import X` keeps working.
 
 from __future__ import annotations
 
-from .modals import ConfirmScreen, HelpScreen
+from .modals import ConfirmScreen, HelpScreen, KeyHelpScreen
 from .sessions import (
     _ASK_INTRO,
     _INPUT_HISTORY_CAP,
@@ -55,6 +55,7 @@ from .config_screen import ConfigScreen
 
 __all__ = [
     "AskSessionScreen",
+    "KeyHelpScreen",
     "ChatInput",
     "ChatScreen",
     "ConfigScreen",

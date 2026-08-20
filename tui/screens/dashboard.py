@@ -84,7 +84,9 @@ class DashboardScreen(Screen):
         Binding("ctrl+a", "check_all", "Select all", show=False, priority=True),
         Binding("shift+up", "extend_up", "Extend", show=False, priority=True),
         Binding("shift+down", "extend_down", "Extend", show=False, priority=True),
-        Binding("q", "quit", "Quit"),
+        # Quit lives only on the dashboard: Esc with an explicit confirm,
+        # so a stray keystroke never leaves the workstation.
+        Binding("escape", "confirm_quit", "Quit"),
     ]
 
     CSS = """
@@ -941,6 +943,13 @@ class DashboardScreen(Screen):
 
     def action_run_portfolio(self) -> None:
         self.app.push_screen(PortfolioScreen(self.engine, self.config))
+
+    def action_confirm_quit(self) -> None:
+        from .modals import ConfirmScreen
+
+        self.app.push_screen(
+            ConfirmScreen("Quit STAMMTISCH?", self.app.exit)
+        )
 
     def action_eval_gates(self) -> None:
         self.app.push_screen(GatesScreen(self.engine, self.config))

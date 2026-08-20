@@ -119,6 +119,16 @@ else:
                 total = len(names)
         return (running, total)
 
+    def _is_source(body: str) -> bool:
+        """A toggleable source row: exactly ``phase|folder|name|url`` with a
+        plain http(s) URL. Everything else — including header prose that
+        happens to contain four ``|``-separated words — is annotation."""
+        parts = body.split("|")
+        if len(parts) != 4 or not all(part.strip() for part in parts):
+            return False
+        url = parts[3].strip()
+        return url.startswith(("http://", "https://"))
+
     def parse_sources(path: str) -> list[dict[str, Any]]:
         """One entry per source line: enabled iff not a comment line.
 
@@ -137,13 +147,13 @@ else:
             enabled = not stripped.startswith("#")
             body = stripped.lstrip("#").strip()
             parts = body.split("|")
-            toggleable = len(parts) >= 4
+            toggleable = _is_source(body)
             entries.append({
                 "index": index,
                 "enabled": enabled,
-                "market": parts[0] if toggleable else "",
-                "name": parts[2] if toggleable else body[:40],
-                "url": parts[3] if toggleable else "",
+                "market": parts[0].strip() if toggleable else "",
+                "name": parts[2].strip() if toggleable else body[:40],
+                "url": parts[3].strip() if toggleable else "",
                 "toggleable": toggleable,
             })
         return entries
@@ -160,7 +170,7 @@ else:
         raw = lines[entry_index]
         stripped = raw.strip()
         body = stripped.lstrip("#").strip()
-        if not body or len(body.split("|")) < 4:
+        if not _is_source(body):
             return False  # annotation prose is never a source
         if stripped.startswith("#"):
             lines[entry_index] = body
@@ -189,20 +199,19 @@ else:
             Binding("r", "restart_api", "Restart api"),
             Binding("h", "heal_now", "Heal now"),
             Binding("e", "toggle_source", "Toggle source"),
+            Binding("question_mark", "show_help", "Keys"),
         ]
         CSS = """
         CrawlerPanelScreen { layout: vertical; }
         #crawl-scroll { height: 1fr; }
         .panel { border: solid #505050; margin: 0 1; }
         .panel-title { color: #a0a0a0; }
-        #crawl-sources { height: auto; max-height: 16; }
-        #crawl-log { height: auto; max-height: 8; color: #a0a0a0; }
+        #crawl-sources { height: auto; max-height: 24; }
         """
 
         def __init__(self, config: Any = None, **kwargs: Any):
             super().__init__(**kwargs)
             self.config = config
-            self._log_lines: list[str] = []
 
         def _cfg(self, key: str, default: str = "") -> str:
             try:
@@ -240,14 +249,6 @@ else:
                         id="crawl-sources-title",
                     )
                     yield OptionList(id="crawl-sources")
-                with Vertical(classes="panel"):
-                    yield Static(
-                        "  " + self._tr("crawlers.log", "Log"), classes="panel-title"
-                    )
-                    yield Static(
-                        "  " + self._tr("crawlers.no_ops", "(no operations yet)") + "\n",
-                        id="crawl-log",
-                    )
             yield Footer()
 
         def on_mount(self) -> None:
@@ -344,6 +345,17 @@ else:
                 f"  {self._tr('crawlers.sources', 'Sources')}  —  "
                 f"{enabled}/{len(entries)} "
                 + self._tr("crawlers.enabled", "enabled")
+                + "  ·  [E]/Enter "
+                + self._tr("crawlers.toggle_hint", "toggle")
+            )
+            # Column header, aligned with the rows below it; disabled so it
+            # can never be toggled.
+            listing.add_option(
+                Option(
+                    "    PHASE      NAME             URL",
+                    id="none",
+                    disabled=True,
+                )
             )
             for entry in entries:
                 mark = "✓" if entry["enabled"] else "✗"
@@ -354,19 +366,11 @@ else:
                 listing.add_option(Option(row, id=str(entry["index"])))
             if entries:
                 listing.highlighted = min(
-                    was_highlighted if was_highlighted is not None else 0,
-                    len(entries) - 1,
+                    was_highlighted if was_highlighted is not None else 1,
+                    len(entries),
                 )
 
         # -- log + ops -----------------------------------------------------------
-
-        def _log(self, line: str) -> None:
-            stamp = time.strftime("%H:%M:%S")
-            self._log_lines.append(f"  {stamp}  {line}")
-            self._log_lines = self._log_lines[-8:]
-            self.query_one("#crawl-log", Static).update(
-                "\n".join(self._log_lines) + "\n"
-            )
 
         def _run_op(self, label: str, work) -> None:
             from .analysis import _run_async
@@ -374,10 +378,11 @@ else:
             def _deliver(result):
                 code, output = result
                 ok = code == 0
-                self._log(f"{label}: {'OK' if ok else f'exit {code}'}  {output[-200:]}")
+                detail = f"  {output[-120:]}" if not ok else ""
                 self.notify(
-                    f"{label}: {'OK' if ok else 'failed'}",
+                    f"{label}: {'OK' if ok else f'exit {code}'}{detail}",
                     severity="information" if ok else "error",
+                    timeout=8 if ok else 12,
                 )
                 self.action_refresh()
 
@@ -464,10 +469,27 @@ else:
                 return
             changed = toggle_source(entry_index, conf)
             if changed:
-                self._log(f"source toggled: line {entry_index + 1}")
+                self.notify(
+                    f"source toggled (line {entry_index + 1})",
+                    severity="information",
+                )
                 self._reload_sources()
             else:
                 self.notify("That line is not a toggleable source.", severity="warning")
+
+        def action_show_help(self) -> None:
+            from .screens import KeyHelpScreen
+
+            self.app.push_screen(KeyHelpScreen("CRAWLERS — KEYS", [
+                ("p", self._tr("crawlers.k.refresh", "refresh status + sources")),
+                ("s", self._tr("crawlers.k.stack", "crawl stack on/off (compose stop/up)")),
+                ("t", self._tr("crawlers.k.timer", "self-heal timer on/off")),
+                ("r", self._tr("crawlers.k.restart", "restart the api container")),
+                ("h", self._tr("crawlers.k.heal", "run the heal command now")),
+                ("e / Enter", self._tr("crawlers.k.toggle", "enable/disable the highlighted source")),
+                ("↑ ↓", self._tr("crawlers.k.move", "move in the source list")),
+                ("Esc", self._tr("crawlers.k.back", "back to the dashboard")),
+            ]))
 
         def action_back(self) -> None:
             self.app.pop_screen()

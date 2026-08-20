@@ -10,6 +10,7 @@ from tui.crawlers import _fit, parse_sources, toggle_source
 
 CONF = """\
 # SCOPE annotation line
+# 格式: phase|folder|name|url   （| 分隔，无空格；# 开头为注释）
 domestic|fin-ashare|eastmoney|https://www.eastmoney.com/
 domestic|fin-ashare|sina|https://finance.sina.com.cn/
 #overseas|fin-hk|nikkei|https://www.nikkei.com/markets/
@@ -24,30 +25,34 @@ class ParseSourcesTest(unittest.TestCase):
             path.write_text(CONF, encoding="utf-8")
             entries = parse_sources(str(path))
         toggleable = [e for e in entries if e["toggleable"]]
-        self.assertEqual(len(entries), 5)
+        self.assertEqual(len(entries), 6)
         self.assertEqual(len(toggleable), 4)
         # The commented-out nikkei row stays a toggleable, disabled source.
         states = {(e["name"], e["enabled"]) for e in toggleable}
         self.assertIn(("eastmoney", True), states)
         self.assertIn(("nikkei", False), states)
-        # The annotation line is carried but never switchable.
-        annotation = next(e for e in entries if not e["toggleable"])
-        self.assertIn("SCOPE", annotation["name"])
+        # Annotation prose — including the header comment whose format
+        # description contains four |-separated words — is never a source.
+        annotations = [e for e in entries if not e["toggleable"]]
+        self.assertEqual(len(annotations), 2)
+        self.assertIn("SCOPE", annotations[0]["name"])
+        self.assertIn("格式", annotations[1]["name"])
 
     def test_toggle_round_trip_preserves_other_lines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sources.conf"
             path.write_text(CONF, encoding="utf-8")
-            # Disable cnbc (line index 4).
-            self.assertTrue(toggle_source(4, str(path)))
+            # Disable cnbc (line index 5).
+            self.assertTrue(toggle_source(5, str(path)))
             after = path.read_text(encoding="utf-8").splitlines()
-            self.assertTrue(after[4].lstrip().startswith("#"))
-            self.assertIn("cnbc", after[4])
+            self.assertTrue(after[5].lstrip().startswith("#"))
+            self.assertIn("cnbc", after[5])
             # Annotation and other rows are untouched.
             self.assertEqual(after[0], "# SCOPE annotation line")
-            self.assertEqual(after[1].split("|")[2], "eastmoney")
+            self.assertIn("格式", after[1])
+            self.assertEqual(after[2].split("|")[2], "eastmoney")
             # Re-enable restores the exact original line.
-            self.assertTrue(toggle_source(4, str(path)))
+            self.assertTrue(toggle_source(5, str(path)))
             self.assertEqual(
                 path.read_text(encoding="utf-8"), CONF
             )
@@ -57,6 +62,7 @@ class ParseSourcesTest(unittest.TestCase):
             path = Path(tmp) / "sources.conf"
             path.write_text(CONF, encoding="utf-8")
             self.assertFalse(toggle_source(0, str(path)), "annotation is not a source")
+            self.assertFalse(toggle_source(1, str(path)), "header prose is not a source")
             self.assertFalse(toggle_source(99, str(path)))
             self.assertFalse(toggle_source(0, str(Path(tmp) / "missing.conf")))
 

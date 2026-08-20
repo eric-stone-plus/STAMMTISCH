@@ -19,7 +19,6 @@ class StammtischTUI(App):
     TITLE = "STAMMTISCH QUANT WORKSTATION"
     CSS = THEME_CSS
     BINDINGS = [
-        Binding("q", "quit", "Quit", show=False),
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("question_mark", "show_help", "Help"),
         Binding("escape", "escape_key", "Back", show=False),

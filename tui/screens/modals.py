@@ -85,6 +85,37 @@ class ConfirmScreen(Screen):
         self.app.pop_screen()
         if confirmed:
             self.on_confirm()
+class KeyHelpScreen(Screen):
+    """One screen's keybinding reference.
+
+    The shell is shared; the rows are supplied by the screen that pushes
+    it, so every board documents its own keys instead of inheriting the
+    dashboard's.
+    """
+
+    BINDINGS = [("escape", "back", "Close")]
+    CSS = (
+        "KeyHelpScreen { align: center middle; } "
+        "#keyhelp-box { width: 64; height: auto; max-height: 80%; "
+        "background: #000000; border: solid #505050; padding: 1 2; }"
+    )
+
+    def __init__(self, title: str, rows: list[tuple[str, str]], **kwargs: Any):
+        super().__init__(**kwargs)
+        self.title = title
+        self.rows = rows
+
+    def compose(self) -> ComposeResult:
+        lines = [f"  {self.title}", ""]
+        lines += [f"    {key:<16} {desc}" for key, desc in self.rows]
+        lines += ["", "  Press Esc to close"]
+        with Vertical(id="keyhelp-box"):
+            yield Static("\n".join(lines))
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+
 class HelpScreen(Screen):
     BINDINGS = [("escape", "back", "Close"), ("q", "back", "Close")]
     CSS = "HelpScreen { align: center middle; } #help-box { width: 70; height: auto; max-height: 80%; background: #000000; border: solid #505050; padding: 1 2; }"
@@ -104,7 +135,8 @@ class HelpScreen(Screen):
                 "    other domain plugins from config 'plugins' (directory view).\n\n"
                 "  Quick Start (bottom list):\n"
                 "    a  Ask (GALAHAD chat)      e  Edit config\n\n"
-                "  Dashboard keys: a Ask · e Edit · Del delete · Shift+D delete all · q Quit.\n"
+                "  Dashboard keys: a Ask · e Edit · Del delete · Shift+D delete all ·\n"
+                "    Esc Quit (with confirmation).\n"
                 "    Click selects one run; Shift+click selects the range; Ctrl+A selects all.\n"
                 "    Enter inspects the selected run. Session titles are pipeline + time.\n"
                 "    FULLSTACK is the example pipeline, not a sidebar workbench.\n\n"
