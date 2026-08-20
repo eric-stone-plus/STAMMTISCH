@@ -460,118 +460,15 @@ class PolymarketScreen(Screen):
 
 
 class CryptoScreen(PolymarketScreen):
-    """Crypto module — Polymarket tape beside the daily crypto report slice.
+    """Crypto module — the read-only Polymarket tape.
 
-    Left/right switches desks.  The daily desk reads the crypto slice of the
-    newest indexed daily report; crypto sources are still captured by the
-    intake, but the A/H/US report views never show them.
+    Crypto headlines are still captured by the daily intake; the former
+    daily-report desk was removed when reports moved to the browser
+    (the sentiment board keeps the terminal surface).
     """
 
-    TITLE = "  CRYPTO  |  POLYMARKET TAPE (READ ONLY)  |  ←/→ DESKS  R RELOAD  |  ESC BACK"
-    DAILY_TITLE = "  CRYPTO  |  DAILY REPORT (READ ONLY)  |  ←/→ DESKS  R RELOAD  |  ESC BACK"
-
-    BINDINGS = [
-        Binding("left", "prev_category", "Prev Desk", priority=True),
-        Binding("right", "next_category", "Next Desk", priority=True),
-    ]
-    CSS = """
-    #crypto-daily-wrap { display: none; height: 1fr; border: solid #505050; padding: 1 2; }
-    """
-
-    CATS = ("polymarket", "daily")
+    TITLE = "  CRYPTO  |  POLYMARKET TAPE (READ ONLY)  |  R RELOAD  |  ESC BACK"
 
     def __init__(self, proxy_url: str | None = None, *, config: Any = None, **kwargs: Any):
         super().__init__(proxy_url=proxy_url, **kwargs)
         self.config = config
-        self._cat_idx = 0
-
-    def compose(self) -> ComposeResult:
-        yield from super().compose()
-        yield ScrollableContainer(
-            # Canonical titles may contain Rich markup characters; keep the
-            # daily slice plain-text like the intake screen does.
-            Static("", id="crypto-daily-text", markup=False),
-            id="crypto-daily-wrap",
-        )
-
-    def action_prev_category(self) -> None:
-        self._switch_desk(-1)
-
-    def action_next_category(self) -> None:
-        self._switch_desk(1)
-
-    def _switch_desk(self, delta: int) -> None:
-        self._cat_idx = (self._cat_idx + delta) % len(self.CATS)
-        daily = self.CATS[self._cat_idx] == "daily"
-        for widget_id in ("#pm-filter", "#pm-status", "#pm-table-wrap", "#pm-detail"):
-            self.query_one(widget_id).styles.display = "none" if daily else "block"
-        self.query_one("#crypto-daily-wrap").styles.display = "block" if daily else "none"
-        self.query_one(".header-bar", Static).update(
-            self.DAILY_TITLE if daily else self.TITLE
-        )
-        if daily:
-            self._render_daily()
-
-    def action_reload(self) -> None:
-        if self.CATS[self._cat_idx] == "daily":
-            self._render_daily()
-            return
-        super().action_reload()
-
-    def _render_daily(self) -> None:
-        text = self.query_one("#crypto-daily-text", Static)
-        if self.config is None:
-            text.update("  Daily crypto desk is not configured.")
-            return
-        from .brief import (  # noqa: PLC0415  (lazy: keeps import graph acyclic)
-            SUMMARY_CAP,
-            TITLE_CAP,
-            clean_text,
-            curate_items,
-            is_displayable_item,
-            load_daily_path,
-        )
-        from .history import HistoryStore  # noqa: PLC0415
-
-        try:
-            store = HistoryStore(self.config.history_db)
-            store.index_all(
-                self.config.workspace_root,
-                str(self.config.get("reports_root") or "") or None,
-            )
-            entry = store.latest()
-        except Exception as exc:  # never wedge the desk on index failure
-            text.update(f"  History index error: {exc}")
-            return
-        if entry is None:
-            text.update("  No daily report is indexed yet — capture one from the D screen.")
-            return
-        doc = load_daily_path(
-            entry.json_path,
-            html_path=entry.html_path or None,
-            expected_date=entry.report_date,
-        )
-        if not doc.get("ok"):
-            text.update(f"  Report load error: {doc.get('error')}")
-            return
-        items = [
-            item
-            for item in (doc.get("markets", {}).get("crypto") or [])
-            if is_displayable_item(item)
-        ]
-        lines = [f"  Daily crypto slice · {entry.pretty_date}", ""]
-        shown = curate_items(items)
-        for item in shown:
-            title = clean_text(item.get("title"), TITLE_CAP)
-            lines.append(f"  * {title}")
-            url = str(item.get("url") or "").strip()
-            if url:
-                lines.append(f"    {url}")
-            summary = clean_text(item.get("summary"), SUMMARY_CAP)
-            if summary and summary != title:
-                lines.append(f"    {summary}")
-        if not items:
-            lines.append("  No crypto section in this daily report.")
-        elif len(items) > len(shown):
-            lines.append(f"  … +{len(items) - len(shown)} more in the full dataset")
-        text.update("\n".join(lines) + "\n")

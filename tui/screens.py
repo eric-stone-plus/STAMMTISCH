@@ -853,10 +853,6 @@ class DashboardScreen(Screen):
         """Land on the newest indexed daily report; capture is explicit (R)."""
         self.app.push_screen(DailyIntakeScreen(self.config))
 
-    def action_open_history(self) -> None:
-        """Open the indexed daily-report history picker."""
-        self.app.push_screen(ReportHistoryScreen(self.config))
-
     def action_open_sentiment(self) -> None:
         from .brief import SentimentScreen, load_daily, load_daily_path
 
@@ -1874,8 +1870,7 @@ class DailyIntakeScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("r", "capture", "Capture"),
-        Binding("enter", "open_report", "Open Report"),
-        Binding("h", "history", "History"),
+        Binding("enter", "open_report", "Analyze (GALAHAD)"),
     ]
     CSS = """
     DailyIntakeScreen { layout: vertical; }
@@ -2267,7 +2262,8 @@ class DailyIntakeScreen(Screen):
 
     def action_open_report(self) -> None:
         """Open the daily report — the browser renders the HTML; the
-        terminal keeps only the sentiment tape."""
+        terminal keeps only the sentiment tape: Enter hands the captured
+        dataset to GALAHAD for a real analysis turn."""
         from .intake_job import supervisor_for
 
         if self._capture_running or supervisor_for(self.app).capturing:
@@ -2275,10 +2271,10 @@ class DailyIntakeScreen(Screen):
             return
         if self._result is not None and self._result.ok:
             artifacts = self._result.artifacts or {}
-            html_path = artifacts.get("report_html")
+            json_path = artifacts.get("report_json")
             day = (self._result.envelope or {}).get("date")
         else:
-            # No capture this session: open the newest indexed report.
+            # No capture this session: analyze the newest indexed report.
             store, error = _history_store(self.config)
             entry = store.latest() if store is not None else None
             if entry is None:
@@ -2287,96 +2283,77 @@ class DailyIntakeScreen(Screen):
                     severity="warning",
                 )
                 return
-            html_path = entry.html_path or None
+            json_path = entry.json_path
             day = entry.report_date
-        _open_report_html(self, html_path, day)
+        from .brief import load_daily_path
 
-    def action_history(self) -> None:
-        self.app.push_screen(ReportHistoryScreen(self.config))
+        doc = load_daily_path(json_path, expected_date=day)
+        if not doc.get("ok"):
+            self.notify(str(doc.get("error") or "report JSON is invalid"), severity="error")
+            return
+        _galahad_report_analysis(self, doc)
 
 
-class ReportHistoryScreen(Screen):
-    """Session-list style picker over the indexed daily reports."""
+def _report_digest(doc: dict[str, Any]) -> str:
+    """Compact, faithful digest of one captured day for GALAHAD."""
+    from .brief import SUMMARY_CAP, TITLE_CAP, clean_text, curate_items, is_displayable_item
 
-    BINDINGS = [
-        Binding("escape", "back", "Back"),
-        Binding("r", "reindex", "Reindex"),
-    ]
-    CSS = """
-    ReportHistoryScreen { layout: vertical; }
-    #history-list { height: 1fr; border: solid #505050; background: #000000; }
+    day = str(doc.get("date") or "?")
+    lines = [f"Daily market dataset {day}"]
+    counts = doc.get("counts") or {}
+    if counts:
+        lines.append(f"counts: {counts}")
+    brief = doc.get("brief") or []
+    if brief:
+        lines.append("brief:")
+        for item in brief[:6]:
+            text = clean_text(item.get("text"), 160)
+            if text:
+                lines.append(f"  - {text}")
+    markets = doc.get("markets") or {}
+    for market in ("ashare", "hk", "us", "crypto"):
+        items = [i for i in (markets.get(market) or []) if is_displayable_item(i)]
+        if not items:
+            continue
+        lines.append(f"{market} ({len(items)}):")
+        for item in curate_items(items, 8):
+            title = clean_text(item.get("title"), TITLE_CAP)
+            summary = clean_text(item.get("summary"), SUMMARY_CAP)
+            line = f"  - {title}"
+            if summary and summary != title:
+                line += f" | {summary}"
+            lines.append(line)
+    text = "\n".join(lines)
+    return text[:8000]
+
+
+def _galahad_report_analysis(screen: Any, doc: dict[str, Any]) -> None:
+    """Hand one captured day to GALAHAD — a real model turn, not a view.
+
+    The workstation renders no human-facing report beyond the sentiment
+    board: captured data goes straight to GALAHAD for analysis under
+    its five-discipline paradigm (tools stay available to it).
     """
-
-    def __init__(self, config: Any, **kwargs: Any):
-        super().__init__(**kwargs)
-        self.config = config
-        self._entries: list[Any] = []
-
-    def compose(self) -> ComposeResult:
-        yield Static(
-            "  REPORT HISTORY  |  newest first  |  [Enter] Open  [R] Reindex  [Esc] Back",
-            classes="header-bar",
-        )
-        yield OptionList(id="history-list")
-        yield Footer()
-
-    def on_show(self, _event: Any) -> None:
-        self._reload()
-
-    def _reload(self) -> None:
-        store, error = _history_store(self.config)
-        self._entries = store.list_reports() if store is not None else []
-        options = self.query_one("#history-list", OptionList)
-        options.clear_options()
-        if error is not None:
-            options.add_option(
-                Option(Text(f"  History index: {error}"), id="error", disabled=True)
-            )
-            return
-        if not self._entries:
-            options.add_option(
-                Option(
-                    Text("  No daily reports indexed yet — capture one from the D screen."),
-                    id="empty",
-                    disabled=True,
-                )
-            )
-            return
-        for entry in self._entries:
-            options.add_option(Option(Text(f"  {entry.row_text()}"), id=entry.report_date))
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self._open_date(event.option_id)
-
-    def action_reindex(self) -> None:
-        self._reload()
-        self.notify("Report history reindexed.")
-
-    def _open_date(self, option_id: str | None) -> None:
-        entry = next(
-            (item for item in self._entries if item.report_date == option_id), None
-        )
-        if entry is None:
-            return
-        _open_report_html(self, entry.html_path or None, entry.report_date)
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-
-def _open_report_html(screen: Any, html_path: str | None, day: Any) -> None:
-    """Open a daily report in the browser — the terminal keeps sentiment only."""
-    import webbrowser
-
-    if not html_path:
-        screen.notify(f"Report {day} has no HTML edition.", severity="warning")
+    ai = getattr(screen.app, "ai", None)
+    if ai is None or not getattr(ai, "available", False):
+        screen.notify("AI service is not configured.", severity="warning")
         return
-    path = Path(html_path).expanduser()
-    if not path.exists():
-        screen.notify(f"Report HTML is missing: {path}", severity="warning")
-        return
-    webbrowser.open(path.resolve().as_uri())
-    screen.notify(f"Opened report {day} in the browser.")
+    day = str(doc.get("date") or "?")
+    pretty = f"{day[:4]}-{day[4:6]}-{day[6:]}" if len(day) == 8 else day
+    from .lang import tr
+
+    try:
+        language = str(screen.app.config.get("language", "en") or "en")
+    except Exception:
+        language = "en"
+    prompt = tr(language, "galahad.report_prompt", "Analyze this daily market dataset.")
+    screen.app.push_screen(
+        ChatScreen(
+            ai,
+            initial_prompt=f"{prompt} Date: {pretty}.",
+            initial_context=_report_digest(doc),
+        )
+    )
 
 
 def _history_store(config: Any) -> tuple[Any, str | None]:
@@ -3230,7 +3207,6 @@ class SecurityScreen(Screen):
         Binding("k", "chart", "K-line"),
         Binding("a", "chat", "Ask"),
         Binding("b", "backtest", "Backtest"),
-        Binding("h", "history", "History"),
         Binding("e", "config", "Config"),
         Binding("f", "fetch", "Fetch"),
         Binding("p", "portfolio", "Portfolio"),
@@ -3547,7 +3523,6 @@ class SecurityScreen(Screen):
     def action_chat(self) -> None: self._dash.action_open_chat()
     def action_backtest(self) -> None: self._dash.action_run_backtest()
     def action_intake(self) -> None: self._dash.action_open_intake()
-    def action_history(self) -> None: self._dash.action_open_history()
     def action_config(self) -> None: self._dash.action_edit_config()
     def action_fetch(self) -> None: self._dash.action_fetch_data()
     def action_portfolio(self) -> None: self._dash.action_run_portfolio()
@@ -3992,10 +3967,21 @@ class ChatScreen(Screen):
     ai: DeepSeekDriver
     _chat_log: str = ""
 
-    def __init__(self, ai: DeepSeekDriver, session_id: str | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        ai: DeepSeekDriver,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+        initial_context: str | None = None,
+        **kwargs: Any,
+    ):
         super().__init__(**kwargs)
         self.ai = ai
         self._asked_session_id = session_id
+        # A screen can arrive with work to do (e.g. the captured daily
+        # dataset handed to GALAHAD): fire one real chat turn on mount.
+        self._initial_prompt = initial_prompt
+        self._initial_context = initial_context
         self._ask_dir: Path | None = None
         self._session = _empty_session(session_id)
         self._chat_log = _ASK_INTRO
@@ -4033,6 +4019,10 @@ class ChatScreen(Screen):
         self._sync_model_history()
         self._refresh_log()
         self.query_one("#chat-input", ChatInput).focus()
+        if self._initial_prompt:
+            prompt, self._initial_prompt = self._initial_prompt, None
+            context, self._initial_context = self._initial_context, None
+            self.call_after_refresh(self._submit, prompt, context)
 
     def _scroller(self) -> ScrollableContainer:
         return self.query_one("#chat-scroll", ScrollableContainer)
@@ -4191,7 +4181,7 @@ class ChatScreen(Screen):
         self._active_request = None
         self._persist()
 
-    def _submit(self, query: str) -> bool:
+    def _submit(self, query: str, context: str | None = None) -> bool:
         if not query:
             return False
         if self._active_request is not None:
@@ -4216,7 +4206,7 @@ class ChatScreen(Screen):
 
         def _query():
             try:
-                r = self.ai.chat(query)
+                r = self.ai.chat(query, context=context)
             except Exception as e:
                 r = ChatResponse(content="", error=str(e))
             result = r.content if r.ok else f"Error: {r.error}"

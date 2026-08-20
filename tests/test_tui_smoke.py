@@ -44,9 +44,6 @@ class TuiSmokeTest(unittest.TestCase):
     def test_daily_intake_rejected_screen(self) -> None:
         asyncio.run(self._daily_intake_rejected_scenario())
 
-    def test_report_history_screen(self) -> None:
-        asyncio.run(self._report_history_scenario())
-
     def test_sentiment_key_is_market_wide(self) -> None:
         asyncio.run(self._sentiment_scenario())
 
@@ -318,33 +315,11 @@ class TuiSmokeTest(unittest.TestCase):
         from tui.polymarket import CryptoScreen
 
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp) / "workspace"
-            run_dir = workspace / "runs" / "20260814T115124Z-234ed0a7"
-            run_dir.mkdir(parents=True)
-            (run_dir / "fin-daily-20260814.json").write_text(json.dumps({
-                "schema": "stammtisch.daily-report.v1",
-                "date": "20260814",
-                "run_id": "20260814T115124Z-234ed0a7",
-                "brief": [],
-                "markets": {
-                    "ashare": [], "hk": [], "us": [],
-                    "crypto": [{
-                        "title": "Bitcoin 突破关键阻力位",
-                        "url": "https://example.test/btc",
-                        "summary": "ETF 资金流入推动。",
-                        "sources": ["CoinDesk"],
-                    }],
-                },
-                "market_counts": {"crypto": 1},
-                "notes": [],
-            }, ensure_ascii=False), encoding="utf-8")
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
                 json.dump({
                     "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
                     "data_dir": os.path.join(tmp, "data"),
-                    "workspace_root": str(workspace),
-                    "reports_root": os.path.join(tmp, "legacy"),
                 }, handle)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
@@ -358,36 +333,20 @@ class TuiSmokeTest(unittest.TestCase):
                             CryptoScreen(proxy_url=None, config=app.screen.config)
                         )
                         await pilot.pause()
+                        # Tape only: the daily-report desk is gone and no
+                        # daily widgets exist to switch to.
                         self.assertIn(
                             "POLYMARKET",
                             str(app.screen.query_one(".header-bar", Static).render()),
                         )
+                        with self.assertRaises(Exception):
+                            app.screen.query_one("#crypto-daily-wrap")
                         await pilot.press("right")
                         await pilot.pause()
-                        daily = app.screen.query_one("#crypto-daily-wrap")
-                        self.assertEqual(daily.styles.display, "block")
-                        header = str(
-                            app.screen.query_one(".header-bar", Static).render()
+                        self.assertIn(
+                            "POLYMARKET",
+                            str(app.screen.query_one(".header-bar", Static).render()),
                         )
-                        self.assertIn("DAILY REPORT", header)
-                        body = str(
-                            app.screen.query_one("#crypto-daily-text", Static).render()
-                        )
-                        self.assertIn("2026-08-14", body)
-                        self.assertIn("Bitcoin 突破关键阻力位", body)
-                        await pilot.press("left")
-                        await pilot.pause()
-                        self.assertEqual(
-                            app.screen.query_one("#crypto-daily-wrap").styles.display,
-                            "none",
-                        )
-                        self.assertEqual(
-                            app.screen.query_one("#pm-table-wrap").styles.display,
-                            "block",
-                        )
-                        await pilot.press("escape")
-                        await pilot.pause()
-                        self.assertIsInstance(app.screen, DashboardScreen)
 
     async def _energy_scenario(self) -> None:
         from tui.energy import EnergyScreen
@@ -2082,23 +2041,34 @@ class TuiSmokeTest(unittest.TestCase):
             }), encoding="utf-8")
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                with mock.patch("webbrowser.open") as open_spy:
-                    async with app.run_test(size=(100, 30)) as pilot:
-                        await pilot.pause()
-                        app.push_screen(
-                            DailyIntakeScreen(app.screen.config, auto_start=False)
-                        )
-                        await pilot.pause()
-                        app.screen.action_open_report()
-                        await pilot.pause()
-                        self.assertEqual(open_spy.call_count, 1)
-                        uri = str(open_spy.call_args[0][0])
-                        self.assertTrue(uri.startswith("file://"), uri)
-                        self.assertIn("fin-daily-20260814.html", uri)
-                        self.assertIsInstance(app.screen, DailyIntakeScreen)
-                        await pilot.press("escape")
-                        await pilot.pause()
-                        self.assertIsInstance(app.screen, DashboardScreen)
+                async with app.run_test(size=(100, 30)) as pilot:
+                    await pilot.pause()
+                    app.push_screen(
+                        DailyIntakeScreen(app.screen.config, auto_start=False)
+                    )
+                    await pilot.pause()
+                    # Enter hands the captured day to GALAHAD: a real chat
+                    # turn seeded with the report digest, never a report view.
+                    from tui.deepseek import ChatResponse
+                    from tui.screens import ChatScreen
+
+                    def _fake_chat(query, context=None):
+                        self.assertIn("2026-08-14", context or "")
+                        return ChatResponse(content="分析完成")
+
+                    app.ai = type(
+                        "FakeAI",
+                        (),
+                        {"available": True, "chat": staticmethod(_fake_chat)},
+                    )()
+                    app.screen.action_open_report()
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, ChatScreen)
+                    turns = str(app.screen._session.get("turns") or [])
+                    self.assertIn("2026-08-14", turns)
+                    await pilot.press("escape")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, DailyIntakeScreen)
 
     async def _daily_intake_scenario(self) -> None:
         from types import SimpleNamespace
@@ -2230,15 +2200,29 @@ class TuiSmokeTest(unittest.TestCase):
                         landing = str(app.screen.query_one("#intake-text", Static).render())
                         self.assertIn("Status: READY", landing)
                         self.assertIn("Latest report: 2026-08-13", landing)
-                        # Enter opens the indexed latest report in the
-                        # browser (no capture, no terminal report screen).
-                        with mock.patch("webbrowser.open") as open_spy:
-                            await pilot.press("enter")
-                            await pilot.pause()
-                        self.assertEqual(open_spy.call_count, 1)
-                        self.assertTrue(
-                            str(open_spy.call_args[0][0]).endswith("fin-daily-20260813.html")
-                        )
+                        # Enter hands the newest indexed report to GALAHAD.
+                        from tui.screens import ChatScreen
+
+                        app.ai = type(
+                            "FakeAI",
+                            (),
+                            {
+                                "available": True,
+                                "chat": staticmethod(
+                                    lambda query, context=None: SimpleNamespace(
+                                        ok=True, content="ok", error=None,
+                                        tool_events=[],
+                                    )
+                                ),
+                            },
+                        )()
+                        await pilot.press("enter")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, ChatScreen)
+                        turns = str(app.screen._session.get("turns") or [])
+                        self.assertIn("2026-08-13", turns)
+                        await pilot.press("escape")
+                        await pilot.pause()
                         self.assertIsInstance(app.screen, DailyIntakeScreen)
                         # R is the explicit capture trigger.
                         await pilot.press("r")
@@ -2270,15 +2254,17 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertIn("Fed [holds] rates as source reports", body)
                         self.assertIn("\u6e2f\u80a1\u6536\u5e02\u539f\u6587\u6807\u9898", body)
                         self.assertIn("canonical_dataset", body)
-                        # Enter again: the just-verified report graph opens
-                        # in the browser, not a terminal brief.
-                        with mock.patch("webbrowser.open") as open_spy:
-                            await pilot.press("enter")
-                            await pilot.pause()
-                        self.assertEqual(open_spy.call_count, 1)
-                        self.assertTrue(
-                            str(open_spy.call_args[0][0]).endswith("report.html")
-                        )
+                        # Enter again: the just-verified report graph goes
+                        # to GALAHAD, not a terminal brief.
+                        from tui.screens import ChatScreen
+
+                        await pilot.press("enter")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, ChatScreen)
+                        turns = str(app.screen._session.get("turns") or [])
+                        self.assertIn("2026-08-14", turns)
+                        await pilot.press("escape")
+                        await pilot.pause()
                         self.assertIsInstance(app.screen, DailyIntakeScreen)
                         await pilot.press("escape")
                         await pilot.pause()
@@ -2367,78 +2353,6 @@ class TuiSmokeTest(unittest.TestCase):
                         await pilot.press("enter")
                         await pilot.pause()
                         self.assertIsInstance(app.screen, DailyIntakeScreen)
-
-    async def _report_history_scenario(self) -> None:
-        from tui.screens import ReportHistoryScreen
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            workspace = root / "workspace"
-            run_dir = workspace / "runs" / "20260817T094921Z-a1b2c3d4"
-            run_dir.mkdir(parents=True)
-            report_json = run_dir / "fin-daily-20260817.json"
-            report_html = run_dir / "fin-daily-20260817.html"
-            report_json.write_text(json.dumps({
-                "schema": "stammtisch.daily-report.v1",
-                "date": "20260817",
-                "run_id": "20260817T094921Z-a1b2c3d4",
-                "brief": [{"text": "中文日报摘要", "sources": ["Fixture"]}],
-                "markets": {"ashare": [{
-                    "title": "中文源标题",
-                    "url": "https://example.test/a",
-                    "summary": "摘要",
-                    "sources": ["Fixture"],
-                }], "hk": []},
-                "market_counts": {"ashare": 1},
-                "intake": {"expected": 14, "succeeded": 10},
-            }, ensure_ascii=False), encoding="utf-8")
-            report_html.write_text("<!doctype html><html></html>", encoding="utf-8")
-            legacy_output = root / "legacy" / "20260814" / "output"
-            legacy_output.mkdir(parents=True)
-            (legacy_output / "fin-daily-20260814.refined.json").write_text(json.dumps({
-                "date": "20260814",
-                "model": "fixture",
-                "brief": [],
-                "markets": {"ashare": []},
-                "notes": [],
-            }, ensure_ascii=False), encoding="utf-8")
-            cfg_path = root / "config.json"
-            cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
-                "data_dir": str(root / "data"),
-                "workspace_root": str(workspace),
-                "reports_root": str(root / "legacy"),
-            }), encoding="utf-8")
-
-            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
-                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                async with app.run_test(size=(120, 40)) as pilot:
-                    await pilot.pause()
-                    app.screen.action_open_history()
-                    await pilot.pause()
-                    self.assertIsInstance(app.screen, ReportHistoryScreen)
-                    listing = app.screen.query_one("#history-list", OptionList)
-                    labels = [str(option.prompt) for option in listing.options]
-                    self.assertEqual(len(labels), 2)
-                    # Newest first; intake and legacy origins are both visible.
-                    self.assertIn("2026-08-17", labels[0])
-                    self.assertIn("intake", labels[0])
-                    self.assertIn("ashare 1", labels[0])
-                    self.assertIn("2026-08-14", labels[1])
-                    self.assertIn("legacy", labels[1])
-                    listing.focus()
-                    listing.highlighted = 0
-                    with mock.patch("webbrowser.open") as open_spy:
-                        await pilot.press("enter")
-                        await pilot.pause()
-                    self.assertEqual(open_spy.call_count, 1)
-                    self.assertTrue(
-                        str(open_spy.call_args[0][0]).endswith("fin-daily-20260817.html")
-                    )
-                    self.assertIsInstance(app.screen, ReportHistoryScreen)
-                    await pilot.press("escape")
-                    await pilot.pause()
-                    self.assertIsInstance(app.screen, DashboardScreen)
 
     async def _sentiment_scenario(self) -> None:
         from tui.brief import SentimentScreen

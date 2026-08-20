@@ -354,20 +354,12 @@ try:
             self._switch_day(1)
 
         def action_open_report(self) -> None:
-            """The daily report renders in the browser, not the terminal."""
-            day = str(self.doc.get("date") or "")
-            html_path = None
-            entries = self._load_entries()
-            for item in entries:
-                if item.report_date == day:
-                    html_path = item.html_path or None
-                    break
-            if html_path is None:
-                self.notify(f"Report {day or '?'} has no HTML edition.", severity="warning")
-                return
-            from .screens import _open_report_html
+            """Hand the current day to GALAHAD — a real analysis turn.
 
-            _open_report_html(self, html_path, day)
+            No human-facing report view exists beyond this board."""
+            from .screens import _galahad_report_analysis
+
+            _galahad_report_analysis(self, self.doc)
 
         def action_back(self) -> None:
             self.app.pop_screen()

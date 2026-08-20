@@ -54,9 +54,16 @@ STRINGS: dict[str, dict[str, str]] = {
     "config.domains": {"en": "Domains", "zh": "板块"},
     "config.backtest": {"en": "Backtest Defaults", "zh": "回测默认"},
     # Sentiment
+    "galahad.report_prompt": {
+        "en": "Analyze this daily market dataset: market-state read, "
+        "cross-market linkages, notable signals and risks, and what to "
+        "verify tomorrow. Data follows.",
+        "zh": "分析这份每日市场数据:给出市场状态判读、跨市场联动、值得注意的"
+        "信号与风险,以及明天需要验证什么。数据如下。",
+    },
     "sentiment.history_hint": {
-        "en": "(READ-ONLY)  |  ←/→ history  [O] report  [Esc] Back",
-        "zh": "(只读)  |  ←/→ 历史  [O] 日报  [Esc] 返回",
+        "en": "(READ-ONLY)  |  ←/→ history  [O] ask GALAHAD  [Esc] Back",
+        "zh": "(只读)  |  ←/→ 历史  [O] 问 GALAHAD  [Esc] 返回",
     },
 }
 
