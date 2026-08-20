@@ -1,0 +1,17 @@
+[Unit]
+Description=STAMMTISCH daily position decision (scan -> GALAHAD adjust -> persist)
+Documentation=file://%h/Documents/Public/STAMMTISCH/tui/decide.py
+# Decisions read the workstation config and the private quantkit install.
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The venv python resolves its own dependencies; %h keeps the unit
+# portable across operator home directories.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/Documents/Public/STAMMTISCH
+ExecStart=%h/Documents/Public/STAMMTISCH/.venv/bin/python -m tui.decide
+# One round = three zones x (scan + one model pass); Kronos forecasts add
+# minutes more. The runner is idempotent per day, so a timeout just skips
+# today's redo.
+TimeoutStartSec=1800

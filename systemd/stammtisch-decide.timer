@@ -1,0 +1,11 @@
+[Unit]
+Description=STAMMTISCH daily decision refresh (after the US close, before Asia opens)
+
+[Timer]
+# 21:17 UTC = 05:17 Beijing: the US session is closed and settled, the
+# A-share open is ~90 minutes away — decisions are fresh for the day.
+OnCalendar=*-*-* 21:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
