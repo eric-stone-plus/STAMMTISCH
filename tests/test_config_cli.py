@@ -90,6 +90,16 @@ class ConfigCliTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("unknown key", err)
 
+    def test_egress_rotation_keys_round_trip(self) -> None:
+        code, _, _ = run_cli("set", "egress_proxy_url", "http://proxy.example:8080")
+        self.assertEqual(code, 0)
+        code, _, _ = run_cli("set", "egress_switch_cmd", "switch --for-site {host}")
+        self.assertEqual(code, 0)
+        cfg = Config()
+        self.assertEqual(cfg.egress_proxy_url, "http://proxy.example:8080")
+        self.assertEqual(cfg.egress_switch_cmd, "switch --for-site {host}")
+        self.assertEqual(cfg.data_proxy_url, "")
+
     def test_set_list_key_splits_commas(self) -> None:
         code, _, _ = run_cli("set", "recent_symbols", "AAPL, MSFT,TSLA")
         self.assertEqual(code, 0)

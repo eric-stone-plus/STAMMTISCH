@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -90,22 +90,75 @@ class GateReport:
 class QuantEngine:
     """Wraps quantkit functions for TUI consumption."""
 
-    def __init__(self, data_dir: str | None = None, data_proxy_url: str | None = None):
+    def __init__(self, data_dir: str | None = None, data_proxy_url: str | None = None,
+                 egress_proxy_url: str | None = None,
+                 egress_switch_cmd: str | None = None):
         self.data_dir = Path(data_dir) if data_dir else Path.home() / ".quant_cache"
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass  # Unwritable cache dir: commands degrade with per-call errors.
-        # Route yfinance through a configured egress (provider hourly
-        # quotas are per exit IP). Optional and host-specific: unset means
+        self._egress_proxy_url = (egress_proxy_url or "").strip()
+        self._egress_switch_cmd = (egress_switch_cmd or "").strip()
+        self._egress_active = False
+        # Always-on manual override: route yfinance through a fixed egress
+        # from the first call. Optional and host-specific: unset means
         # direct, exactly the previous behaviour.
         if data_proxy_url:
+            self._egress_apply(data_proxy_url)
+        # Reactive per-site rotation (preferred): fetches stay direct
+        # until a provider rate-limits this exit IP; then the configured
+        # switch command rotates THAT provider's host onto the egress
+        # class and only the affected provider's fetches retry through
+        # it. Other providers keep their direct route.
+
+    def _egress_apply(self, proxy_url: str) -> None:
+        try:
+            import yfinance as yf
+            yf.set_config(proxy={"http": proxy_url, "https": proxy_url})
+            self._egress_active = True
+        except Exception:
+            pass  # older yfinance without set_config: fetch stays direct
+
+    def _is_rate_limit(self, error: BaseException) -> bool:
+        text = str(error).lower()
+        return any(marker in text for marker in
+                   ("too many requests", "rate limit", "rate limited", "429"))
+
+    def _egress_rotate(self) -> bool:
+        """Rotate the rate-limited provider's hosts onto the egress class."""
+        if not (self._egress_proxy_url and self._egress_switch_cmd):
+            return False
+        import subprocess
+        for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
             try:
-                import yfinance as yf
-                yf.set_config(proxy={"http": data_proxy_url,
-                                     "https": data_proxy_url})
+                subprocess.run(
+                    shlex.split(self._egress_switch_cmd.format(host=host)),
+                    capture_output=True, timeout=30)
             except Exception:
-                pass  # older yfinance without set_config: fetch stays direct
+                pass  # rotation is best-effort; the retry decides success
+        self._egress_apply(self._egress_proxy_url)
+        return True
+
+    def _fetch_ohlcv(self, symbol: str, market: str, start: str,
+                     end: str | None = None, force: bool = False):
+        """quantkit fetch with reactive per-site egress rotation.
+
+        Direct by default; a rate-limited fetch (provider hourly quotas
+        are per exit IP) rotates the affected provider onto the
+        configured egress and retries once through it. Anything else
+        propagates untouched.
+        """
+        from quantkit.data import fetch_ohlcv
+        try:
+            return fetch_ohlcv(symbol, market=market, start=start, end=end,
+                               data_dir=str(self.data_dir), force_refresh=force)
+        except Exception as exc:
+            if (not self._egress_active and self._is_rate_limit(exc)
+                    and self._egress_rotate()):
+                return fetch_ohlcv(symbol, market=market, start=start, end=end,
+                                   data_dir=str(self.data_dir), force_refresh=force)
+            raise
 
     @property
     def available(self) -> bool:
@@ -120,9 +173,8 @@ class QuantEngine:
     def fetch_data(self, symbol: str, market: str = "auto", start: str = "2020-01-01", end: str | None = None, force: bool = False) -> dict[str, Any]:
         symbol = _normalize_symbol(symbol.strip().upper())
         try:
-            from quantkit.data import fetch_ohlcv
-            df = fetch_ohlcv(symbol, market=market, start=start, end=end,
-                             data_dir=str(self.data_dir), force_refresh=force)
+            df = self._fetch_ohlcv(symbol, market=market, start=start, end=end,
+                                   force=force)
             if _missing_ohlcv(df):
                 return {"ok": False, "error": f"No data for {symbol}"}
             last = df.iloc[-1]
@@ -141,10 +193,9 @@ class QuantEngine:
                      start: str = "2020-01-01", cost_tier: str = "low") -> dict[str, Any]:
         symbol = _normalize_symbol(symbol.strip().upper())
         try:
-            from quantkit.data import fetch_ohlcv
             from quantkit.backtest import run_long_only, dual_ma_signal, rsi_mean_reversion_signal
 
-            df = fetch_ohlcv(symbol, start=start, data_dir=str(self.data_dir))
+            df = self._fetch_ohlcv(symbol, market="auto", start=start)
             if _missing_ohlcv(df):
                 return {"ok": False, "error": f"No data for {symbol}"}
 
@@ -174,10 +225,9 @@ class QuantEngine:
     def compute_indicators(self, symbol: str, start: str = "2020-01-01") -> dict[str, Any]:
         symbol = _normalize_symbol(symbol.strip().upper())
         try:
-            from quantkit.data import fetch_ohlcv
             from quantkit.indicators import add_core_indicators
 
-            df = fetch_ohlcv(symbol, start=start, data_dir=str(self.data_dir))
+            df = self._fetch_ohlcv(symbol, market="auto", start=start)
             if _missing_ohlcv(df):
                 return {"ok": False, "error": f"No data for {symbol}"}
 
@@ -198,10 +248,9 @@ class QuantEngine:
     def build_factors(self, symbol: str, start: str = "2020-01-01") -> dict[str, Any]:
         symbol = _normalize_symbol(symbol.strip().upper())
         try:
-            from quantkit.data import fetch_ohlcv
             from quantkit.factors import build_feature_frame, combine_factors
 
-            df = fetch_ohlcv(symbol, start=start, data_dir=str(self.data_dir))
+            df = self._fetch_ohlcv(symbol, market="auto", start=start)
             if _missing_ohlcv(df):
                 return {"ok": False, "error": f"No data for {symbol}"}
 

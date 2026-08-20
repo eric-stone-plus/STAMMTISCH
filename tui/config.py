@@ -31,6 +31,11 @@ DEFAULT_CONFIG = {
     "state_root": "",
     "data_dir": str(Path.home() / ".quant_cache"),
     "data_proxy_url": "",
+    # Reactive per-site rotation (preferred over always-on data_proxy_url).
+    # Both must be set; empty means fetches stay direct. `{host}` in the
+    # switch command is replaced with the rate-limited provider host.
+    "egress_proxy_url": "",
+    "egress_switch_cmd": "",
     "recent_symbols": [],
     "recent_strategies": [],
     "default_strategy": "dual_ma",
@@ -282,6 +287,14 @@ class Config:
     @property
     def data_proxy_url(self) -> str:
         return str(self._data.get("data_proxy_url", "") or "")
+
+    @property
+    def egress_proxy_url(self) -> str:
+        return str(self._data.get("egress_proxy_url", "") or "")
+
+    @property
+    def egress_switch_cmd(self) -> str:
+        return str(self._data.get("egress_switch_cmd", "") or "")
 
     @property
     def ohlcv_mode(self) -> str:

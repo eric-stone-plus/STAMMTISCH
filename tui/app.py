@@ -35,7 +35,12 @@ class StammtischTUI(App):
         super().__init__(**kwargs)
 
         self.driver = StammtischDriver(binary=binary, state_root=state_root, pipeline_dir=pipeline_dir)
-        self.engine = QuantEngine(data_dir=self.config.data_dir)
+        self.engine = QuantEngine(
+            data_dir=self.config.data_dir,
+            data_proxy_url=self.config.data_proxy_url or None,
+            egress_proxy_url=self.config.egress_proxy_url or None,
+            egress_switch_cmd=self.config.egress_switch_cmd or None,
+        )
         from .tools import default_tools
         self.ai = AIDriver(
             api_key=ai_key,
