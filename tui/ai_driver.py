@@ -151,7 +151,9 @@ class AIDriver:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            # A tool-verification turn legitimately thinks for minutes on
+            # a full table; 60s cut real decision passes mid-generation.
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 return json.loads(resp.read()), None
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")[:500]
@@ -198,7 +200,10 @@ class AIDriver:
         tool_events: list[str] = []
         tool_wire = [t.wire() for t in self.tools.values()] if self.tools else None
 
-        for _round in range(4):
+        # Six rounds: a decision pass over a scanned table legitimately
+        # needs several tool batches (batch scan + spot checks) before its
+        # final answer; four dropped real decisions mid-verification.
+        for _round in range(6):
             payload = {
                 "model": model,
                 "messages": messages,
@@ -385,7 +390,7 @@ class AIDriver:
 
         return ChatResponse(
             content="",
-            error="tool call loop exceeded 4 rounds",
+            error="tool call loop exceeded 6 rounds",
             tool_events=tool_events,
         )
 

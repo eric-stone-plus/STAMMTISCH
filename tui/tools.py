@@ -86,7 +86,72 @@ def default_tools(engine: QuantEngine) -> dict[str, Tool]:
         payload["stats"] = result.get("stats", {})
         return json.dumps(payload, ensure_ascii=False, default=str)
 
+    def scan_backtests(args: dict[str, Any]) -> str:
+        import json as _json
+        from datetime import date, timedelta
+
+        symbols = args.get("symbols")
+        if not isinstance(symbols, list) or not symbols:
+            return "error: symbols must be a non-empty array"
+        if len(symbols) > 40:
+            return "error: at most 40 symbols per scan"
+        strategy = str(args.get("strategy", "dual_ma")).strip() or "dual_ma"
+        try:
+            years = float(args.get("years", 2))
+        except (TypeError, ValueError):
+            return "error: years must be a number"
+        if not 0.5 <= years <= 10:
+            return "error: years must be within 0.5..10"
+        start = (date.today() - timedelta(days=int(years * 365.25))).isoformat()
+        out = []
+        for raw in symbols:
+            symbol = str(raw).strip().upper()
+            if not symbol:
+                continue
+            result = engine.run_backtest(
+                symbol, strategy=strategy, start=start, cost_tier="low",
+            )
+            if not result.get("ok"):
+                out.append({"symbol": symbol, "error": str(result.get("error"))[:60]})
+                continue
+            summary = result.get("summary")
+            if summary is not None and not isinstance(summary, dict):
+                from dataclasses import asdict, is_dataclass
+                summary = asdict(summary) if is_dataclass(summary) else dict(summary)
+            if isinstance(summary, dict):
+                out.append({
+                    "symbol": symbol,
+                    **{k: v for k, v in summary.items()
+                       if not str(k).startswith("_")
+                       and k not in ("equity_series", "returns_series", "positions_series")},
+                })
+        return _json.dumps(out, ensure_ascii=False, default=str)
+
     tools = [
+        Tool(
+            name="scan_backtests",
+            description=(
+                "Batch backtest one strategy over many tickers in one call "
+                "(same engine and window as run_backtest). Returns an array "
+                "of per-symbol summaries: total_return, cagr, sharpe, "
+                "max_drawdown, win_rate, trades. Prefer this over repeated "
+                "run_backtest calls whenever more than two symbols need "
+                "verification."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "symbols": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "Tickers like 600519.SS, 0700.HK, AAPL (max 40)",
+                    },
+                    "strategy": {"type": "string", "enum": ["dual_ma", "rsi_mr"], "default": "dual_ma"},
+                    "years": {"type": "number", "default": 2},
+                },
+                "required": ["symbols"],
+            },
+            handler=scan_backtests,
+        ),
         Tool(
             name="get_ohlcv",
             description=(

@@ -124,7 +124,7 @@ class AIDriverTest(unittest.TestCase):
         request, timeout = captured[0]
         self.assertEqual(request.full_url, "https://example.invalid/custom/chat/completions")
         self.assertEqual(request.get_header("Authorization"), "Bearer sk-override")
-        self.assertEqual(timeout, 60)
+        self.assertEqual(timeout, 180)
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["model"], "configured-model")
         self.assertEqual(body["max_tokens"], AI_MAX_TOKENS)
