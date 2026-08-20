@@ -30,6 +30,7 @@ DEFAULT_CONFIG = {
     "ai_model": "glm-5.3",
     "state_root": "",
     "data_dir": str(Path.home() / ".quant_cache"),
+    "data_proxy_url": "",
     "recent_symbols": [],
     "recent_strategies": [],
     "default_strategy": "dual_ma",
@@ -277,6 +278,10 @@ class Config:
     @property
     def data_dir(self) -> str:
         return self._data.get("data_dir", DEFAULT_CONFIG["data_dir"])
+
+    @property
+    def data_proxy_url(self) -> str:
+        return str(self._data.get("data_proxy_url", "") or "")
 
     @property
     def ohlcv_mode(self) -> str:

@@ -167,7 +167,8 @@ def _prior_context(latest: dict[str, Any] | None, zone: str) -> str:
 
 def run(force: bool = False) -> int:
     config = Config()
-    engine = QuantEngine(data_dir=config.data_dir)
+    engine = QuantEngine(data_dir=config.data_dir,
+                         data_proxy_url=config.data_proxy_url or None)
 
     if not config.ai_api_key:
         print("decide: AI API key is not configured", file=sys.stderr)

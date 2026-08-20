@@ -90,12 +90,22 @@ class GateReport:
 class QuantEngine:
     """Wraps quantkit functions for TUI consumption."""
 
-    def __init__(self, data_dir: str | None = None):
+    def __init__(self, data_dir: str | None = None, data_proxy_url: str | None = None):
         self.data_dir = Path(data_dir) if data_dir else Path.home() / ".quant_cache"
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass  # Unwritable cache dir: commands degrade with per-call errors.
+        # Route yfinance through a configured egress (provider hourly
+        # quotas are per exit IP). Optional and host-specific: unset means
+        # direct, exactly the previous behaviour.
+        if data_proxy_url:
+            try:
+                import yfinance as yf
+                yf.set_config(proxy={"http": data_proxy_url,
+                                     "https": data_proxy_url})
+            except Exception:
+                pass  # older yfinance without set_config: fetch stays direct
 
     @property
     def available(self) -> bool:
