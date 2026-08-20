@@ -7,17 +7,17 @@ config). With empty settings the panel stays inert — status shows
 "not configured" and every switch refuses with a notice instead of
 touching anything.
 
-Switches it owns once configured:
+What it operates once configured:
 
 - the crawl stack itself (podman compose up/stop over the configured
-  compose directory)
-- the nightly self-heal timer (firecrawl-watch.timer, a user unit)
-- an immediate heal run (the configured heal command)
-- the source roster (the configured sources.conf): enable/disable one
-  source at a time by commenting its line
+  compose directory), plus a single-container api restart
+- the nightly self-heal timer (firecrawl-watch.timer, a user unit) and
+  an immediate heal run (the configured heal command)
+- the source roster (the configured sources.conf): per-source
+  enable/disable by commenting its line, with an atomic write
 
-All shell operations run off the UI thread; every action appends its
-outcome to the in-panel log. Chrome strings are bilingual via tui.lang.
+All shell operations run off the UI thread and report both in a log
+pane and as notices. Chrome strings are bilingual via tui.lang.
 """
 
 from __future__ import annotations
@@ -46,8 +46,11 @@ else:
         "api", "playwright-service", "redis", "rabbitmq",
         "nuq-postgres", "gfw-proxy",
     ]
+    DEFAULT_ENDPOINT = "http://127.0.0.1:3002/"
 
-    def probe_endpoint(url: str, timeout: float = 2.5) -> tuple[bool, int]:
+    def probe_endpoint(
+        url: str = DEFAULT_ENDPOINT, timeout: float = 2.5
+    ) -> tuple[bool, int]:
         """Cheap liveness probe: (reachable, latency ms)."""
         started = time.monotonic()
         try:
@@ -64,7 +67,9 @@ else:
         env["DOCKER_HOST"] = f"unix:///run/user/{os.getuid()}/podman/podman.sock"
         return env
 
-    def _run(cmd: list[str], cwd: str | None = None, timeout: float = 90.0) -> tuple[int, str]:
+    def _run(
+        cmd: list[str], cwd: str | None = None, timeout: float = 90.0
+    ) -> tuple[int, str]:
         """Run one control command; returns (returncode, tail of output)."""
         try:
             done = subprocess.run(
@@ -87,6 +92,32 @@ else:
 
     def watch_timer_active() -> bool:
         return systemctl("is-active", WATCH_TIMER)[0] == 0
+
+    def watch_timer_next() -> str:
+        code, value = systemctl("show", WATCH_TIMER, "--value",
+                                "--property=NextElapseUSecRealtime")
+        if code != 0:
+            return ""
+        return value.strip()
+
+    def container_counts(compose_dir: str) -> tuple[int, int]:
+        """(running, total) containers of the compose project."""
+        if not compose_dir:
+            return (0, 0)
+        running = 0
+        total = 0
+        for flag in ("", "-a"):
+            cmd = ["podman", "ps", *filter(None, [flag]),
+                   "--format", "{{.Names}}"]
+            code, output = _run(cmd, cwd=compose_dir, timeout=20.0)
+            if code != 0:
+                continue
+            names = [n for n in output.splitlines() if n.strip()]
+            if not flag:
+                running = len(names)
+            else:
+                total = len(names)
+        return (running, total)
 
     def parse_sources(path: str) -> list[dict[str, Any]]:
         """One entry per source line: enabled iff not a comment line.
@@ -118,7 +149,7 @@ else:
         return entries
 
     def toggle_source(entry_index: int, path: str) -> bool:
-        """Comment/uncomment one source line in place; True on change."""
+        """Comment/uncomment one source line atomically; True on change."""
         try:
             conf = Path(path)
             lines = conf.read_text(encoding="utf-8").splitlines()
@@ -136,8 +167,16 @@ else:
         else:
             indent = raw[: len(raw) - len(raw.lstrip())]
             lines[entry_index] = f"{indent}#{body}"
-        conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tmp = conf.with_name(conf.name + ".tmp")
+        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        os.replace(tmp, conf)
         return True
+
+    def _fit(value: str, width: int) -> str:
+        cleaned = " ".join(str(value or "").split())
+        if len(cleaned) <= width:
+            return cleaned
+        return cleaned[: max(width - 1, 1)] + "…"
 
     class CrawlerPanelScreen(Screen):
         """Status + switches for the whole crawling side."""
@@ -149,14 +188,14 @@ else:
             Binding("t", "toggle_timer", "Timer on/off"),
             Binding("r", "restart_api", "Restart api"),
             Binding("h", "heal_now", "Heal now"),
-            Binding("e", "toggle_source", "Enable/disable"),
+            Binding("e", "toggle_source", "Toggle source"),
         ]
         CSS = """
         CrawlerPanelScreen { layout: vertical; }
         #crawl-scroll { height: 1fr; }
         .panel { border: solid #505050; margin: 0 1; }
         .panel-title { color: #a0a0a0; }
-        #crawl-sources { height: auto; max-height: 14; }
+        #crawl-sources { height: auto; max-height: 16; }
         #crawl-log { height: auto; max-height: 8; color: #a0a0a0; }
         """
 
@@ -184,7 +223,7 @@ else:
         def compose(self) -> ComposeResult:
             yield Static(
                 "  CRAWLERS  |  [S]stack [T]timer [R]restart api [H]heal "
-                "[E]toggle source [P]refresh  [Esc] Back",
+                "[E]/[Enter] toggle source [P]refresh  [Esc] Back",
                 classes="header-bar",
             )
             with ScrollableContainer(id="crawl-scroll"):
@@ -198,10 +237,13 @@ else:
                     yield Static(
                         "  " + self._tr("crawlers.sources", "Sources"),
                         classes="panel-title",
+                        id="crawl-sources-title",
                     )
                     yield OptionList(id="crawl-sources")
                 with Vertical(classes="panel"):
-                    yield Static("  " + self._tr("crawlers.log", "Log"), classes="panel-title")
+                    yield Static(
+                        "  " + self._tr("crawlers.log", "Log"), classes="panel-title"
+                    )
                     yield Static(
                         "  " + self._tr("crawlers.no_ops", "(no operations yet)") + "\n",
                         id="crawl-log",
@@ -214,19 +256,22 @@ else:
         # -- status ------------------------------------------------------------
 
         def _snapshot(self) -> dict[str, Any]:
-            endpoint = self._cfg("crawler_url", "http://127.0.0.1:3002/")
+            endpoint = self._cfg("crawler_url", DEFAULT_ENDPOINT)
             endpoint_ok, latency_ms = probe_endpoint(endpoint)
+            compose_dir = self._cfg("crawler_compose_dir")
+            running, total = container_counts(compose_dir)
             return {
                 "endpoint": endpoint,
                 "endpoint_ok": endpoint_ok,
                 "latency_ms": latency_ms,
                 "timer_active": watch_timer_active(),
-                "compose_dir": self._cfg("crawler_compose_dir"),
+                "timer_next": watch_timer_next() if watch_timer_active() else "",
+                "containers_running": running,
+                "containers_total": total,
+                "compose_dir": compose_dir,
                 "sources_conf": self._cfg("crawler_sources_conf"),
                 "heal_cmd": self._cfg("crawler_heal_cmd"),
-                "intake_configured": bool(
-                    self.config and self.config.intake_argv
-                ),
+                "intake_configured": bool(self.config and self.config.intake_argv),
             }
 
         def _status_text(self, snap: dict[str, Any]) -> str:
@@ -237,21 +282,34 @@ else:
             yes = self._tr("crawlers.configured", "configured")
             no = self._tr("crawlers.not_configured", "not configured")
             endpoint = (
-                f"{up} ({snap['latency_ms']}ms)" if snap["endpoint_ok"] else down
+                f"{up} {snap['latency_ms']}ms" if snap["endpoint_ok"] else down
             )
             timer = on if snap["timer_active"] else off
-            lines = [
-                f"  {self._tr('crawlers.endpoint', 'Firecrawl endpoint')}   {endpoint}   {snap['endpoint']}",
-                f"  {self._tr('crawlers.timer', 'Self-heal timer')}       {timer}",
-                f"  {self._tr('crawlers.intake', 'Intake command')}        {yes if snap['intake_configured'] else no}",
+            if snap.get("timer_next"):
+                timer += f"  next {snap['timer_next']}"
+            rows = [
+                (
+                    self._tr("crawlers.endpoint", "Firecrawl endpoint"),
+                    f"{endpoint}  {_fit(snap['endpoint'], 44)}",
+                ),
+                (
+                    self._tr("crawlers.containers", "Containers"),
+                    f"{snap['containers_running']}/{snap['containers_total']} "
+                    + self._tr("crawlers.running", "running"),
+                ),
+                (
+                    self._tr("crawlers.timer", "Self-heal timer"),
+                    timer,
+                ),
+                (
+                    self._tr("crawlers.intake", "Intake command"),
+                    yes if snap["intake_configured"] else no,
+                ),
+                ("compose dir", _fit(snap["compose_dir"], 56) or no),
+                ("sources conf", _fit(snap["sources_conf"], 56) or no),
+                ("heal command", _fit(snap["heal_cmd"], 56) or no),
             ]
-            for label, value in (
-                ("crawler_compose_dir", snap["compose_dir"]),
-                ("crawler_sources_conf", snap["sources_conf"]),
-                ("crawler_heal_cmd", snap["heal_cmd"]),
-            ):
-                lines.append(f"  {label:<18} {value if value else no}")
-            return "\n".join(lines)
+            return "\n".join(f"  {label:<18} {value}" for label, value in rows)
 
         def action_refresh(self) -> None:
             from .analysis import _run_async
@@ -269,25 +327,38 @@ else:
 
         def _reload_sources(self) -> None:
             listing = self.query_one("#crawl-sources", OptionList)
-            listing.clear()
+            was_highlighted = listing.highlighted
+            listing.clear_options()
             conf = self._cfg("crawler_sources_conf")
+            entries = [e for e in parse_sources(conf) if e["toggleable"]] if conf else []
+            enabled = sum(1 for e in entries if e["enabled"])
+            title = self.query_one("#crawl-sources-title", Static)
             if not conf:
-                listing.add_option(
-                    Option("  (crawler_sources_conf not set)", id="none")
+                title.update(
+                    "  " + self._tr("crawlers.sources", "Sources")
+                    + "  —  crawler_sources_conf "
+                    + self._tr("crawlers.not_configured", "not configured")
                 )
                 return
-            for entry in parse_sources(conf):
-                if not entry["toggleable"]:
-                    continue
-                mark = "+" if entry["enabled"] else "-"
-                listing.add_option(
-                    Option(
-                        f"  {mark} {entry['market']:<10} {entry['name']:<18} {entry['url'][:44]}",
-                        id=str(entry["index"]),
-                    )
+            title.update(
+                f"  {self._tr('crawlers.sources', 'Sources')}  —  "
+                f"{enabled}/{len(entries)} "
+                + self._tr("crawlers.enabled", "enabled")
+            )
+            for entry in entries:
+                mark = "✓" if entry["enabled"] else "✗"
+                row = (
+                    f"  {mark} {entry['market']:<9} {entry['name']:<16} "
+                    f"{_fit(entry['url'], 40)}"
+                )
+                listing.add_option(Option(row, id=str(entry["index"])))
+            if entries:
+                listing.highlighted = min(
+                    was_highlighted if was_highlighted is not None else 0,
+                    len(entries) - 1,
                 )
 
-        # -- log ---------------------------------------------------------------
+        # -- log + ops -----------------------------------------------------------
 
         def _log(self, line: str) -> None:
             stamp = time.strftime("%H:%M:%S")
@@ -297,24 +368,32 @@ else:
                 "\n".join(self._log_lines) + "\n"
             )
 
-        # -- actions ------------------------------------------------------------
-
         def _run_op(self, label: str, work) -> None:
             from .analysis import _run_async
 
             def _deliver(result):
                 code, output = result
-                self._log(f"{label}: {'OK' if code == 0 else f'exit {code}'}  {output[-200:]}")
+                ok = code == 0
+                self._log(f"{label}: {'OK' if ok else f'exit {code}'}  {output[-200:]}")
+                self.notify(
+                    f"{label}: {'OK' if ok else 'failed'}",
+                    severity="information" if ok else "error",
+                )
                 self.action_refresh()
 
             _run_async(self, work, _deliver)
 
+        def _require(self, key: str) -> str:
+            value = self._cfg(key)
+            if not value:
+                self.notify(f"{key} is not configured.", severity="warning")
+            return value
+
         def action_toggle_stack(self) -> None:
-            compose_dir = self._cfg("crawler_compose_dir")
+            compose_dir = self._require("crawler_compose_dir")
             if not compose_dir:
-                self.notify("crawler_compose_dir is not configured.", severity="warning")
                 return
-            up = probe_endpoint(self._cfg("crawler_url", "http://127.0.0.1:3002/"))[0]
+            up = probe_endpoint(self._cfg("crawler_url", DEFAULT_ENDPOINT))[0]
 
             def _work():
                 if up:
@@ -341,8 +420,7 @@ else:
             self._run_op("timer off" if active else "timer on", _work)
 
         def action_restart_api(self) -> None:
-            if not self._cfg("crawler_compose_dir"):
-                self.notify("crawler_compose_dir is not configured.", severity="warning")
+            if not self._require("crawler_compose_dir"):
                 return
 
             def _work():
@@ -351,9 +429,8 @@ else:
             self._run_op("restart api", _work)
 
         def action_heal_now(self) -> None:
-            heal_cmd = self._cfg("crawler_heal_cmd")
+            heal_cmd = self._require("crawler_heal_cmd")
             if not heal_cmd:
-                self.notify("crawler_heal_cmd is not configured.", severity="warning")
                 return
 
             def _work():
@@ -361,11 +438,16 @@ else:
 
             self._run_op("heal", _work)
 
-        def action_toggle_source(self) -> None:
-            conf = self._cfg("crawler_sources_conf")
-            if not conf:
-                self.notify("crawler_sources_conf is not configured.", severity="warning")
+        # -- sources ---------------------------------------------------------------
+
+        def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+            """Enter on a source row toggles it, matching [E]."""
+            if event.option_list.id != "crawl-sources":
                 return
+            if str(event.option_id) != "none":
+                self._toggle_source_line(int(str(event.option_id)))
+
+        def action_toggle_source(self) -> None:
             listing = self.query_one("#crawl-sources", OptionList)
             highlighted = listing.highlighted
             if highlighted is None:
@@ -374,9 +456,15 @@ else:
             option = listing.get_option_at_index(highlighted)
             if str(option.id) == "none":
                 return
-            changed = toggle_source(int(str(option.id)), conf)
+            self._toggle_source_line(int(str(option.id)))
+
+        def _toggle_source_line(self, entry_index: int) -> None:
+            conf = self._require("crawler_sources_conf")
+            if not conf:
+                return
+            changed = toggle_source(entry_index, conf)
             if changed:
-                self._log(f"source toggled: {str(option.prompt).strip()[:70]}")
+                self._log(f"source toggled: line {entry_index + 1}")
                 self._reload_sources()
             else:
                 self.notify("That line is not a toggleable source.", severity="warning")

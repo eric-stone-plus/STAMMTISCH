@@ -71,7 +71,6 @@ GENERAL_ITEMS: list[tuple[str, str, str]] = [
     ("screen.open_chat", "A", "quick.ask"),
     ("screen.edit_config", "E", "quick.config"),
     ("screen.open_crawlers", "C", "quick.crawlers"),
-    ("screen.toggle_language", "L", "quick.language"),
 ]
 
 
@@ -81,7 +80,6 @@ class DashboardScreen(Screen):
     BINDINGS = [
         Binding("a", "open_chat", "Ask"),
         Binding("c", "open_crawlers", "Crawlers", show=False),
-        Binding("l", "toggle_language", "Language", show=False),
         Binding("e", "edit_config", "Edit"),
         Binding("delete", "delete_selected", "Delete"),
         Binding("shift+d", "delete_all", "Delete all"),
@@ -161,26 +159,22 @@ class DashboardScreen(Screen):
 
         return tr(self._language, key, fallback)
 
-    def _quick_options(self, crawler_mark: str | None = None) -> list[Option]:
-        """Quick Start rows for the current language (plus an optional
-        live crawlers status mark)."""
+    def _quick_options(self) -> list[Option]:
+        """Quick Start rows for the current language."""
         from .lang import tr
 
         language = self._language
-        options: list[Option] = []
-        for action, hotkey, label_key in GENERAL_ITEMS:
-            label = tr(language, label_key, hotkey)
-            if action == "screen.open_crawlers" and crawler_mark:
-                label = f"{label} · {crawler_mark}"
-            options.append(Option(Text(f"[{hotkey}] {label}"), id=action))
-        return options
+        return [
+            Option(Text(f"[{hotkey}] {tr(language, label_key, hotkey)}"), id=action)
+            for action, hotkey, label_key in GENERAL_ITEMS
+        ]
 
-    def _rebuild_quick(self, crawler_mark: str | None = None) -> None:
+    def _rebuild_quick(self) -> None:
         """Rebuild the Quick Start rows (Textual 8.2.8 options are
         immutable; replacing the set is the supported refresh)."""
         quick = self.query_one("#quick-list", OptionList)
         quick.clear_options()
-        for option in self._quick_options(crawler_mark):
+        for option in self._quick_options():
             quick.add_option(option)
         quick.highlighted = None
 
@@ -206,19 +200,6 @@ class DashboardScreen(Screen):
         except Exception:
             pass
 
-    def action_toggle_language(self) -> None:
-        new_language = "zh" if self._language == "en" else "en"
-        try:
-            self.config.update({"language": new_language})
-        except Exception as exc:
-            self.notify(f"Language not saved: {exc}", severity="error")
-            return
-        self._relabel()
-        self._refresh_crawl_status()
-        from .lang import tr
-
-        self.notify(tr(new_language, "lang.name"))
-
     def on_mount(self) -> None:
         # No pre-selected row in Quick Start: hover feedback only on demand.
         self.query_one("#quick-list", OptionList).highlighted = None
@@ -226,34 +207,7 @@ class DashboardScreen(Screen):
         table = self.query_one("#run-table", DataTable)
         table.add_columns("SESSION", "TIME", "STATE")
         self.set_interval(2.0, self._refresh_intake_rows)
-        self.set_interval(30.0, self._refresh_crawl_status)
-        self._refresh_crawl_status()
         self.action_refresh()
-
-    def _refresh_crawl_status(self) -> None:
-        if not self.is_mounted:
-            return
-
-        def _probe():
-            from .crawlers import probe_endpoint
-
-            return probe_endpoint()
-
-        def _apply(result) -> None:
-            try:
-                from .lang import tr
-
-                ok, latency_ms = result
-                language = self._language
-                if ok:
-                    mark = f"● {tr(language, 'crawlers.up', 'UP')} {latency_ms}ms"
-                else:
-                    mark = f"○ {tr(language, 'crawlers.down', 'DOWN')}"
-                self._rebuild_quick(mark)
-            except Exception:
-                pass
-
-        _run_async(self, _probe, _apply)
 
     def action_open_crawlers(self) -> None:
         from .crawlers import CrawlerPanelScreen

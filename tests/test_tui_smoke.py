@@ -2606,7 +2606,6 @@ class TuiSmokeTest(unittest.TestCase):
                             "[A] ASK GALAHAD",
                             "[E] EDIT CONFIG",
                             "[C] CRAWLERS",
-                            "[L] LANGUAGE",
                         ],
                     )
 
