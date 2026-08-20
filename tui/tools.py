@@ -46,17 +46,27 @@ def default_tools(engine: QuantEngine) -> dict[str, Tool]:
         return context or f"{symbol}: no local OHLCV available"
 
     def run_backtest(args: dict[str, Any]) -> str:
+        from datetime import date, timedelta
+
         symbol = str(args.get("symbol", "")).strip().upper()
         strategy = str(args.get("strategy", "dual_ma")).strip() or "dual_ma"
         try:
             fast = int(args.get("fast", 20))
             slow = int(args.get("slow", 50))
+            years = float(args.get("years", 2))
         except (TypeError, ValueError):
-            return "error: fast/slow must be integers"
+            return "error: fast/slow must be integers and years a number"
+        if not 0.5 <= years <= 10:
+            return "error: years must be within 0.5..10"
         if not symbol:
             return "error: symbol is required"
+        # The window defaults to the same 2-year span the strategy scan
+        # uses, so tool-verified numbers and the board agree; the model can
+        # widen it explicitly when a longer history matters.
+        start = (date.today() - timedelta(days=int(years * 365.25))).isoformat()
         result = engine.run_backtest(
-            symbol, strategy=strategy, fast=fast, slow=slow, cost_tier="low"
+            symbol, strategy=strategy, fast=fast, slow=slow,
+            start=start, cost_tier="low",
         )
         if not result.get("ok"):
             return f"{symbol}: backtest unavailable ({result.get('error', 'unknown')})"
@@ -111,6 +121,10 @@ def default_tools(engine: QuantEngine) -> dict[str, Tool]:
                     "strategy": {"type": "string", "enum": ["dual_ma", "rsi_mr"], "default": "dual_ma"},
                     "fast": {"type": "integer", "default": 20},
                     "slow": {"type": "integer", "default": 50},
+                    "years": {
+                        "type": "number", "default": 2,
+                        "description": "Lookback window in years (0.5..10); default matches the strategy-scan board",
+                    },
                 },
                 "required": ["symbol"],
             },

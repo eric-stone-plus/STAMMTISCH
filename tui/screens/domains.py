@@ -1308,6 +1308,7 @@ class StrategyScanScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("r", "rescan", "Rescan"),
+        Binding("a", "ask_galahad", "Ask GALAHAD"),
         Binding("question_mark", "show_help", "Keys"),
     ]
     CSS = """
@@ -1468,11 +1469,39 @@ class StrategyScanScreen(Screen):
         )
         self.query_one("#scan-status", Static).update(f"  {summary}")
 
+    def action_ask_galahad(self) -> None:
+        """Hand the ranked scan table to GALAHAD for the decision pass."""
+        table = self.query_one("#scan-table", DataTable)
+        if table.row_count == 0:
+            self.notify("Scan something first — the table is empty.", severity="warning")
+            return
+        p = self._params()
+        context = [
+            f"Strategy scan — zone {self.zone}, {p['strategy']} "
+            f"({p['fast']}/{p['slow']}), cost {p['cost_tier']}, 2y window, "
+            f"sorted by total return:",
+            "symbol | TR% | CAGR% | sharpe | maxdd% | win% | trades | gates",
+        ]
+        for row_key in table.rows:
+            cells = [str(v) for v in table.get_row(row_key)]
+            context.append(" | ".join(cells))
+        from .chat import ChatScreen
+        self.app.push_screen(ChatScreen(
+            self.app.ai,
+            initial_prompt=(
+                "你是配置决策人。基于上面的策略扫描表,用工具核实关键标的后,"
+                "给出这一区的配置决策:买什么、权重顺序、不买什么和原因、"
+                "以及两个必须盯住的风险。引用数字一律以工具返回为准。"
+            ),
+            initial_context="\n".join(context),
+        ))
+
     def action_show_help(self) -> None:
         from .modals import KeyHelpScreen
 
         p = self._params()
         self.app.push_screen(KeyHelpScreen("STRATEGY SCAN — KEYS", [
+            ("a", "hand the ranked table to GALAHAD for the decision pass"),
             ("r", "rescan (re-run every symbol in this zone)"),
             ("↑ ↓", "move in the results table"),
             ("Esc", "back to the security board"),
