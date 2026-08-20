@@ -274,7 +274,7 @@ def run(force: bool = False) -> int:
                "你的职责是核实与风控——近期动量与幸存者偏差高发,单票重仓前必须有"
                "流动性/趋势持续性证据,脆弱的就剔除,不必凑满仓位。"
                if zone in screened_from else "")
-            "先给简短论述,然后必须以一个 ```json 代码块结尾,结构:"
+            + "先给简短论述,然后必须以一个 ```json 代码块结尾,结构:"
             '{"zone":"…","stance":"proceed|cautious|defensive",'
             '"positions":[{"symbol":"…","weight_pct":0,"action":"hold|buy|add|trim|cut|watch","note":"…"}],'
             '"exclusions":[{"symbol":"…","reason":"…"}],'
