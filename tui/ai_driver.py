@@ -14,9 +14,9 @@ import urllib.error
 
 # Default backend: Zhipu GLM's official OpenAI-compatible entry. Any
 # OpenAI-compatible endpoint works through config/env overrides.
-DEEPSEEK_BASE = "https://open.bigmodel.cn/api/paas/v4"
-DEEPSEEK_MODEL = "glm-5.3"
-DEEPSEEK_MAX_TOKENS = 16384
+AI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+AI_MODEL = "glm-5.3"
+AI_MAX_TOKENS = 16384
 
 SYSTEM_PROMPT = """# Charter
 
@@ -72,7 +72,7 @@ def _get_api_key() -> str | None:
     # 2. Config file (honors the STAMMTISCH_CONFIG override)
     try:
         from .config import Config
-        return Config().deepseek_api_key
+        return Config().ai_api_key
     except Exception:
         return None
 
@@ -112,7 +112,7 @@ class ChatResponse:
         return self.error is None
 
 
-class DeepSeekDriver:
+class AIDriver:
     """Thin wrapper around the configured OpenAI-compatible chat API."""
 
     def __init__(
@@ -123,8 +123,8 @@ class DeepSeekDriver:
         tools: dict | None = None,
     ):
         self.api_key = api_key or _get_api_key()
-        self.base_url = (base_url or DEEPSEEK_BASE).rstrip("/")
-        self.model = model or DEEPSEEK_MODEL
+        self.base_url = (base_url or AI_BASE_URL).rstrip("/")
+        self.model = model or AI_MODEL
         self.tools = tools or {}
         self.history: list[ChatMessage] = [
             ChatMessage("system", SYSTEM_PROMPT),
@@ -203,7 +203,7 @@ class DeepSeekDriver:
                 "model": model,
                 "messages": messages,
                 "temperature": 0.3,
-                "max_tokens": DEEPSEEK_MAX_TOKENS,
+                "max_tokens": AI_MAX_TOKENS,
                 "stream": False,
             }
             if tool_wire:

@@ -115,7 +115,7 @@ stammtisch              ← unified launcher (TUI / CLI)
 │   ├── widgets.py      ← stage flow, gate cards, HUD
 │   ├── driver.py       ← stammtisch-core CLI driver
 │   ├── engine.py       ← quantkit bridge (optional)
-│   ├── deepseek.py     ← AI chat driver, OpenAI-compatible (optional)
+│   ├── ai_driver.py    ← AI chat driver, OpenAI-compatible (optional)
 │   ├── config.py       ← file config + env overrides (0600)
 │   └── theme.py        ← grayscale CSS
 ├── schemas/            ← JSON Schema contracts (versioned)

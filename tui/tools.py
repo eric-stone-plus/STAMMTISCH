@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .deepseek import build_market_context
+from .ai_driver import build_market_context
 from .engine import QuantEngine
 
 

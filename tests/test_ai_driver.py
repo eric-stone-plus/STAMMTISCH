@@ -10,11 +10,11 @@ from pathlib import Path
 from unittest import mock
 
 from tui.config import DEFAULT_CONFIG, Config
-from tui.deepseek import (
-    DEEPSEEK_MAX_TOKENS,
-    DEEPSEEK_MODEL,
+from tui.ai_driver import (
+    AI_MAX_TOKENS,
+    AI_MODEL,
     SYSTEM_PROMPT,
-    DeepSeekDriver,
+    AIDriver,
     build_market_context,
     extract_symbols,
 )
@@ -38,7 +38,7 @@ def _completion(
     content: str,
     *,
     reasoning_content: str | None = None,
-    model: str = DEEPSEEK_MODEL,
+    model: str = AI_MODEL,
     finish_reason: str | None = "stop",
 ) -> dict:
     message = {"role": "assistant", "content": content}
@@ -51,22 +51,23 @@ def _completion(
     }
 
 
-class DeepSeekDriverTest(unittest.TestCase):
+class AIDriverTest(unittest.TestCase):
     def test_glm_is_the_consistent_default_and_config_can_override(self):
-        self.assertEqual(DEEPSEEK_MODEL, "glm-5.3")
-        self.assertEqual(DEFAULT_CONFIG["deepseek_model"], DEEPSEEK_MODEL)
-        self.assertEqual(DeepSeekDriver(api_key="sk-test").model, DEEPSEEK_MODEL)
+        self.assertEqual(AI_MODEL, "glm-5.3")
+        self.assertEqual(DEFAULT_CONFIG["ai_model"], AI_MODEL)
+        self.assertEqual(AIDriver(api_key="sk-test").model, AI_MODEL)
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "config.json")
+            # A pre-rename config storing the model under the legacy
+            # deepseek_model key must still resolve through ai_model.
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump({"deepseek_model": "custom-thinking-model"}, handle)
-            self.assertEqual(
-                Config(path=Path(path)).deepseek_model,
-                "custom-thinking-model",
-            )
+            config = Config(path=Path(path))
+            self.assertEqual(config.ai_model, "custom-thinking-model")
+            self.assertEqual(config.deepseek_model, "custom-thinking-model")
         self.assertEqual(
-            DeepSeekDriver(api_key="sk-test", model="custom-model").model,
+            AIDriver(api_key="sk-test", model="custom-model").model,
             "custom-model",
         )
 
@@ -109,7 +110,7 @@ class DeepSeekDriverTest(unittest.TestCase):
             captured.append((request, timeout))
             return _Response(_completion(answer, model="wire-model"))
 
-        driver = DeepSeekDriver(
+        driver = AIDriver(
             api_key="sk-override",
             base_url="https://example.invalid/custom/",
             model="configured-model",
@@ -126,7 +127,7 @@ class DeepSeekDriverTest(unittest.TestCase):
         self.assertEqual(timeout, 60)
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["model"], "configured-model")
-        self.assertEqual(body["max_tokens"], DEEPSEEK_MAX_TOKENS)
+        self.assertEqual(body["max_tokens"], AI_MAX_TOKENS)
         self.assertEqual(body["max_tokens"], 16384)
         self.assertFalse(body["stream"])
         self.assertEqual(body["messages"][0], {
@@ -152,7 +153,7 @@ class DeepSeekDriverTest(unittest.TestCase):
             requests.append(json.loads(request.data.decode("utf-8")))
             return _Response(next(responses))
 
-        driver = DeepSeekDriver(api_key="sk-test")
+        driver = AIDriver(api_key="sk-test")
         with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
             first = driver.chat("第一问：why?")
             second = driver.chat("Second question: 继续？")
@@ -307,7 +308,7 @@ class ToolCallingTest(unittest.TestCase):
             seen["args"] = args
             return "DATA: 14.35"
         tool = Tool(name="get_ohlcv", description="d", parameters={}, handler=_handler)
-        driver = DeepSeekDriver(api_key="sk-test", tools={"get_ohlcv": tool})
+        driver = AIDriver(api_key="sk-test", tools={"get_ohlcv": tool})
         driver._post = fake_post
         r = driver.chat("price?")
         self.assertTrue(r.ok)
@@ -339,7 +340,7 @@ class ToolCallingTest(unittest.TestCase):
         from tui.tools import Tool
         tool = Tool(name="get_ohlcv", description="d", parameters={},
                     handler=lambda args: "DATA")
-        driver = DeepSeekDriver(api_key="sk-test", tools={"get_ohlcv": tool})
+        driver = AIDriver(api_key="sk-test", tools={"get_ohlcv": tool})
         driver._post = fake_post
         r = driver.chat("price?")
         self.assertTrue(r.ok)
@@ -385,7 +386,7 @@ class ToolCallingTest(unittest.TestCase):
     def test_null_content_is_stored_as_empty_string(self):
         """A null assistant content must not poison session history: replaying
         "content": null makes the API reject every later turn."""
-        driver = DeepSeekDriver(api_key="sk-test")
+        driver = AIDriver(api_key="sk-test")
         driver._post = lambda payload, base_url, key: (
             _completion(None, reasoning_content="long trace"),
             None,
@@ -410,7 +411,7 @@ class ToolCallingTest(unittest.TestCase):
 
         from tui.tools import Tool
         present = Tool(name="present", description="d", parameters={}, handler=lambda args: "ok")
-        driver = DeepSeekDriver(api_key="sk-test", tools={"present": present})
+        driver = AIDriver(api_key="sk-test", tools={"present": present})
         driver._post = fake_post
         r = driver.chat("x")
         self.assertTrue(r.ok)
@@ -425,7 +426,7 @@ class ToolCallingTest(unittest.TestCase):
             seen["payload"] = payload
             return _completion("ok"), None
 
-        driver = DeepSeekDriver(api_key="sk-test")
+        driver = AIDriver(api_key="sk-test")
         driver._post = fake_post
         driver.chat("hi")
         self.assertNotIn("tools", seen["payload"])
@@ -433,7 +434,7 @@ class ToolCallingTest(unittest.TestCase):
     def test_non_terminal_finish_reasons_fail_closed_without_history(self):
         for reason in ("length", "content_filter", "unexpected", None):
             with self.subTest(reason=reason):
-                driver = DeepSeekDriver(api_key="sk-test")
+                driver = AIDriver(api_key="sk-test")
                 driver._post = lambda payload, base_url, key, reason=reason: (
                     _completion("partial", finish_reason=reason),
                     None,
@@ -463,7 +464,7 @@ class ToolCallingTest(unittest.TestCase):
             }, "finish_reason": "tool_calls"}]}, None
 
         tool = Tool(name="lookup", description="d", parameters={}, handler=lambda args: "data")
-        driver = DeepSeekDriver(api_key="sk-test", tools={"lookup": tool})
+        driver = AIDriver(api_key="sk-test", tools={"lookup": tool})
         driver._post = looping_post
         exhausted = driver.chat("loop")
         self.assertFalse(exhausted.ok)

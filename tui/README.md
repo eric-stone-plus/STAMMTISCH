@@ -42,7 +42,7 @@ STAMMTISCH_HOME=/path/to/state .venv/bin/python -m tui
   TUI python after the minimal rebuild, or use a separately managed interpreter
   via `STAMMTISCH_PYTHON`, along with its data deps, e.g.
   `.venv/bin/pip install -e /path/to/quantkit numpy pandas akshare`
-- Optional: DeepSeek API key (enables AI chat and run analysis)
+- Optional: AI provider API key (enables AI chat and run analysis)
 - Optional: a forecast command (config `kronos_cmd`) connects the chart to a
   `SYMBOL --horizon N --json` adapter. Legacy
   `{"model": ..., "forecast": [...], "dates": [...]}` responses are retained
@@ -248,7 +248,7 @@ Managed from the CLI (stdlib only, works without the TUI deps):
 
 ```sh
 stammtisch config                 # show config (API key masked)
-stammtisch config set-key [KEY]   # save the DeepSeek key (prompts if omitted)
+stammtisch config set-key [KEY]   # save the AI key (prompts if omitted)
 stammtisch config unset-key       # remove it
 stammtisch config set KEY VALUE   # any config key, e.g. default_fast 30
 stammtisch config get KEY         # print one value
@@ -276,7 +276,7 @@ tui/
 ├── theme.py        # Grayscale nmtui-style CSS
 ├── driver.py       # stammtisch-core CLI driver (JSON envelope parsing)
 ├── engine.py       # quantkit bridge (optional, degrades gracefully)
-├── deepseek.py     # DeepSeek chat driver (optional, stdlib urllib)
+├── ai_driver.py    # AI chat driver, provider-neutral (optional, stdlib urllib)
 ├── config.py       # File config + env overrides (0600, env never persisted)
 └── config_cli.py   # `stammtisch config` subcommand (stdlib only)
 ```

@@ -312,7 +312,7 @@ class FrameworkLanguageTest(unittest.TestCase):
             "tui/app.py",
             "tui/analysis.py",
             "tui/config_cli.py",
-            "tui/deepseek.py",
+            "tui/ai_driver.py",
             "tui/polymarket.py",
             "tui/screens.py",
             "tui/theme.py",

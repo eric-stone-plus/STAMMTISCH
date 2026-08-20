@@ -1756,7 +1756,7 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertTrue(app.intake_supervisor.result.ok)
 
     async def _chat_page_scenario(self) -> None:
-        from tui.deepseek import DeepSeekDriver
+        from tui.ai_driver import AIDriver
         from tui.screens import ChatScreen
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1767,7 +1767,7 @@ class TuiSmokeTest(unittest.TestCase):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 async with app.run_test(size=(100, 30)) as pilot:
                     await pilot.pause()
-                    app.push_screen(ChatScreen(DeepSeekDriver(api_key="sk-test")))
+                    app.push_screen(ChatScreen(AIDriver(api_key="sk-test")))
                     await pilot.pause()
                     screen = app.screen
                     # The input box owns focus; PgDn must still route to the
@@ -2046,7 +2046,7 @@ class TuiSmokeTest(unittest.TestCase):
                     await pilot.pause()
                     # Enter hands the captured day to GALAHAD: a real chat
                     # turn seeded with the report digest, never a report view.
-                    from tui.deepseek import ChatResponse
+                    from tui.ai_driver import ChatResponse
                     from tui.screens import ChatScreen
 
                     def _fake_chat(query, context=None):
@@ -2555,7 +2555,7 @@ class TuiSmokeTest(unittest.TestCase):
                     self.assertEqual(app.ai.api_key, "sk-test-1234567890")
                     with open(cfg_path) as f:
                         saved = json.load(f)
-                    self.assertEqual(saved["deepseek_api_key"], "sk-test-1234567890")
+                    self.assertEqual(saved["ai_api_key"], "sk-test-1234567890")
 
                     # ConfigScreen keeps other settings intact on save.
                     self.assertEqual(saved["state_root"], os.path.join(tmp, "state"))
@@ -2631,7 +2631,7 @@ class ChatScreenTest(unittest.TestCase):
         asyncio.run(self._chat_input_scenario())
 
     async def _chat_input_scenario(self) -> None:
-        from tui.deepseek import ChatResponse
+        from tui.ai_driver import ChatResponse
         from tui.screens import ChatInput, ChatScreen
 
         class _FakeAI:
@@ -2675,7 +2675,7 @@ class ChatScreenTest(unittest.TestCase):
 
     async def _chat_thinking_scenario(self) -> None:
         import time as _time
-        from tui.deepseek import ChatResponse
+        from tui.ai_driver import ChatResponse
         from tui.screens import ChatInput, ChatScreen
 
         class _SlowAI:
@@ -2709,7 +2709,7 @@ class ChatScreenTest(unittest.TestCase):
     async def _chat_serialization_scenario(self) -> None:
         import threading as _threading
 
-        from tui.deepseek import ChatResponse
+        from tui.ai_driver import ChatResponse
         from tui.screens import ChatInput, ChatScreen
 
         class _BlockingAI:
@@ -2786,7 +2786,7 @@ class ChatScreenTest(unittest.TestCase):
         asyncio.run(self._chat_history_session_scenario())
 
     async def _chat_history_session_scenario(self) -> None:
-        from tui.deepseek import ChatResponse
+        from tui.ai_driver import ChatResponse
         from tui.screens import AskSessionScreen, ChatInput, ChatScreen
 
         class _FakeAI:

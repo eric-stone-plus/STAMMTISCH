@@ -170,9 +170,9 @@ class IntakeSteward:
             "running, was just done, or the session is not finished yet. Be stingy."
         )
         try:
-            from .deepseek import DeepSeekDriver
+            from .ai_driver import AIDriver
 
-            judge = DeepSeekDriver(
+            judge = AIDriver(
                 api_key=ai.api_key, base_url=ai.base_url, model=ai.model
             )
             response = judge.chat(prompt)

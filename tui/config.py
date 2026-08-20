@@ -25,9 +25,9 @@ def default_config_file() -> Path:
 DEFAULT_CONFIG = {
     # TUI chrome language: "en" | "zh" (toggled from the dashboard).
     "language": "en",
-    "deepseek_api_key": "",
-    "deepseek_base_url": "https://open.bigmodel.cn/api/paas/v4",
-    "deepseek_model": "glm-5.3",
+    "ai_api_key": "",
+    "ai_base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "ai_model": "glm-5.3",
     "state_root": "",
     "data_dir": str(Path.home() / ".quant_cache"),
     "recent_symbols": [],
@@ -130,6 +130,18 @@ class Config:
                 with open(self.path, encoding="utf-8") as f:
                     saved = json.load(f)
                 if isinstance(saved, dict):
+                    # Legacy migration: AI settings were stored under
+                    # deepseek_* names before the ai_driver rename; carry
+                    # values across when the new keys are absent so existing
+                    # config files keep working (the next save drops the
+                    # old names).
+                    for legacy_key, current_key in (
+                        ("deepseek_api_key", "ai_api_key"),
+                        ("deepseek_base_url", "ai_base_url"),
+                        ("deepseek_model", "ai_model"),
+                    ):
+                        if legacy_key in saved and current_key not in saved:
+                            saved[current_key] = saved[legacy_key]
                     self._data.update(
                         {key: value for key, value in saved.items() if key in DEFAULT_CONFIG}
                     )
@@ -145,8 +157,8 @@ class Config:
             or os.environ.get("DEEPSEEK_KEY")
         )
         if env_key:
-            self._data["deepseek_api_key"] = env_key
-            self._from_env.add("deepseek_api_key")
+            self._data["ai_api_key"] = env_key
+            self._from_env.add("ai_api_key")
 
         env_root = os.environ.get("STAMMTISCH_HOME")
         if env_root:
@@ -226,8 +238,8 @@ class Config:
         self.save()
 
     @property
-    def deepseek_api_key(self) -> str | None:
-        key = self._data.get("deepseek_api_key", "")
+    def ai_api_key(self) -> str | None:
+        key = self._data.get("ai_api_key", "")
         return key if key else None
 
     @property
@@ -236,12 +248,26 @@ class Config:
         return key if key else None
 
     @property
+    def ai_base_url(self) -> str:
+        return self._data.get("ai_base_url", DEFAULT_CONFIG["ai_base_url"])
+
+    @property
+    def ai_model(self) -> str:
+        return self._data.get("ai_model", DEFAULT_CONFIG["ai_model"])
+
+    # Legacy aliases for the pre-rename names; kept read-only so external
+    # consumers (the private refine tooling) work against either name.
+    @property
+    def deepseek_api_key(self) -> str | None:
+        return self.ai_api_key
+
+    @property
     def deepseek_base_url(self) -> str:
-        return self._data.get("deepseek_base_url", DEFAULT_CONFIG["deepseek_base_url"])
+        return self.ai_base_url
 
     @property
     def deepseek_model(self) -> str:
-        return self._data.get("deepseek_model", DEFAULT_CONFIG["deepseek_model"])
+        return self.ai_model
 
     @property
     def state_root(self) -> str | None:

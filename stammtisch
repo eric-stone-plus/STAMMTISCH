@@ -44,7 +44,7 @@ fi
 
 # ── TUI flags: forward to TUI ────────────────────────────────────
 case "${1:-}" in
-    --skip-boot|--state-root|--pipeline-dir|--deepseek-key|--binary)
+    --skip-boot|--state-root|--pipeline-dir|--ai-key|--deepseek-key|--binary)
         if ! tui_deps_ok; then
             tui_deps_hint
             exit 1

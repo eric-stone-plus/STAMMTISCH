@@ -16,18 +16,23 @@ def main() -> None:
     parser.add_argument("--state-root", help="STAMMTISCH_HOME state root")
     parser.add_argument("--pipeline-dir", help="Pipeline spec directory")
     parser.add_argument("--skip-boot", action="store_true", help="Skip boot animation")
-    parser.add_argument("--deepseek-key", help="DeepSeek API key (or set DEEPSEEK_API_KEY env)")
+    parser.add_argument("--ai-key", help="AI API key (or set GLM_API_KEY env; legacy names honored)")
+    parser.add_argument(
+        "--deepseek-key",
+        dest="ai_key",
+        help=argparse.SUPPRESS,
+    )  # legacy alias for --ai-key
     args = parser.parse_args()
 
     from .app import run_tui
 
-    key = args.deepseek_key or os.environ.get("DEEPSEEK_API_KEY")
+    key = args.ai_key or os.environ.get("GLM_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
     run_tui(
         binary=args.binary,
         state_root=args.state_root,
         pipeline_dir=args.pipeline_dir,
         skip_boot=args.skip_boot,
-        deepseek_key=key,
+        ai_key=key,
     )
 
 

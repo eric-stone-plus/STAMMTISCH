@@ -39,10 +39,10 @@ class ConfigCliTest(unittest.TestCase):
         self.assertEqual(str(default_config_file()), self.cfg_path)
 
     def test_show_masks_api_key(self) -> None:
-        Config().set("deepseek_api_key", "sk-test-abcdefgh")
+        Config().set("ai_api_key", "sk-test-abcdefgh")
         code, out, _ = run_cli()
         self.assertEqual(code, 0)
-        self.assertIn("deepseek_api_key       sk-t********efgh", out)
+        self.assertIn("ai_api_key             sk-t********efgh", out)
         self.assertNotIn("abcdefgh", out)
 
     def test_set_key_writes_0600_file(self) -> None:
@@ -51,13 +51,13 @@ class ConfigCliTest(unittest.TestCase):
         self.assertIn("saved", out)
         self.assertEqual(oct(os.stat(self.cfg_path).st_mode)[-3:], "600")
         with open(self.cfg_path) as f:
-            self.assertEqual(json.load(f)["deepseek_api_key"], "sk-1234567890")
+            self.assertEqual(json.load(f)["ai_api_key"], "sk-1234567890")
 
     def test_set_key_prompts_when_omitted(self) -> None:
         with mock.patch.object(config_cli, "_prompt_secret", return_value="sk-prompted"):
             code, _, _ = run_cli("set-key")
         self.assertEqual(code, 0)
-        self.assertEqual(Config().get("deepseek_api_key"), "sk-prompted")
+        self.assertEqual(Config().get("ai_api_key"), "sk-prompted")
 
     def test_set_key_empty_is_usage_error(self) -> None:
         with mock.patch.object(config_cli, "_prompt_secret", return_value=""):
@@ -66,10 +66,10 @@ class ConfigCliTest(unittest.TestCase):
         self.assertIn("no key", err)
 
     def test_unset_key(self) -> None:
-        Config().set("deepseek_api_key", "sk-1234567890")
+        Config().set("ai_api_key", "sk-1234567890")
         code, _, _ = run_cli("unset-key")
         self.assertEqual(code, 0)
-        self.assertIsNone(Config().deepseek_api_key)
+        self.assertIsNone(Config().ai_api_key)
 
     def test_set_int_coercion(self) -> None:
         code, _, _ = run_cli("set", "default_fast", "30")
@@ -96,8 +96,8 @@ class ConfigCliTest(unittest.TestCase):
         self.assertEqual(Config().get("recent_symbols"), ["AAPL", "MSFT", "TSLA"])
 
     def test_get_and_unset(self) -> None:
-        Config().set("deepseek_api_key", "sk-1234567890")
-        code, out, _ = run_cli("get", "deepseek_api_key")
+        Config().set("ai_api_key", "sk-1234567890")
+        code, out, _ = run_cli("get", "ai_api_key")
         self.assertEqual(code, 0)
         self.assertEqual(out.strip(), "sk-1*****7890")
 
@@ -118,19 +118,19 @@ class ConfigCliTest(unittest.TestCase):
         """DEEPSEEK_API_KEY overrides at load time but is never written to disk."""
         with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-from-env"}, clear=False):
             cfg = Config()
-            self.assertEqual(cfg.deepseek_api_key, "sk-from-env")
-            cfg.set("deepseek_api_key", "sk-explicit")
+            self.assertEqual(cfg.ai_api_key, "sk-from-env")
+            cfg.set("ai_api_key", "sk-explicit")
         with open(self.cfg_path) as f:
-            self.assertEqual(json.load(f)["deepseek_api_key"], "sk-explicit")
+            self.assertEqual(json.load(f)["ai_api_key"], "sk-explicit")
         with open(self.cfg_path) as handle:
             self.assertNotIn("sk-from-env", handle.read())
 
     def test_update_batch_persists_once(self) -> None:
         cfg = Config()
-        cfg.update({"deepseek_api_key": "sk-batch", "default_fast": 42})
+        cfg.update({"ai_api_key": "sk-batch", "default_fast": 42})
         with open(self.cfg_path) as f:
             saved = json.load(f)
-        self.assertEqual(saved["deepseek_api_key"], "sk-batch")
+        self.assertEqual(saved["ai_api_key"], "sk-batch")
         self.assertEqual(saved["default_fast"], 42)
 
     def test_daily_intake_config_is_device_neutral_and_env_overridable(self) -> None:

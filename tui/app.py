@@ -10,7 +10,7 @@ from textual.widgets import Footer
 
 from .config import Config
 from .driver import StammtischDriver
-from .deepseek import DeepSeekDriver
+from .ai_driver import AIDriver
 from .engine import QuantEngine
 from .theme import THEME_CSS
 
@@ -30,7 +30,7 @@ class StammtischTUI(App):
         binary = kwargs.pop("binary", None)
         state_root = kwargs.pop("state_root", None) or self.config.state_root
         pipeline_dir = kwargs.pop("pipeline_dir", None)
-        deepseek_key = kwargs.pop("deepseek_key", None) or self.config.deepseek_api_key
+        ai_key = kwargs.pop("ai_key", None) or kwargs.pop("deepseek_key", None) or self.config.ai_api_key
         kwargs.pop("skip_boot", None)
 
         super().__init__(**kwargs)
@@ -38,10 +38,10 @@ class StammtischTUI(App):
         self.driver = StammtischDriver(binary=binary, state_root=state_root, pipeline_dir=pipeline_dir)
         self.engine = QuantEngine(data_dir=self.config.data_dir)
         from .tools import default_tools
-        self.ai = DeepSeekDriver(
-            api_key=deepseek_key,
-            base_url=self.config.deepseek_base_url,
-            model=self.config.deepseek_model,
+        self.ai = AIDriver(
+            api_key=ai_key,
+            base_url=self.config.ai_base_url,
+            model=self.config.ai_model,
             tools=default_tools(self.engine),
         )
         # Populated only after IntakeDriver has verified the complete artifact

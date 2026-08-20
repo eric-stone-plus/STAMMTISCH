@@ -21,7 +21,7 @@ from rich.text import Text
 from textual.widgets.option_list import Option
 
 from .driver import StammtischDriver
-from .deepseek import ChatResponse, DeepSeekDriver
+from .ai_driver import AIDriver, ChatResponse
 from .engine import QuantEngine
 from .analysis import DataFetchScreen, BacktestScreen, IndicatorsScreen, PortfolioScreen, GatesScreen
 from .analysis import _run_async
@@ -101,11 +101,11 @@ class DashboardScreen(Screen):
     """
 
     driver: StammtischDriver
-    ai: DeepSeekDriver
+    ai: AIDriver
     engine: QuantEngine
     config: Any
 
-    def __init__(self, driver: StammtischDriver, ai: DeepSeekDriver, engine: QuantEngine, config: Any,
+    def __init__(self, driver: StammtischDriver, ai: AIDriver, engine: QuantEngine, config: Any,
                  casino: Any = None, **kwargs: Any):
         super().__init__(**kwargs)
         self.driver = driver
@@ -833,9 +833,9 @@ class DashboardScreen(Screen):
         """Returning from a sub-screen: reload the config file (external
         `stammtisch config set` edits land here) and re-sync drivers."""
         self.config.load()
-        self.ai.api_key = self.config.deepseek_api_key
-        self.ai.base_url = self.config.deepseek_base_url
-        self.ai.model = self.config.deepseek_model
+        self.ai.api_key = self.config.ai_api_key
+        self.ai.base_url = self.config.ai_base_url
+        self.ai.model = self.config.ai_model
         if self.config.state_root:
             self.driver.state_root = self.config.state_root
         self.action_refresh()
@@ -2396,11 +2396,11 @@ class PipelineRunScreen(Screen):
     #pr-actions Button { min-width: 24; }
     """
     driver: StammtischDriver
-    ai: DeepSeekDriver
+    ai: AIDriver
     _selected: str | None = None
     _is_running: reactive[bool] = reactive(False)
 
-    def __init__(self, driver: StammtischDriver, ai: DeepSeekDriver, **kwargs: Any):
+    def __init__(self, driver: StammtischDriver, ai: AIDriver, **kwargs: Any):
         super().__init__(**kwargs)
         self.driver = driver
         self.ai = ai
@@ -2774,10 +2774,10 @@ class RunInspectorScreen(Screen):
     """
 
     driver: StammtischDriver
-    ai: DeepSeekDriver
+    ai: AIDriver
     run_id: str
 
-    def __init__(self, driver: StammtischDriver, ai: DeepSeekDriver, run_id: str, **kwargs: Any):
+    def __init__(self, driver: StammtischDriver, ai: AIDriver, run_id: str, **kwargs: Any):
         super().__init__(**kwargs)
         self.driver = driver
         self.ai = ai
@@ -3960,12 +3960,12 @@ class ChatScreen(Screen):
     #chat-messages { height: auto; background: #000000; }
     #chat-input { height: 3; border: solid #4fc3f7; }
     """
-    ai: DeepSeekDriver
+    ai: AIDriver
     _chat_log: str = ""
 
     def __init__(
         self,
-        ai: DeepSeekDriver,
+        ai: AIDriver,
         session_id: str | None = None,
         initial_prompt: str | None = None,
         initial_context: str | None = None,
@@ -4154,7 +4154,7 @@ class ChatScreen(Screen):
         if not hasattr(self.ai, "history"):
             return
         try:
-            from .deepseek import ChatMessage, SYSTEM_PROMPT
+            from .ai_driver import SYSTEM_PROMPT, ChatMessage
             messages = [ChatMessage("system", SYSTEM_PROMPT)]
             for turn in self._session.get("turns") or []:
                 if not isinstance(turn, dict):
@@ -4373,11 +4373,11 @@ class ConfigScreen(Screen):
     """
 
     config: Any
-    ai: DeepSeekDriver
+    ai: AIDriver
     driver: StammtischDriver
     engine: QuantEngine
 
-    def __init__(self, config: Any, ai: DeepSeekDriver, driver: StammtischDriver,
+    def __init__(self, config: Any, ai: AIDriver, driver: StammtischDriver,
                  engine: QuantEngine, **kwargs: Any):
         super().__init__(**kwargs)
         self.config = config
@@ -4387,7 +4387,7 @@ class ConfigScreen(Screen):
 
     def _provider_value(self) -> tuple[str, str] | None:
         """Map the configured base URL to a known provider preset."""
-        base = self.config.deepseek_base_url
+        base = self.config.ai_base_url
         for _label, preset_base, model in self.AI_PROVIDERS:
             if preset_base == base:
                 return (preset_base, model)
@@ -4475,14 +4475,14 @@ class ConfigScreen(Screen):
                     )
                 with Horizontal(classes="cfg-row"):
                     yield Static("  API Key", classes="cfg-label")
-                    yield Input(value=self.config.get("deepseek_api_key", ""), password=True,
+                    yield Input(value=self.config.get("ai_api_key", ""), password=True,
                                 placeholder="sk-...", id="cfg-key", classes="cfg-input")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Base URL", classes="cfg-label")
-                    yield Input(value=self.config.deepseek_base_url, id="cfg-base-url", classes="cfg-input")
+                    yield Input(value=self.config.ai_base_url, id="cfg-base-url", classes="cfg-input")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Model", classes="cfg-label")
-                    yield Input(value=self.config.deepseek_model, id="cfg-model", classes="cfg-input")
+                    yield Input(value=self.config.ai_model, id="cfg-model", classes="cfg-input")
             with Vertical(classes="panel"):
                 yield Static(self._chrome("config.workspace", "Workspace"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
@@ -4694,9 +4694,9 @@ class ConfigScreen(Screen):
 
         try:
             self.config.update({
-                "deepseek_api_key": self.query_one("#cfg-key", Input).value.strip(),
-                "deepseek_base_url": self.query_one("#cfg-base-url", Input).value.strip() or self.config.deepseek_base_url,
-                "deepseek_model": self.query_one("#cfg-model", Input).value.strip() or self.config.deepseek_model,
+                "ai_api_key": self.query_one("#cfg-key", Input).value.strip(),
+                "ai_base_url": self.query_one("#cfg-base-url", Input).value.strip() or self.config.ai_base_url,
+                "ai_model": self.query_one("#cfg-model", Input).value.strip() or self.config.ai_model,
                 "state_root": self.query_one("#cfg-state-root", Input).value.strip(),
                 "data_dir": data_dir,
                 "chart_port": chart_port,
@@ -4736,9 +4736,9 @@ class ConfigScreen(Screen):
             return
 
         # Hot-apply to the live drivers so no restart is needed.
-        self.ai.api_key = self.config.deepseek_api_key
-        self.ai.base_url = self.config.deepseek_base_url
-        self.ai.model = self.config.deepseek_model
+        self.ai.api_key = self.config.ai_api_key
+        self.ai.base_url = self.config.ai_base_url
+        self.ai.model = self.config.ai_model
         if self.config.state_root:
             self.driver.state_root = self.config.state_root
         if self.config.data_dir:

@@ -37,7 +37,7 @@ _INT_KEYS = {
 _LIST_KEYS = {"recent_symbols", "recent_strategies", "futures_symbols", "security_symbols"}
 _CHOICE_KEYS = {"ohlcv_mode": frozenset({"live", "validated"})}
 # Keys masked in `show`/`get` output.
-_SECRET_KEYS = frozenset({"deepseek_api_key", "eia_api_key"})
+_SECRET_KEYS = frozenset({"ai_api_key", "eia_api_key"})
 
 USAGE = """stammtisch config — TUI workstation configuration
 
@@ -103,13 +103,13 @@ def _set_key(config: Config, args: list[str]) -> int:
     if not key:
         print("stammtisch config: no key provided; nothing changed", file=sys.stderr)
         return 2
-    config.set("deepseek_api_key", key)
+    config.set("ai_api_key", key)
     print(f"AI API key saved to {config.path} (0600).")
     return 0
 
 
 def _unset_key(config: Config) -> int:
-    config.set("deepseek_api_key", "")
+    config.set("ai_api_key", "")
     print("AI API key removed.")
     return 0
 
