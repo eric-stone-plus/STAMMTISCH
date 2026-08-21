@@ -27,7 +27,8 @@ class StammtischTUI(App):
     def __init__(self, **kwargs: Any):
         self.config = Config()
         binary = kwargs.pop("binary", None)
-        state_root = kwargs.pop("state_root", None) or self.config.state_root
+        self.state_root_override = kwargs.pop("state_root", None)
+        state_root = self.state_root_override or self.config.state_root
         pipeline_dir = kwargs.pop("pipeline_dir", None)
         ai_key = kwargs.pop("ai_key", None) or kwargs.pop("deepseek_key", None) or self.config.ai_api_key
         kwargs.pop("skip_boot", None)

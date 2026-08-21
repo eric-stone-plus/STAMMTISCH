@@ -917,6 +917,75 @@ class ShippingScreen(Screen):
 # Market zones in display order. Symbols classify by exchange suffix;
 # anything unmatched lands in OTHER.
 SECURITY_ZONES = ("A-SHARE", "HK", "US", "OTHER")
+_DECISION_VERSION = 1
+
+
+def _decision_symbols(config: Any, state_root: str | None = None) -> list[str]:
+    """Non-cut symbols from the latest supported daily decision, if any."""
+    try:
+        effective_root = str(
+            state_root or getattr(config, "state_root", None) or ""
+        ).strip()
+        base = Path(effective_root).expanduser() if effective_root else (
+            Path.home() / ".local/share/stammtisch")
+        payload = json.loads(
+            (base / "decisions" / "latest.json").read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(payload, dict) or payload.get("decision_version") != _DECISION_VERSION:
+        return []
+    zones = payload.get("zones") or {}
+    if not isinstance(zones, dict):
+        return []
+    out: list[str] = []
+    for zone_data in zones.values():
+        if not isinstance(zone_data, dict):
+            continue
+        positions = zone_data.get("positions")
+        if not isinstance(positions, list):
+            continue
+        for position in positions:
+            if not isinstance(position, dict):
+                continue
+            if str(position.get("action") or "").strip().lower() == "cut":
+                continue
+            symbol = str(position.get("symbol") or "").strip()
+            if symbol:
+                out.append(symbol)
+    return out
+
+
+def security_watchlist(config: Any, state_root: str | None = None) -> list[str]:
+    """Board names: manual watchlist, else today's decision, else recents.
+
+    ``security_symbols`` empty is a decide.py full-market-screen signal, not
+    an empty SECURITY board. Falling back keeps the TUI loadable.
+    """
+    from ..engine import _normalize_symbol
+
+    if config is None:
+        return []
+    manual = [
+        str(s).strip()
+        for s in (getattr(config, "security_symbols", None) or [])
+        if str(s).strip()
+    ]
+    seen: list[str] = []
+    recents = getattr(config, "recent_symbols", None)
+    recents = recents if isinstance(recents, list) else []
+    source = manual if manual else _decision_symbols(
+        config, state_root
+    ) + [str(s) for s in recents]
+    for raw in source:
+        text = str(raw).strip()
+        if not text:
+            continue
+        symbol = _normalize_symbol(text.upper())
+        if symbol not in seen:
+            seen.append(symbol)
+    return seen
+
+
 def security_zone(symbol: str) -> str:
     """Classify a provider symbol into a market zone by exchange suffix."""
     text = symbol.strip().upper()
@@ -969,10 +1038,15 @@ class SecurityScreen(Screen):
         self.driver, self.ai, self.engine, self.config = driver, ai, engine, config
         self.path = path
         self._dash = dashboard
-        self._symbols: list[str] = list(config.security_symbols) if config else []
+        self._symbols: list[str] = self._resolve_symbols()
         self._zones: list[str] = []
         self._by_zone: dict[str, list[dict[str, Any]]] = {}
         self._zone_idx = 0
+
+    def _resolve_symbols(self) -> list[str]:
+        return security_watchlist(
+            self.config, getattr(self.driver, "state_root", None)
+        )
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -1043,9 +1117,13 @@ class SecurityScreen(Screen):
     # ── data loading (worker thread) ───────────────────────────────
 
     def action_refresh(self) -> None:
+        refreshed = self._resolve_symbols()
+        if refreshed != self._symbols:
+            self._symbols = refreshed
+            self._zone_idx = 0
         if not self._symbols:
             self.notify(
-                "No security symbols configured (security_symbols).",
+                "No configured, decided, or recent security symbols are available.",
                 severity="warning",
             )
         self._set_fetch_status("fetching…")
@@ -1057,9 +1135,8 @@ class SecurityScreen(Screen):
         quotes: dict[str, dict[str, Any]] = {}
         if not self._symbols:
             return {"ok": True, "quotes": quotes}
-        try:
-            from quantkit.data import fetch_ohlcv
-        except ImportError:
+        engine = self.engine if isinstance(self.engine, QuantEngine) else QuantEngine.from_config(self.config)
+        if not engine.available:
             quotes = {symbol: {"error": "quantkit is not installed"}
                       for symbol in self._symbols}
             return {"ok": True, "quotes": quotes}
@@ -1068,14 +1145,11 @@ class SecurityScreen(Screen):
         for index, raw in enumerate(self._symbols, 1):
             symbol = _normalize_symbol(raw)
             self._post_progress(f"fetching {index}/{total}  {symbol}")
-            try:
-                df = fetch_ohlcv(
-                    symbol, market="auto", start=start,
-                    data_dir=str(self.config.data_dir),
-                )
-            except Exception as exc:
-                quotes[symbol] = {"error": str(exc)[:120]}
+            result = engine.fetch_data(symbol, start=start)
+            if not result.get("ok"):
+                quotes[symbol] = {"error": str(result.get("error") or "no bars")[:120]}
                 continue
+            df = result.get("df")
             if _missing_ohlcv(df):
                 quotes[symbol] = {"error": "no bars"}
                 continue

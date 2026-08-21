@@ -30,6 +30,24 @@ from .subproc import run_bounded
 
 
 _SCHEDULE_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+_STALE_OHLCV_RE = re.compile(
+    r"latest OHLCV bar is stale: expected (\d{4}-\d{2}-\d{2}), "
+    r"got (\d{4}-\d{2}-\d{2})",
+    re.IGNORECASE,
+)
+
+
+def _forecast_error(detail: str) -> str:
+    """Keep overlay failures bounded without hiding the freshness gate."""
+    text = str(detail or "").strip()
+    stale = _STALE_OHLCV_RE.search(text)
+    if stale:
+        expected, observed = stale.groups()
+        return (
+            f"forecast unavailable: latest OHLCV bar is {observed}; "
+            f"expected completed session {expected}"
+        )
+    return text[:200]
 
 
 class TimeseriesDriver:
@@ -65,7 +83,7 @@ class TimeseriesDriver:
             label="forecast command",
         )
         if not out["ok"]:
-            return {"ok": False, "error": out["error"]}
+            return {"ok": False, "error": _forecast_error(out["error"])}
 
         raw = out["stdout"].strip()
         try:
@@ -78,10 +96,11 @@ class TimeseriesDriver:
             if isinstance(data, dict):
                 detail = str(data.get("error", ""))
             detail = detail or out["stderr"].strip() or f"exit code {out['returncode']}"
-            return {"ok": False, "error": f"forecast command failed: {detail[:200]}"}
+            return {"ok": False, "error": _forecast_error(
+                f"forecast command failed: {detail[:200]}")}
         if not isinstance(data, dict) or data.get("ok") is False:
             detail = data.get("error", "forecast command returned ok=false") if isinstance(data, dict) else ""
-            return {"ok": False, "error": str(detail)}
+            return {"ok": False, "error": _forecast_error(str(detail))}
         if "forecast" not in data:
             return {"ok": False, "error": "forecast JSON lacks a 'forecast' list"}
         forecast = data["forecast"]

@@ -77,6 +77,12 @@ class TuiSmokeTest(unittest.TestCase):
     def test_security_board_zones(self) -> None:
         asyncio.run(self._security_scenario())
 
+    def test_security_board_uses_latest_decision_when_manual_empty(self) -> None:
+        asyncio.run(self._security_decision_fallback_scenario())
+
+    def test_cli_state_root_survives_dashboard_resume(self) -> None:
+        asyncio.run(self._state_root_override_scenario())
+
     def test_domain_plugins_menu_and_browser(self) -> None:
         asyncio.run(self._domain_plugins_scenario())
 
@@ -515,6 +521,137 @@ class TuiSmokeTest(unittest.TestCase):
                         await pilot.press("escape")
                         await pilot.pause()
                         self.assertIsInstance(app.screen, DashboardScreen)
+
+    async def _security_decision_fallback_scenario(self) -> None:
+        from tui.screens import SecurityScreen
+
+        def _quote(price):
+            return {
+                "last": price, "chg_pct": 1.0, "pct5": 2.0, "pct20": 3.0,
+                "volume": 1000.0,
+                "recent": [{
+                    "date": "2026-08-20", "open": price - 1, "high": price,
+                    "low": price - 1, "close": price, "volume": 1000.0,
+                }],
+            }
+
+        expected = ["002289.SZ", "0883.HK", "LITE", "AAPL"]
+
+        def _load(screen):
+            self.assertEqual(screen._symbols, expected)
+            return {
+                "ok": True,
+                "quotes": {
+                    symbol: _quote(10.0 + index)
+                    for index, symbol in enumerate(expected)
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            decisions = state / "decisions"
+            decisions.mkdir(parents=True)
+            (decisions / "latest.json").write_text(json.dumps({
+                "decision_version": 1,
+                "date": "2026-08-20",
+                "zones": {
+                    "A-SHARE": {"positions": [
+                        {"symbol": "002289.SZ", "action": "buy"},
+                        {"symbol": "688012.SS", "action": "cut"},
+                    ]},
+                    "HK": {"positions": [{"symbol": "0883.HK", "action": "buy"}]},
+                    "US": {"positions": [{"symbol": "LITE", "action": "buy"}]},
+                },
+            }), encoding="utf-8")
+            cfg_path = root / "config.json"
+            cfg_path.write_text(json.dumps({
+                "state_root": str(state),
+                "workspace_root": str(root / "workspace"),
+                "security_symbols": [],
+                "recent_symbols": ["AAPL", "002289"],
+            }), encoding="utf-8")
+
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                with mock.patch.object(SecurityScreen, "_load", _load):
+                    async with app.run_test(size=(120, 40)) as pilot:
+                        await pilot.pause()
+                        pipeline_list = app.screen.query_one("#pipeline-list", OptionList)
+                        labels = [str(option.prompt) for option in pipeline_list.options]
+                        pipeline_list.focus()
+                        pipeline_list.highlighted = labels.index("SECURITY")
+                        await pilot.press("enter")
+                        for _ in range(40):
+                            await asyncio.sleep(0.025)
+                            await pilot.pause()
+                            if app.screen.query_one("#sec-board", DataTable).row_count:
+                                break
+                        self.assertIsInstance(app.screen, SecurityScreen)
+                        self.assertEqual(app.screen._symbols, expected)
+                        self.assertEqual(app.screen._zones, ["A-SHARE", "HK", "US"])
+                        row = app.screen.query_one("#sec-board", DataTable).get_row_at(0)
+                        self.assertEqual(str(row[0]), "002289.SZ")
+
+    async def _state_root_override_scenario(self) -> None:
+        from tui.screens import SecurityScreen
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            configured = root / "configured"
+            effective = root / "effective"
+            decisions = effective / "decisions"
+            decisions.mkdir(parents=True)
+            (decisions / "latest.json").write_text(json.dumps({
+                "decision_version": 1,
+                "zones": {"A-SHARE": {"positions": [
+                    {"symbol": "002289.SZ", "action": "hold"},
+                ]}},
+            }), encoding="utf-8")
+            cfg_path = root / "config.json"
+            cfg_path.write_text(json.dumps({
+                "state_root": str(configured),
+                "workspace_root": str(root / "workspace"),
+                "security_symbols": [],
+                "recent_symbols": [],
+            }), encoding="utf-8")
+
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
+                app = StammtischTUI(
+                    binary="/nonexistent/stammtisch-core",
+                    state_root=str(effective),
+                    skip_boot=True,
+                )
+                with mock.patch.object(
+                    SecurityScreen,
+                    "_load",
+                    lambda self: {"ok": True, "quotes": {
+                        "002289.SZ": {"error": "test fixture"},
+                    }},
+                ):
+                    async with app.run_test(size=(120, 40)) as pilot:
+                        await pilot.pause()
+                        self.assertEqual(app.driver.state_root, str(effective))
+
+                        # Exercise DashboardScreen.on_screen_resume; the file's
+                        # configured root must not replace an explicit CLI root.
+                        await pilot.press("?")
+                        await pilot.pause()
+                        await pilot.press("escape")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, DashboardScreen)
+                        self.assertEqual(app.driver.state_root, str(effective))
+
+                        pipeline_list = app.screen.query_one(
+                            "#pipeline-list", OptionList
+                        )
+                        labels = [str(option.prompt) for option in pipeline_list.options]
+                        pipeline_list.focus()
+                        pipeline_list.highlighted = labels.index("SECURITY")
+                        await pilot.press("enter")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, SecurityScreen)
+                        self.assertEqual(app.screen._symbols, ["002289.SZ"])
 
     async def _casino_scenario(self) -> None:
         from tui.racing import CasinoScreen

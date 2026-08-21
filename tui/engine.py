@@ -90,6 +90,16 @@ class GateReport:
 class QuantEngine:
     """Wraps quantkit functions for TUI consumption."""
 
+    @classmethod
+    def from_config(cls, config: Any) -> QuantEngine:
+        """Build from a workstation Config; missing attrs stay unset."""
+        return cls(
+            data_dir=getattr(config, "data_dir", None),
+            data_proxy_url=getattr(config, "data_proxy_url", "") or None,
+            egress_proxy_url=getattr(config, "egress_proxy_url", "") or None,
+            egress_switch_cmd=getattr(config, "egress_switch_cmd", "") or None,
+        )
+
     def __init__(self, data_dir: str | None = None, data_proxy_url: str | None = None,
                  egress_proxy_url: str | None = None,
                  egress_switch_cmd: str | None = None):

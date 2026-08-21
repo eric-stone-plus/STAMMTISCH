@@ -351,6 +351,16 @@ class CandlesPayloadTest(unittest.TestCase):
 
 class LiveServerTest(unittest.TestCase):
     def test_round_trip(self):
+        cache = tempfile.TemporaryDirectory(prefix="stammtisch-chart-test-")
+        config = SimpleNamespace(
+            ohlcv_mode="live",
+            data_dir=cache.name,
+            data_proxy_url="",
+            egress_proxy_url="",
+            egress_switch_cmd="",
+        )
+        config_patch = mock.patch("tui.chart_server.Config", return_value=config)
+        config_patch.start()
         server = ThreadingHTTPServer(("127.0.0.1", 0), ChartHandler)
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -453,6 +463,18 @@ class LiveServerTest(unittest.TestCase):
                 empty_data = json.loads(resp.read())
                 self.assertFalse(empty_data["ok"])
 
+            # Provider exceptions stay a structured 200, not a 500.
+            with mock.patch("quantkit.data.fetch_ohlcv",
+                            side_effect=RuntimeError("Too Many Requests")):
+                conn.request("GET", "/api/candles?symbol=AAPL")
+                resp = conn.getresponse()
+                self.assertEqual(resp.status, 200)
+                limited = json.loads(resp.read())
+                self.assertFalse(limited["ok"])
+                self.assertIn("Too Many Requests", limited["error"])
+                self.assertEqual(limited["symbol"], "AAPL")
+                self.assertEqual(limited["candles"], [])
+
             # Unknown route is a 404.
             conn.request("GET", "/nope")
             resp = conn.getresponse()
@@ -463,6 +485,8 @@ class LiveServerTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+            config_patch.stop()
+            cache.cleanup()
 
     def test_is_running_probe(self):
         # A freshly freed ephemeral port with nothing listening on it.

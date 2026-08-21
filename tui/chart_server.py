@@ -37,7 +37,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, urlparse
 
 from .config import Config
-from .engine import _missing_ohlcv, _normalize_symbol
+from .engine import QuantEngine, _missing_ohlcv, _normalize_symbol
 from .symbols import search_payload
 from .timeseries import TimeseriesDriver
 
@@ -829,13 +829,28 @@ class ChartHandler(BaseHTTPRequestHandler):
             market = "hk"
         elif market in ("us", "jp", "kr"):
             market = "us"  # yahoo path in quantkit
-        from quantkit.data import fetch_ohlcv
-
-        df = fetch_ohlcv(symbol, market=market, start=start, data_dir=str(config.data_dir))
-        if _missing_ohlcv(df):
-            self._json(200, {"ok": False, "error": f"no data for {symbol}"})
+        engine = QuantEngine.from_config(config)
+        fetched = engine.fetch_data(symbol, market=market, start=start)
+        if not fetched.get("ok"):
+            self._json(
+                200,
+                {
+                    "ok": False,
+                    "error": fetched.get("error") or f"no data for {symbol}",
+                    "symbol": fetched.get("symbol") or symbol,
+                    "candles": [],
+                },
+            )
             return
-        self._json(200, candles_payload(df, symbol))
+        df = fetched.get("df")
+        if _missing_ohlcv(df):
+            self._json(
+                200,
+                {"ok": False, "error": f"no data for {symbol}", "symbol": symbol,
+                 "candles": []},
+            )
+            return
+        self._json(200, candles_payload(df, fetched.get("symbol") or symbol))
 
     def _api_forecast(self, query: dict) -> None:
         config = Config()

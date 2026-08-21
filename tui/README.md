@@ -46,10 +46,10 @@ STAMMTISCH_HOME=/path/to/state .venv/bin/python -m tui
 - Optional: a forecast command (config `kronos_cmd`) connects the chart to a
   `SYMBOL --horizon N --json` adapter. Legacy
   `{"model": ..., "forecast": [...], "dates": [...]}` responses are retained
-  for diagnostics but always produce `ABSTAIN`. A line is drawn only for a
-  sealed `kronos.forecast.v2` receipt accompanied by an independently
-  validated production `PASS` gate; until that gate contract exists, Kronos
-  remains audit-only. Empty `kronos_cmd` disables the integration.
+  for diagnostics but always produce `ABSTAIN`. A valid sealed
+  `kronos.forecast.v2` receipt may be drawn as a dashed diagnostic curve with
+  its non-`PASS` gate shown explicitly; it is never promoted to evidence or an
+  actionable signal. Empty `kronos_cmd` disables the integration.
 - Optional: a daily-data product command (config `intake_cmd`) enables `D`.
   STAMMTISCH invokes it without a shell and validates its evidence manifest,
   canonical dataset, report JSON, and report HTML under `workspace_root`.
@@ -81,10 +81,10 @@ Not MCP. The chart is TradingView Lightweight Charts vendored under
 server on loopback using an OS-assigned port and opens the page. An explicit
 `chart_port` may be configured when a stable local address is required.
 The page shows candlesticks (THS colors: red up / green down), volume,
-MA20, and a crosshair OHLC legend. It shows a Kronos forecast only after the
-v2 receipt and independent production gate above have both been accepted;
-`ABSTAIN` and `FAIL` never produce a drawable series. The request horizon is
-read from `kronos_horizon` (default 20).
+MA20, and a crosshair OHLC legend. A structurally valid Kronos v2 receipt may
+appear as a dashed diagnostic forecast, always labeled with its non-`PASS`
+gate. That curve remains audit-only and is not accepted as evidence. The
+request horizon is read from `kronos_horizon` (default 20).
 
 Validated mode treats the producer's symbol and MIC as one exact identity.
 The browser carries both values from a search result (or an explicit
@@ -144,9 +144,10 @@ watchlist board grouped by market zone — A-SHARE / HK / US / OTHER by
 exchange suffix — with `←`/`→` switching, a recent-bars detail pane, and
 `K` opening the browser K-line for the selected row. Symbols come from
 `security_symbols` (Yahoo-style tickers through the quantkit path, e.g.
-`601088.SS 1088.HK BTU`); an empty list renders an empty board. The quant
-and daily-report hotkeys (`A`/`B`/`D`/`H`/`E`/`F`/`P`/`S`/`T`) live on this
-screen.
+`601088.SS 1088.HK BTU`). When that list is empty (the full-market daily
+screen mode), the board shows non-cut names from the latest persisted daily
+decision and then recent symbols. The quant and daily-report hotkeys
+(`A`/`B`/`D`/`H`/`E`/`F`/`P`/`S`/`T`) live on this screen.
 
 ## Domain boards (FUTURES / SHIPPING / CASINO)
 

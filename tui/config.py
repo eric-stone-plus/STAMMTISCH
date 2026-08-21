@@ -45,8 +45,8 @@ DEFAULT_CONFIG = {
     "default_rebalance": "M",
     "default_lookback": 60,
     # Forecast adapter: `{cmd} SYMBOL --horizon N --json`. Legacy JSON is
-    # diagnostic-only. An overlay requires a sealed Kronos v2 receipt plus an
-    # independently validated production PASS gate. Empty = disabled.
+    # diagnostic-only. A sealed Kronos v2 receipt may be drawn as an explicitly
+    # labeled non-PASS diagnostic; it is never promoted to evidence. Empty = disabled.
     "kronos_cmd": "",
     "kronos_horizon": 20,
     # K-line OHLCV source. ``validated`` reads only verified offline consensus
@@ -87,7 +87,8 @@ DEFAULT_CONFIG = {
     "futures_symbols": ["BZ=F"],
     # SECURITY board: Yahoo-style equity symbols grouped into market zones
     # by exchange suffix (.SS/.SZ/.BJ = A-SHARE, .HK = HK, bare = US).
-    # Fetched and charted through the same quantkit path. Empty = empty board.
+    # Fetched and charted through the same quantkit path. When empty, the
+    # board shows the latest non-cut daily decisions followed by recents.
     "security_symbols": [],
     # FUTURES plugin exchange-settled side: the command prints one
     # mktdaily.sgx-board.v1 JSON object on stdout (see tui/domaindata.py).

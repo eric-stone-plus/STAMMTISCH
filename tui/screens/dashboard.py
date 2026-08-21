@@ -836,7 +836,9 @@ class DashboardScreen(Screen):
         self.ai.api_key = self.config.ai_api_key
         self.ai.base_url = self.config.ai_base_url
         self.ai.model = self.config.ai_model
-        if self.config.state_root:
+        if self.config.state_root and not getattr(
+            self.app, "state_root_override", None
+        ):
             self.driver.state_root = self.config.state_root
         self.action_refresh()
 

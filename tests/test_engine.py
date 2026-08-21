@@ -11,6 +11,20 @@ import pandas as pd
 from tui.engine import QuantEngine, _missing_ohlcv, _normalize_symbol
 
 
+class FromConfigTest(unittest.TestCase):
+    def test_from_config_passes_egress_fields(self):
+        cfg = mock.Mock()
+        cfg.data_dir = "/tmp/qk"
+        cfg.data_proxy_url = ""
+        cfg.egress_proxy_url = "http://proxy.example:8080"
+        cfg.egress_switch_cmd = "switch --for-site {host}"
+        eng = QuantEngine.from_config(cfg)
+        self.assertEqual(str(eng.data_dir), "/tmp/qk")
+        self.assertEqual(eng._egress_proxy_url, "http://proxy.example:8080")
+        self.assertEqual(eng._egress_switch_cmd, "switch --for-site {host}")
+        self.assertFalse(eng._egress_active)
+
+
 class SymbolNormalizeTest(unittest.TestCase):
     def test_bare_shanghai(self):
         self.assertEqual(_normalize_symbol("600098"), "600098.SS")

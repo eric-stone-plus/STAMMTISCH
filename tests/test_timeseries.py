@@ -172,6 +172,26 @@ class TimeseriesDriverTest(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertIn("no forecast command configured", r["error"])
 
+    def test_stale_bar_is_short_overlay_error(self):
+        cmd = _fake_cmd(
+            json.dumps({"error": "latest OHLCV bar is stale: expected 2026-08-21, got 2026-08-20"}),
+            exit_code=1,
+        )
+        r = TimeseriesDriver(cmd).forecast("600098.SS")
+        self.assertFalse(r["ok"])
+        self.assertEqual(
+            r["error"],
+            "forecast unavailable: latest OHLCV bar is 2026-08-20; "
+            "expected completed session 2026-08-21",
+        )
+
+    def test_unrelated_stale_error_is_not_misclassified(self):
+        cmd = _fake_cmd(json.dumps({"error": "stale validated reference"}), exit_code=1)
+        r = TimeseriesDriver(cmd).forecast("AAPL")
+        self.assertFalse(r["ok"])
+        self.assertIn("stale validated reference", r["error"])
+        self.assertNotIn("latest OHLCV", r["error"])
+
     def test_legacy_output_is_fail_closed(self):
         cmd = _fake_cmd(json.dumps({"model": "kronos-test", "forecast": [1.5, 2.5, 3.5]}))
         r = TimeseriesDriver(cmd).forecast("AAPL", horizon=3)
