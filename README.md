@@ -28,7 +28,14 @@ stammtisch export RUN --out /tmp/bundle
 stammtisch verify --bundle /tmp/bundle
 stammtisch config        # → show TUI config (API key masked)
 stammtisch config set-key sk-...   # → save the AI key (prompts if omitted)
+stammtisch config use mimo         # → switch AI provider profile (glm/mimo/deepseek)
+stammtisch config profiles         # → list profiles, active one, stored keys
 ```
+
+AI provider profiles are presets with per-profile key memory: switching
+providers restores that provider's stored key (first switch takes it as an
+argument), so moving between glm, mimo, and deepseek never means
+re-entering keys. The same dropdown lives in the TUI config screen.
 
 No args = TUI. With args = CLI.
 
