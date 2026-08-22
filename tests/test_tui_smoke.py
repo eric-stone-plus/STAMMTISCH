@@ -17,7 +17,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from textual.widgets import DataTable, Input, OptionList, Static
+from textual.widgets import DataTable, Input, OptionList, Select, Static
 
 from pathlib import Path
 
@@ -28,6 +28,66 @@ from tui.screens import ConfigScreen, DashboardScreen
 class TuiSmokeTest(unittest.TestCase):
     def test_clickable_menus_and_edit_screen(self) -> None:
         asyncio.run(self._scenario())
+
+    def test_config_screen_provider_switch_remembers_keys(self) -> None:
+        asyncio.run(self._provider_switch_scenario())
+
+    async def _provider_switch_scenario(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w") as f:
+                json.dump({
+                    "state_root": os.path.join(tmp, "state"),
+                    "ai_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+                    "ai_model": "mimo-v2.5-pro",
+                    "ai_api_key": "tp-mimo-key",
+                }, f)
+            with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
+                app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    await pilot.press("e")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, ConfigScreen)
+
+                    provider = app.screen.query_one("#cfg-provider", Select)
+                    key_input = app.screen.query_one("#cfg-key", Input)
+                    base_input = app.screen.query_one("#cfg-base-url", Input)
+                    model_input = app.screen.query_one("#cfg-model", Input)
+
+                    # The active profile is detected from the saved base URL.
+                    self.assertEqual(provider.value, "mimo")
+
+                    # Switch to glm: the mimo key is stashed, glm starts blank.
+                    provider.value = "glm"
+                    await pilot.pause()
+                    self.assertEqual(
+                        base_input.value, "https://open.bigmodel.cn/api/paas/v4"
+                    )
+                    self.assertEqual(model_input.value, "glm-5.3")
+                    self.assertEqual(key_input.value, "")
+
+                    # Type a glm key, switch away and back: both remembered.
+                    key_input.value = "glm-key"
+                    provider.value = "mimo"
+                    await pilot.pause()
+                    self.assertEqual(key_input.value, "tp-mimo-key")
+                    provider.value = "glm"
+                    await pilot.pause()
+                    self.assertEqual(key_input.value, "glm-key")
+
+                    # Save persists the per-profile key memory.
+                    await pilot.press("ctrl+s")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, DashboardScreen)
+                    with open(cfg_path) as f:
+                        saved = json.load(f)
+                    self.assertEqual(saved["ai_profile_keys"]["mimo"], "tp-mimo-key")
+                    self.assertEqual(saved["ai_profile_keys"]["glm"], "glm-key")
+                    self.assertEqual(saved["ai_api_key"], "glm-key")
+                    self.assertEqual(
+                        saved["ai_base_url"], "https://open.bigmodel.cn/api/paas/v4"
+                    )
 
     def test_confirm_screen_keyboard_and_mouse(self) -> None:
         asyncio.run(self._confirm_scenario())

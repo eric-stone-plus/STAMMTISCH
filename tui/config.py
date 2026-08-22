@@ -22,6 +22,27 @@ def default_config_file() -> Path:
         return Path(env).expanduser()
     return DEFAULT_CONFIG_FILE
 
+# Named OpenAI-compatible AI provider presets, shared by the config CLI
+# (`stammtisch config use PROFILE`) and the TUI config screen provider
+# dropdown. name -> (label, base_url, model). Per-profile API keys are
+# remembered in the ai_profile_keys config dict, so switching back and
+# forth never requires re-entering keys.
+AI_PROFILES = {
+    "glm": ("GLM official (bigmodel v4)", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
+    "mimo": ("MiMo (Xiaomi token plan)", "https://token-plan-cn.xiaomimimo.com/v1", "mimo-v2.5-pro"),
+    "deepseek": ("DeepSeek official", "https://api.deepseek.com", "deepseek-chat"),
+}
+
+
+def ai_profile_for_base_url(base_url: str) -> str | None:
+    """Name of the preset whose base_url matches, if any."""
+    base = base_url.rstrip("/")
+    for name, (_label, preset_base, _model) in AI_PROFILES.items():
+        if preset_base.rstrip("/") == base:
+            return name
+    return None
+
+
 DEFAULT_CONFIG = {
     # TUI chrome language: "en" | "zh" (toggled from the dashboard).
     "language": "en",

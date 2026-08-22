@@ -20,6 +20,7 @@ from textual.widgets import Button, DataTable, Footer, Input, OptionList, Select
 from rich.text import Text
 from textual.widgets.option_list import Option
 
+from ..config import AI_PROFILES, ai_profile_for_base_url
 from ..driver import StammtischDriver
 from ..ai_driver import AIDriver, ChatResponse
 from ..engine import QuantEngine
@@ -38,11 +39,6 @@ logger = logging.getLogger(__name__)
 class ConfigScreen(Screen):
     """Edit workstation config — API key, model, workspace, backtest defaults."""
 
-    # Known OpenAI-compatible providers: picking one fills Base URL + Model.
-    AI_PROVIDERS = [
-        ("GLM official (bigmodel v4)", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
-        ("DeepSeek official", "https://api.deepseek.com/v1", "deepseek-v4-pro"),
-    ]
     PROXY_POLICY_KEYS = [
         ("proxy.off", "off"),
         ("proxy.all", "all"),
@@ -79,14 +75,22 @@ class ConfigScreen(Screen):
         self.ai = ai
         self.driver = driver
         self.engine = engine
+        keys = config.get("ai_profile_keys")
+        self._profile_keys: dict[str, str] = dict(keys) if isinstance(keys, dict) else {}
 
-    def _provider_value(self) -> tuple[str, str] | None:
-        """Map the configured base URL to a known provider preset."""
-        base = self.config.ai_base_url
-        for _label, preset_base, model in self.AI_PROVIDERS:
-            if preset_base == base:
-                return (preset_base, model)
-        return None
+    def _provider_value(self) -> str | None:
+        """Profile name matching the configured base URL, if any."""
+        return ai_profile_for_base_url(str(self.config.get("ai_base_url") or ""))
+
+    def _stash_current_key(self) -> None:
+        """Remember the key field's value under the profile the Base URL field
+        currently points at, so switching away never loses a key."""
+        profile = ai_profile_for_base_url(
+            self.query_one("#cfg-base-url", Input).value.strip()
+        )
+        key = self.query_one("#cfg-key", Input).value.strip()
+        if profile and key:
+            self._profile_keys[profile] = key
 
     @property
     def _language(self) -> str:
@@ -126,9 +130,12 @@ class ConfigScreen(Screen):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "cfg-provider" and event.value:
-            base, model = event.value
+            name = str(event.value)
+            _label, base, model = AI_PROFILES[name]
+            self._stash_current_key()
             self.query_one("#cfg-base-url", Input).value = base
             self.query_one("#cfg-model", Input).value = model
+            self.query_one("#cfg-key", Input).value = self._profile_keys.get(name, "")
         elif event.select.id == "cfg-policy":
             self._apply_proxy_policy(event.value)
 
@@ -163,7 +170,7 @@ class ConfigScreen(Screen):
                     yield Static("  Provider", classes="cfg-label")
                     yield Select(
                         [("Custom", None)]
-                        + [(label, (base, model)) for label, base, model in self.AI_PROVIDERS],
+                        + [(label, name) for name, (label, _base, _model) in AI_PROFILES.items()],
                         value=self._provider_value(),
                         allow_blank=False,
                         id="cfg-provider",
@@ -387,11 +394,16 @@ class ConfigScreen(Screen):
                 self.notify(f"Data dir is not usable: {exc}", severity="error")
                 return
 
+        # Remember the final API key under the profile the Base URL points
+        # at, so the provider dropdown restores it on the next switch.
+        self._stash_current_key()
+
         try:
             self.config.update({
                 "ai_api_key": self.query_one("#cfg-key", Input).value.strip(),
                 "ai_base_url": self.query_one("#cfg-base-url", Input).value.strip() or self.config.ai_base_url,
                 "ai_model": self.query_one("#cfg-model", Input).value.strip() or self.config.ai_model,
+                "ai_profile_keys": self._profile_keys,
                 "state_root": self.query_one("#cfg-state-root", Input).value.strip(),
                 "data_dir": data_dir,
                 "chart_port": chart_port,

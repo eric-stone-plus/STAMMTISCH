@@ -24,7 +24,7 @@ import subprocess
 import sys
 from typing import Any
 
-from .config import DEFAULT_CONFIG, Config
+from .config import AI_PROFILES, DEFAULT_CONFIG, Config, ai_profile_for_base_url
 
 # Keys whose values must be integers.
 _INT_KEYS = {
@@ -39,15 +39,9 @@ _CHOICE_KEYS = {"ohlcv_mode": frozenset({"live", "validated"})}
 # Keys masked in `show`/`get` output.
 _SECRET_KEYS = frozenset({"ai_api_key", "eia_api_key"})
 
-# Named AI provider presets for `stammtisch config use PROFILE`: each maps
-# to (base_url, model). The profile's API key is remembered separately in
-# the ai_profile_keys config dict, so switching back and forth never
-# requires re-entering keys.
-_AI_PROFILES = {
-    "glm": ("https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
-    "mimo": ("https://token-plan-cn.xiaomimimo.com/v1", "mimo-v2.5-pro"),
-    "deepseek": ("https://api.deepseek.com", "deepseek-chat"),
-}
+# Named AI provider presets for `stammtisch config use PROFILE`, derived
+# from the shared table in tui.config: name -> (base_url, model).
+_AI_PROFILES = {name: (base, model) for name, (_label, base, model) in AI_PROFILES.items()}
 
 USAGE = """stammtisch config — TUI workstation configuration
 
@@ -196,11 +190,7 @@ def _path(config: Config) -> int:
 
 def _current_profile(config: Config) -> str | None:
     """Name of the preset whose base_url matches the live config, if any."""
-    base_url = str(config.get("ai_base_url") or "").rstrip("/")
-    for name, (url, _model) in _AI_PROFILES.items():
-        if url.rstrip("/") == base_url:
-            return name
-    return None
+    return ai_profile_for_base_url(str(config.get("ai_base_url") or ""))
 
 
 def _use(config: Config, args: list[str]) -> int:
