@@ -30,7 +30,7 @@ def default_config_file() -> Path:
 AI_PROFILES = {
     "glm": ("GLM official (bigmodel v4)", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
     "mimo": ("MiMo (Xiaomi token plan)", "https://token-plan-cn.xiaomimimo.com/v1", "mimo-v2.5-pro"),
-    "deepseek": ("DeepSeek official", "https://api.deepseek.com", "deepseek-chat"),
+    "deepseek": ("DeepSeek official", "https://api.deepseek.com/v1", "deepseek-v4-pro"),
 }
 
 
