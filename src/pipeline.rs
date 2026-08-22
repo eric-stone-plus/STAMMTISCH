@@ -147,6 +147,7 @@ pub fn validate(value: &Value, source_path: &Path) -> Result<Pipeline, AppError>
             for required in [
                 crate::adapters::highball::ROUTE_REQUEST_INPUT,
                 crate::adapters::highball::RESIDUAL_TRACE_INPUT,
+                crate::adapters::highball::REVIEW_RESULT_INPUT,
             ] {
                 if !inputs.iter().any(|name| name == required) {
                     return Err(AppError::usage(

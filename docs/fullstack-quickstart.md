@@ -91,6 +91,9 @@ export QUINTE_PROVIDER_BASE_URL_ENV=DEEPSEEK_BASE_URL
 export A2A_TOKEN=<your-choice>
 # HIGHBALL product binary for the deliver stage:
 export HIGHBALL_BIN=/path/to/HIGHBALL/target/release/build-action-packet
+# QUINTE binary that produced the review run — HIGHBALL verifies its
+# digest against the run manifest (default: $HOME/.cargo/bin/quinte):
+export HIGHBALL_QUINTE_BIN=$HOME/.cargo/bin/quinte
 # State roots (anywhere you like):
 export STAMMTISCH_HOME=$HOME/.local/share/stammtisch
 export QUINTE_HOME=$HOME/.local/share/quinte
@@ -143,5 +146,7 @@ diverged.
 | `-32012 … preflight failed` | one of the four DeepSeek env vars above is missing — `quinte host preflight --json` names it |
 | `-32010 busy_run` | another review is already running on this QUINTE home; wait or use a separate `QUINTE_HOME` |
 | deliver stage: `product_cli_missing` | `HIGHBALL_BIN` unset or not pointing at `build-action-packet` |
+| deliver stage: `highball_quinte_run_missing` / `highball_quinte_result_missing` | the review.result artifact has no `run_id`, or `$QUINTE_HOME/runs/<run_id>/result.json` is gone |
+| deliver stage: `highball_quinte_bin_missing` | `HIGHBALL_QUINTE_BIN` unset and no `$HOME/.cargo/bin/quinte`; it must be the exact binary that produced the run |
 | `doctrine_not_found` | run from the repo or keep the example's relative layout; a pipeline outside the repo must declare `doctrine.ref` |
 | port 8802 in use | pick another port and update the example's `runtime.endpoint` |

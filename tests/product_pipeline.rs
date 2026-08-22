@@ -24,43 +24,102 @@ fn highball_available() -> bool {
         || highball_root().join("bin/highball").is_file()
 }
 
+/// The QUINTE run the fake review stage's Result 2.1 is bound to; the
+/// deliver stage resolves the durable product under QUINTE_HOME by this id.
+const QUINTE_RUN_ID: &str = "018f47a2-4b5c-7d6e-8f90-123456789abc";
+
+fn action_binding(request: &Value) -> String {
+    stammtisch::canon::sha256_value_prefixed(&json!({
+        "action_boundary": request["action_boundary"],
+        "affected_paths": request["affected_paths"],
+        "change_class": request["change_class"],
+        "question": request["question"]
+    }))
+}
+
 fn route_request() -> Value {
+    // Non-executable MEDIUM-risk code change routes to QUINTE — the route
+    // that requires the atomic review product the deliver stage attaches.
     json!({
-        "question": "Should this documentation change ship?",
-        "action_scope": "docs update",
-        "affected_paths": ["docs/readme.md"],
-        "action_boundary": "none",
-        "change_class": "claim",
-        "risk": "LOW",
-        "executable": true
+        "question": "Should this code change ship?",
+        "action_scope": "Only src/module.rs in this task.",
+        "affected_paths": ["src/module.rs"],
+        "action_boundary": "reversible",
+        "change_class": "code",
+        "risk": "MEDIUM",
+        "executable": false
     })
 }
 
 fn residual_trace() -> Value {
     let request = route_request();
-    let binding = stammtisch::canon::sha256_value_prefixed(&json!({
-        "action_boundary": request["action_boundary"],
-        "affected_paths": request["affected_paths"],
-        "change_class": request["change_class"],
-        "question": request["question"]
-    }));
     json!({
         "trace_version": "1.1",
         "question": request["question"],
-        "instrument": "direct-evidence",
+        "instrument": "QUINTE",
         "residuals": [],
-        "action_boundary": "none",
+        "action_boundary": "reversible",
         "highball_decision": "pass",
-        "action_binding_sha256": binding
+        "action_binding_sha256": action_binding(&request)
     })
+}
+
+/// HIGHBALL digests the brief over its contract field list in field order
+/// (jsonutil::canonical_bytes_fields), not sorted-key order.
+fn canonical_fields_bytes(value: &Value, fields: &[&str]) -> Vec<u8> {
+    let mut out = vec![b'{'];
+    for (i, field) in fields.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        out.extend(serde_json::to_string(field).unwrap().as_bytes());
+        out.push(b':');
+        out.extend(stammtisch::canon::canonical_bytes(
+            value.get(*field).unwrap_or(&Value::Null),
+        ));
+    }
+    out.push(b'}');
+    out
+}
+
+fn brief_21() -> Value {
+    let request = route_request();
+    json!({
+        "brief_version": "1.1",
+        "question": request["question"],
+        "context": Value::Null,
+        "evidence_roots": [],
+        "snapshot_ignore": [],
+        "attachments": [],
+        "action_scope": request["action_scope"],
+        "affected_paths": request["affected_paths"],
+        "action_binding_sha256": action_binding(&request)
+    })
+}
+
+fn brief_sha256() -> String {
+    stammtisch::canon::sha256_prefixed(&canonical_fields_bytes(
+        &brief_21(),
+        &[
+            "brief_version",
+            "question",
+            "context",
+            "evidence_roots",
+            "snapshot_ignore",
+            "attachments",
+            "action_scope",
+            "affected_paths",
+            "action_binding_sha256",
+        ],
+    ))
 }
 
 fn result_21() -> Value {
     json!({
         "result_version": "2.1",
-        "run_id": "stammtisch-fixture-review",
+        "run_id": QUINTE_RUN_ID,
         "status": "completed",
-        "brief_sha256": format!("sha256:{}", "a".repeat(64)),
+        "brief_sha256": brief_sha256(),
         "question": route_request()["question"],
         "action_scope": route_request()["action_scope"],
         "affected_paths": route_request()["affected_paths"],
@@ -95,11 +154,11 @@ fn result_21() -> Value {
             "base_model_relation": "same_model",
             "perspective_count": 5,
             "perspectives": [
-                {"party_id": "Party A", "route_id": "r-a", "r1_artifact": "lanes/R1/A.json", "r2_artifact": "lanes/R2/A.json", "independent_first_pass": true},
-                {"party_id": "Party B", "route_id": "r-b", "r1_artifact": "lanes/R1/B.json", "r2_artifact": "lanes/R2/B.json", "independent_first_pass": true},
-                {"party_id": "Party C", "route_id": "r-c", "r1_artifact": "lanes/R1/C.json", "r2_artifact": "lanes/R2/C.json", "independent_first_pass": true},
-                {"party_id": "Party D", "route_id": "r-d", "r1_artifact": "lanes/R1/D.json", "r2_artifact": "lanes/R2/D.json", "independent_first_pass": true},
-                {"party_id": "Party E", "route_id": "r-e", "r1_artifact": "lanes/R1/E.json", "r2_artifact": "lanes/R2/E.json", "independent_first_pass": true}
+                {"party_id": "Party A", "route_id": "r-a", "r1_artifact": "lanes/R1/r-a/accepted.json", "r2_artifact": "lanes/R2/r-a/accepted.json", "independent_first_pass": true},
+                {"party_id": "Party B", "route_id": "r-b", "r1_artifact": "lanes/R1/r-b/accepted.json", "r2_artifact": "lanes/R2/r-b/accepted.json", "independent_first_pass": true},
+                {"party_id": "Party C", "route_id": "r-c", "r1_artifact": "lanes/R1/r-c/accepted.json", "r2_artifact": "lanes/R2/r-c/accepted.json", "independent_first_pass": true},
+                {"party_id": "Party D", "route_id": "r-d", "r1_artifact": "lanes/R1/r-d/accepted.json", "r2_artifact": "lanes/R2/r-d/accepted.json", "independent_first_pass": true},
+                {"party_id": "Party E", "route_id": "r-e", "r1_artifact": "lanes/R1/r-e/accepted.json", "r2_artifact": "lanes/R2/r-e/accepted.json", "independent_first_pass": true}
             ],
             "perturbation_axes": ["role"],
             "independence_controls": ["isolated_context"],
@@ -126,6 +185,85 @@ fn carrier_artifact(id: &str, name: &str, data: Value) -> Value {
         "name": name,
         "parts": [{"data": data, "mediaType": "application/json"}]
     })
+}
+
+/// The durable QUINTE run product the deliver stage resolves through the
+/// digest-pinned run_id: the run directory (result/manifest/brief) plus a
+/// pinned fake `quinte` binary whose `inspect` echoes the recorded run
+/// state. Returns (state root, pinned binary).
+fn quinte_state_fixture() -> (PathBuf, PathBuf) {
+    let state = std::env::temp_dir().join(format!(
+        "stammtisch-three-quinte-state-{}",
+        stammtisch::ids::uuid_v7().unwrap()
+    ));
+    let run_dir = state.join("runs").join(QUINTE_RUN_ID);
+    std::fs::create_dir_all(run_dir.join("input")).unwrap();
+    std::fs::write(
+        run_dir.join("input").join("brief.json"),
+        stammtisch::canon::canonical_bytes(&brief_21()),
+    )
+    .unwrap();
+    let result = result_21();
+    let result_bytes = stammtisch::canon::canonical_bytes(&result);
+    let result_sha = stammtisch::canon::sha256_prefixed(&result_bytes);
+    std::fs::write(run_dir.join("result.json"), &result_bytes).unwrap();
+    // The pinned fake `quinte`: `inspect` echoes the recorded run state.
+    let bin_dir = std::env::temp_dir().join(format!(
+        "stammtisch-three-quinte-bin-{}",
+        stammtisch::ids::uuid_v7().unwrap()
+    ));
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let bin = bin_dir.join("quinte");
+    let envelope_path = bin_dir.join("envelope.json");
+    std::fs::write(
+        &bin,
+        format!("#!/bin/sh\ncat '{}'\n", envelope_path.display()),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let runtime_sha = stammtisch::canon::sha256_prefixed(&std::fs::read(&bin).unwrap());
+    let manifest = json!({
+        "manifest_version": "2.0",
+        "run_id": QUINTE_RUN_ID,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:01.000Z",
+        "status": "completed",
+        "brief_sha256": brief_sha256(),
+        "policy_sha256": format!("sha256:{}", "1".repeat(64)),
+        "snapshot_sha256": format!("sha256:{}", "2".repeat(64)),
+        "runtime_sha256": runtime_sha,
+        "protocol_version": "1.0",
+        "effective_model": "gpt-5.4",
+        "seat_binding": result["seat_binding"].clone(),
+        "route_bindings": result["route_bindings"].clone(),
+        "sandbox_mode": "process",
+        "current_phase": Value::Null,
+        "error": Value::Null,
+        "r3_input_receipt": Value::Null,
+        "primary_arbiter_challenge": Value::Null,
+        "primary_arbiter_submission": Value::Null,
+        "result_sha256": result_sha
+    });
+    std::fs::write(
+        run_dir.join("manifest.json"),
+        stammtisch::canon::canonical_bytes(&manifest),
+    )
+    .unwrap();
+    let envelope = json!({
+        "cli_envelope_version": "1.0",
+        "ok": true,
+        "data": {"manifest": manifest, "result": result, "events": []}
+    });
+    std::fs::write(
+        &envelope_path,
+        stammtisch::canon::canonical_bytes(&envelope),
+    )
+    .unwrap();
+    (state, bin)
 }
 
 struct Out {
@@ -319,6 +457,11 @@ fn three_stage_run_export_verify_twice() {
         r#"{"trace_version":"ambient poison"}"#,
     )
     .unwrap();
+    let (quinte_state, quinte_bin) = quinte_state_fixture();
+    // Inherited by the stammtisch-core subprocess; the deliver stage pins
+    // the QUINTE state root and the exact binary behind QUINTE_RUN_ID.
+    std::env::set_var("QUINTE_HOME", &quinte_state);
+    std::env::set_var("HIGHBALL_QUINTE_BIN", &quinte_bin);
     let server = FakeA2a::start(Script {
         poll_states: vec!["TASK_STATE_COMPLETED".into()],
         artifacts: vec![
