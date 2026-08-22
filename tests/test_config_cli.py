@@ -216,5 +216,66 @@ class ConfigCliTest(unittest.TestCase):
             self.assertNotIn("obsolete_private_key", json.load(handle))
 
 
+class AiProfileSwitchTest(unittest.TestCase):
+    """`config use PROFILE` swaps base_url/model and remembers keys per profile."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg_path = os.path.join(self.tmp.name, "config.json")
+        self.env_patch = mock.patch.dict(
+            os.environ, {"STAMMTISCH_CONFIG": self.cfg_path}, clear=False
+        )
+        self.env_patch.start()
+
+    def tearDown(self) -> None:
+        self.env_patch.stop()
+        self.tmp.cleanup()
+
+    def _saved(self) -> dict:
+        with open(self.cfg_path) as handle:
+            return json.load(handle)
+
+    def test_use_unknown_profile_fails(self) -> None:
+        code, _out, err = run_cli("use", "bogus")
+        self.assertEqual(code, 2)
+        self.assertIn("unknown profile", err)
+
+    def test_use_without_stored_key_fails_closed(self) -> None:
+        code, _out, err = run_cli("use", "mimo")
+        self.assertEqual(code, 2)
+        self.assertIn("no API key stored", err)
+
+    def test_switch_roundtrip_restores_keys(self) -> None:
+        code, _out, _err = run_cli("use", "mimo", "tp-mimo-key")
+        self.assertEqual(code, 0)
+        saved = self._saved()
+        self.assertEqual(saved["ai_model"], "mimo-v2.5-pro")
+        self.assertEqual(saved["ai_base_url"], "https://token-plan-cn.xiaomimimo.com/v1")
+        self.assertEqual(saved["ai_api_key"], "tp-mimo-key")
+
+        code, _out, _err = run_cli("use", "glm", "glm-key")
+        self.assertEqual(code, 0)
+        saved = self._saved()
+        self.assertEqual(saved["ai_model"], "glm-5.3")
+        self.assertEqual(saved["ai_api_key"], "glm-key")
+        # the mimo key was stashed, not lost
+        self.assertEqual(saved["ai_profile_keys"]["mimo"], "tp-mimo-key")
+
+        # switch back with no key argument: restores the stored mimo key
+        code, out, _err = run_cli("use", "mimo")
+        self.assertEqual(code, 0)
+        saved = self._saved()
+        self.assertEqual(saved["ai_api_key"], "tp-mimo-key")
+        self.assertEqual(saved["ai_profile_keys"]["glm"], "glm-key")
+
+    def test_profiles_lists_presets(self) -> None:
+        run_cli("use", "mimo", "tp-mimo-key")
+        code, out, _err = run_cli("profiles")
+        self.assertEqual(code, 0)
+        self.assertIn("deepseek", out)
+        self.assertIn("mimo", out)
+        self.assertIn("active", out)
+
+
 if __name__ == "__main__":
     unittest.main()

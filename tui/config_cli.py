@@ -39,6 +39,16 @@ _CHOICE_KEYS = {"ohlcv_mode": frozenset({"live", "validated"})}
 # Keys masked in `show`/`get` output.
 _SECRET_KEYS = frozenset({"ai_api_key", "eia_api_key"})
 
+# Named AI provider presets for `stammtisch config use PROFILE`: each maps
+# to (base_url, model). The profile's API key is remembered separately in
+# the ai_profile_keys config dict, so switching back and forth never
+# requires re-entering keys.
+_AI_PROFILES = {
+    "glm": ("https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
+    "mimo": ("https://token-plan-cn.xiaomimimo.com/v1", "mimo-v2.5-pro"),
+    "deepseek": ("https://api.deepseek.com", "deepseek-chat"),
+}
+
 USAGE = """stammtisch config — TUI workstation configuration
 
 USAGE:
@@ -48,6 +58,8 @@ USAGE:
   stammtisch config set KEY VALUE
   stammtisch config get KEY
   stammtisch config unset KEY
+  stammtisch config use PROFILE [KEY]   switch AI provider (glm/mimo/deepseek)
+  stammtisch config profiles            list AI provider presets
   stammtisch config path
   stammtisch config edit
 
@@ -89,6 +101,10 @@ def _show(config: Config) -> int:
         value = config.get(key)
         if key in _SECRET_KEYS:
             shown: Any = mask_secret(str(value))
+        elif key == "ai_profile_keys" and isinstance(value, dict):
+            shown = "{" + ", ".join(
+                f"{name}: {mask_secret(str(k))}" for name, k in value.items()
+            ) + "}" if value else "(empty)"
         elif isinstance(value, list):
             shown = _format_list(value)
         else:
@@ -178,6 +194,60 @@ def _path(config: Config) -> int:
     return 0
 
 
+def _current_profile(config: Config) -> str | None:
+    """Name of the preset whose base_url matches the live config, if any."""
+    base_url = str(config.get("ai_base_url") or "").rstrip("/")
+    for name, (url, _model) in _AI_PROFILES.items():
+        if url.rstrip("/") == base_url:
+            return name
+    return None
+
+
+def _use(config: Config, args: list[str]) -> int:
+    profile = args[0].lower()
+    if profile not in _AI_PROFILES:
+        print(f"stammtisch config: unknown profile '{profile}'. Known profiles:", file=sys.stderr)
+        print("  " + ", ".join(sorted(_AI_PROFILES)), file=sys.stderr)
+        return 2
+    keys = config.get("ai_profile_keys")
+    if not isinstance(keys, dict):
+        keys = {}
+    # Stash the live key under its detected profile before switching away.
+    current = _current_profile(config)
+    live_key = str(config.get("ai_api_key") or "")
+    if current and current != profile and live_key:
+        keys[current] = live_key
+    if len(args) > 1:  # explicit key for the target profile
+        keys[profile] = args[1].strip()
+    key = str(keys.get(profile) or "")
+    if not key:
+        print(f"stammtisch config: no API key stored for '{profile}' — "
+              f"run: stammtisch config use {profile} <KEY>", file=sys.stderr)
+        return 2
+    base_url, model = _AI_PROFILES[profile]
+    config.set("ai_profile_keys", keys)
+    config.set("ai_base_url", base_url)
+    config.set("ai_model", model)
+    config.set("ai_api_key", key)
+    print(f"AI profile = {profile} (model {model}, key {mask_secret(key)}, saved)")
+    return 0
+
+
+def _profiles(config: Config) -> int:
+    current = _current_profile(config)
+    keys = config.get("ai_profile_keys")
+    stored = set(keys) if isinstance(keys, dict) else set()
+    for name, (url, model) in sorted(_AI_PROFILES.items()):
+        marks = []
+        if name == current:
+            marks.append("active")
+        if name in stored:
+            marks.append("key stored")
+        suffix = f"  ({', '.join(marks)})" if marks else ""
+        print(f"  {name:<10} {model:<18} {url}{suffix}")
+    return 0
+
+
 def _edit(config: Config) -> int:
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
     if not editor:
@@ -219,6 +289,10 @@ def main(argv: list[str] | None = None) -> int:
         return _unset(config, rest) if len(rest) == 1 else _usage("unset requires KEY")
     if sub == "path":
         return _no_args(rest, _path, config, sub)
+    if sub == "use":
+        return _use(config, rest) if 1 <= len(rest) <= 2 else _usage("use requires PROFILE and optional KEY")
+    if sub == "profiles":
+        return _no_args(rest, _profiles, config, sub)
     if sub == "edit":
         return _no_args(rest, _edit, config, sub)
     print(f"stammtisch config: unknown subcommand '{sub}'", file=sys.stderr)
