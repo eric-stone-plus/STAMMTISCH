@@ -424,7 +424,8 @@ class FuturesScreen(Screen):
             self._detail_source = item["source"]
         else:
             recent_table.clear()
-        for bar in item.get("recent") or []:
+        # Newest dates first (descending)
+        for bar in reversed(item.get("recent") or []):
             if item["source"] == "sgx":
                 recent_table.add_row(
                     bar["date"], f"{bar['settle']:,.2f}",
@@ -1273,7 +1274,8 @@ class SecurityScreen(Screen):
     def _render_detail(self, item: dict[str, Any]) -> None:
         recent_table = self.query_one("#sec-recent", DataTable)
         recent_table.clear()
-        for bar in item.get("recent") or []:
+        # Newest dates first (descending)
+        for bar in reversed(item.get("recent") or []):
             recent_table.add_row(
                 bar["date"], f"{bar['open']:,.2f}", f"{bar['high']:,.2f}",
                 f"{bar['low']:,.2f}", f"{bar['close']:,.2f}",

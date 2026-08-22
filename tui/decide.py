@@ -45,10 +45,17 @@ HEADLINES_PER_MARKET = 8
 
 
 def _scan_zone(engine: QuantEngine, symbols: list[str]) -> list[dict[str, Any]]:
-    """Backtest every symbol (2y default window); one retry per symbol."""
+    """Backtest every symbol (2y default window); one retry per symbol.
+
+    Symbols are processed in parallel (up to 8 workers) so a slow provider
+    does not block the entire zone.  Each individual backtest has a 30s
+    ceiling inherited from the engine's _fetch_ohlcv timeout.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     start = (date.today() - timedelta(days=730)).isoformat()
-    rows: list[dict[str, Any]] = []
-    for symbol in symbols:
+
+    def _backtest_one(symbol: str) -> dict[str, Any]:
         result = None
         for attempt in (1, 2):
             result = engine.run_backtest(symbol, start=start)
@@ -58,11 +65,10 @@ def _scan_zone(engine: QuantEngine, symbols: list[str]) -> list[dict[str, Any]]:
                 time.sleep(2.0)  # transient provider hiccups (delisted-style
                 # errors are usually rate shapes): one retry, then it's real
         if not result or not result.get("ok"):
-            rows.append({"symbol": symbol,
-                         "error": str(result.get("error"))[:80] if result else "no result"})
-            continue
+            return {"symbol": symbol,
+                    "error": str(result.get("error"))[:80] if result else "no result"}
         s = result["summary"]
-        rows.append({
+        return {
             "symbol": symbol,
             "tr": round(s.total_return * 100, 1),
             "cagr": round(s.cagr * 100, 1),
@@ -70,7 +76,19 @@ def _scan_zone(engine: QuantEngine, symbols: list[str]) -> list[dict[str, Any]]:
             "maxdd": round(s.max_drawdown * 100, 1),
             "win": round(s.win_rate * 100),
             "trades": s.trades,
-        })
+        }
+
+    rows: list[dict[str, Any]] = []
+    if not symbols:
+        return rows
+    with ThreadPoolExecutor(max_workers=min(8, len(symbols))) as pool:
+        futures = {pool.submit(_backtest_one, s): s for s in symbols}
+        for future in as_completed(futures):
+            try:
+                rows.append(future.result(timeout=90))
+            except Exception as exc:
+                rows.append({"symbol": futures[future], "error": str(exc)[:80]})
+
     ok = [r for r in rows if "error" not in r]
     ok.sort(key=lambda r: r["tr"], reverse=True)
     return ok + [r for r in rows if "error" in r]
@@ -96,9 +114,19 @@ def _kronos(config: Any, symbol: str) -> str | None:
         return None
     horizon = str(int(config.get("kronos_horizon") or 20))
     try:
-        argv = shlex.split(cmd) + [symbol, "--horizon", horizon, "--json"]
-        done = subprocess.run(argv, capture_output=True, text=True, timeout=KRONOS_TIMEOUT)
-        payload = json.loads(done.stdout)
+        argv = shlex.split(cmd) + [symbol, "--horizon", horizon, "--json",
+                                    "--no-snapshot"]
+        done = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=KRONOS_TIMEOUT)
+        if done.returncode != 0:
+            print(f"kronos: {symbol} exited {done.returncode}: "
+                  f"{done.stderr.strip()[:120]}", file=sys.stderr)
+            return None
+        try:
+            payload = json.loads(done.stdout)
+        except json.JSONDecodeError:
+            print(f"kronos: {symbol} returned invalid JSON", file=sys.stderr)
+            return None
         forecast = payload.get("forecast") or []
         if not forecast:
             return None
@@ -107,6 +135,29 @@ def _kronos(config: Any, symbol: str) -> str | None:
                 f"{len(forecast)}d -> last forecast {last:.2f}")
     except Exception:
         return None
+
+
+def _kronos_batch(config: Any, symbols: list[str]) -> list[str | None]:
+    """Run Kronos forecasts for multiple symbols in parallel.
+
+    Returns a list aligned with *symbols*; each entry is either a summary
+    line or None.  All calls share the same subprocess timeout.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not str(config.get("kronos_cmd") or "").strip() or not symbols:
+        return [None] * len(symbols)
+
+    results: dict[str, str | None] = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(symbols))) as pool:
+        futures = {pool.submit(_kronos, config, s): s for s in symbols}
+        for future in as_completed(futures):
+            sym = futures[future]
+            try:
+                results[sym] = future.result(timeout=KRONOS_TIMEOUT + 5)
+            except Exception:
+                results[sym] = None
+    return [results.get(s) for s in symbols]
 
 
 def _headlines(config: Any, market: str) -> list[str]:
@@ -247,7 +298,8 @@ def run(force: bool = False) -> int:
             continue
 
         top = [r["symbol"] for r in ok_rows[:3]]
-        kronos_lines = [line for line in (_kronos(config, s) for s in top) if line]
+        kronos_results = _kronos_batch(config, top)
+        kronos_lines = [line for line in kronos_results if line]
         headlines = _headlines(config, market_by_zone.get(zone, ""))
 
         context_parts = [

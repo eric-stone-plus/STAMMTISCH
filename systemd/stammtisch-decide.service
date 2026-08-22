@@ -10,8 +10,12 @@ Type=oneshot
 # portable across operator home directories.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=%h/Documents/Public/STAMMTISCH
-ExecStart=%h/Documents/Public/STAMMTISCH/.venv/bin/python -m tui.decide
 # One round = three zones x (scan + one model pass); Kronos forecasts add
 # minutes more. The runner is idempotent per day, so a timeout just skips
 # today's redo.
 TimeoutStartSec=2700
+# Trading-calendar guard (weekend level): the 08:30 UTC slot serves the
+# Mon-Fri A-share/HK close plus the US Friday close on Saturday. Sunday has
+# no new closes anywhere since the Saturday run — exit cleanly instead of
+# re-scanning stale data. Exchange holidays are out of scope here.
+ExecStart=/usr/bin/bash -c 'if [ "$(date +%%u)" = "7" ]; then echo "decide: Sunday, no new closes since Saturday run — skipping"; exit 0; fi; exec %h/Documents/Public/STAMMTISCH/.venv/bin/python -m tui.decide'

@@ -332,6 +332,8 @@ else:
             listing.clear_options()
             conf = self._cfg("crawler_sources_conf")
             entries = [e for e in parse_sources(conf) if e["toggleable"]] if conf else []
+            # Enabled entries first, then sorted by market and name
+            entries.sort(key=lambda e: (not e["enabled"], e.get("market", ""), e.get("name", "")))
             enabled = sum(1 for e in entries if e["enabled"])
             title = self.query_one("#crawl-sources-title", Static)
             if not conf:

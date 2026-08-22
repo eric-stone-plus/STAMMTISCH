@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 class ConfirmScreen(Screen):
     """Yes/No modal for destructive actions — keyboard AND mouse.
 
-    Keyboard: y/Enter confirm, n/Esc cancel. Mouse: real buttons (the
-    confirm button gets focus on mount, so Tab/Enter also work).
+    Keyboard: y/Enter confirm, n/Esc cancel, ←/→ switch focus.
+    Mouse: real buttons (the confirm button gets focus on mount, so
+    Tab/Enter also work).
     """
 
     BINDINGS = [
@@ -47,12 +48,26 @@ class ConfirmScreen(Screen):
         Binding("enter", "confirm", "Confirm"),
         Binding("n", "cancel", "Cancel"),
         Binding("escape", "cancel", "Cancel", show=False),
+        Binding("left", "left", "←", show=False),
+        Binding("right", "right", "→", show=False),
     ]
     CSS = """
-    ConfirmScreen { align: center middle; }
-    #confirm-box { width: 62; background: #000000; border: solid #ef5350; padding: 1 2; }
-    #confirm-buttons { height: 3; padding: 0 1; align-horizontal: center; }
-    #confirm-buttons Button { margin: 0 1; min-width: 18; }
+    ConfirmScreen { align: center middle; background: rgba(0,0,0,0.9); }
+    #confirm-box {
+        width: 50; height: auto;
+        background: #000000;
+        border: heavy #ffffff; padding: 1 2;
+        align: center middle;
+    }
+    #confirm-text { color: #ffffff; text-style: bold; text-align: center; width: 100%; }
+    #confirm-buttons { height: 3; padding: 0 1; align-horizontal: center; width: 100%; }
+    #confirm-buttons Button {
+        margin: 0 1; min-width: 16;
+        background: #000000; border: heavy #555555; color: #888888;
+    }
+    #confirm-buttons Button:focus {
+        border: heavy #ffffff; color: #ffffff;
+    }
     """
 
     def __init__(self, prompt: str, on_confirm, **kwargs: Any):
@@ -80,6 +95,32 @@ class ConfirmScreen(Screen):
 
     def action_cancel(self) -> None:
         self._finish(False)
+
+    def action_focus_yes(self) -> None:
+        """Focus the Y button"""
+        self.query_one("#confirm-yes", Button).focus()
+
+    def action_focus_no(self) -> None:
+        """Focus the N button"""
+        self.query_one("#confirm-no", Button).focus()
+
+    def _focused_id(self) -> str:
+        focused = self.app.focused
+        return focused.id if focused else ""
+
+    def action_left(self) -> None:
+        """Left key: cycle focus between the buttons"""
+        if self._focused_id() == "confirm-yes":
+            self.action_focus_no()
+        else:
+            self.action_focus_yes()
+
+    def action_right(self) -> None:
+        """Right key: cycle focus between the buttons"""
+        if self._focused_id() == "confirm-no":
+            self.action_focus_yes()
+        else:
+            self.action_focus_no()
 
     def _finish(self, confirmed: bool) -> None:
         self.app.pop_screen()

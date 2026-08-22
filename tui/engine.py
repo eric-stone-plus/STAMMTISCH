@@ -157,18 +157,44 @@ class QuantEngine:
         Direct by default; a rate-limited fetch (provider hourly quotas
         are per exit IP) rotates the affected provider onto the
         configured egress and retries once through it. Anything else
-        propagates untouched.
+        propagates untouched.  A 30s per-call ceiling prevents a hung
+        provider from blocking the entire zone scan.
         """
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
         from quantkit.data import fetch_ohlcv
-        try:
+
+        def _do_fetch():
             return fetch_ohlcv(symbol, market=market, start=start, end=end,
                                data_dir=str(self.data_dir), force_refresh=force)
-        except Exception as exc:
-            if (not self._egress_active and self._is_rate_limit(exc)
-                    and self._egress_rotate()):
-                return fetch_ohlcv(symbol, market=market, start=start, end=end,
-                                   data_dir=str(self.data_dir), force_refresh=force)
-            raise
+
+        # Manual pool lifecycle: `with ...` would block in
+        # shutdown(wait=True) on a hung worker, voiding the 30s ceiling.
+        pool = ThreadPoolExecutor(max_workers=1)
+        timed_out = False
+        try:
+            future = pool.submit(_do_fetch)
+            try:
+                return future.result(timeout=30)
+            except FuturesTimeout:
+                timed_out = True
+                raise TimeoutError(
+                    f"fetch_ohlcv timed out for {symbol} after 30s") from None
+            except Exception as exc:
+                if (not self._egress_active and self._is_rate_limit(exc)
+                        and self._egress_rotate()):
+                    future2 = pool.submit(_do_fetch)
+                    try:
+                        return future2.result(timeout=30)
+                    except FuturesTimeout:
+                        timed_out = True
+                        raise TimeoutError(
+                            f"fetch_ohlcv timed out for {symbol} after 30s"
+                            ) from None
+                raise
+        finally:
+            # On timeout the worker may still be hung in the provider;
+            # abandon it instead of waiting, so the 30s ceiling holds.
+            pool.shutdown(wait=not timed_out, cancel_futures=timed_out)
 
     @property
     def available(self) -> bool:
