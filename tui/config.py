@@ -29,7 +29,7 @@ def default_config_file() -> Path:
 # forth never requires re-entering keys.
 AI_PROFILES = {
     "glm": ("GLM official (bigmodel v4)", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
-    "mimo": ("MiMo (Xiaomi token plan)", "https://token-plan-cn.xiaomimimo.com/v1", "mimo-v2.5-pro"),
+    "mimo": ("MiMo (Xiaomi Anthropic)", "https://token-plan-cn.xiaomimimo.com/anthropic", "mimo-v2.5-pro"),
     "deepseek": ("DeepSeek official", "https://api.deepseek.com/v1", "deepseek-v4-pro"),
 }
 
@@ -46,6 +46,9 @@ def ai_profile_for_base_url(base_url: str) -> str | None:
 DEFAULT_CONFIG = {
     # TUI chrome language: "en" | "zh" (toggled from the dashboard).
     "language": "en",
+    # Display timezone for user-facing timestamps (IANA name such as
+    # "Asia/Shanghai"); empty keeps the stored UTC rendering.
+    "display_timezone": "",
     "ai_api_key": "",
     "ai_base_url": "https://open.bigmodel.cn/api/paas/v4",
     "ai_model": "glm-5.3",
@@ -182,7 +185,9 @@ class Config:
         # Environment variable overrides (never persisted to disk).
         # Current GLM names first; legacy DeepSeek names stay honored.
         env_key = (
-            os.environ.get("GLM_API_KEY")
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("XIAOMI_API_KEY")
+            or os.environ.get("GLM_API_KEY")
             or os.environ.get("ZHIPU_API_KEY")
             or os.environ.get("DEEPSEEK_API_KEY")
             or os.environ.get("DEEPSEEK_KEY")

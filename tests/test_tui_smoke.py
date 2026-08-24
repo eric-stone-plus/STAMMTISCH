@@ -38,7 +38,7 @@ class TuiSmokeTest(unittest.TestCase):
             with open(cfg_path, "w") as f:
                 json.dump({
                     "state_root": os.path.join(tmp, "state"),
-                    "ai_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+                    "ai_base_url": "https://token-plan-cn.xiaomimimo.com/anthropic",
                     "ai_model": "mimo-v2.5-pro",
                     "ai_api_key": "tp-mimo-key",
                 }, f)
@@ -283,6 +283,29 @@ class TuiSmokeTest(unittest.TestCase):
             "stock-quinte-local  2026-08-18 03:25",
         )
         self.assertEqual(run_session_title({"title": " coal screen "}), "coal screen")
+
+    def test_run_session_title_display_timezone(self) -> None:
+        from tui.screens import run_session_title
+
+        run = {
+            "pipeline_id": "stock-quinte-local",
+            "created_at": "2026-08-18T03:25:06.320Z",
+            "run_id": "01a012e6-bb8c-75f3-8597-c55291876dc5",
+        }
+        self.assertEqual(
+            run_session_title(run, "Asia/Shanghai"),
+            "stock-quinte-local  2026-08-18 11:25",
+        )
+        # Empty and unknown zone names keep the stored UTC rendering.
+        self.assertEqual(
+            run_session_title(run), "stock-quinte-local  2026-08-18 03:25"
+        )
+        self.assertEqual(
+            run_session_title(run, "Not/AZone"), "stock-quinte-local  2026-08-18 03:25"
+        )
+        # Naive timestamps are workstation-written UTC.
+        naive = {"title": "t", "created_at": "2026-08-18T23:30:00"}
+        self.assertEqual(run_session_title(naive, "Asia/Shanghai"), "t  2026-08-19 07:30")
 
     def test_dashboard_delete_selected_run(self) -> None:
         asyncio.run(self._dashboard_delete_scenario())

@@ -1,4 +1,4 @@
-"""AI chat driver — OpenAI-compatible chat completions."""
+"""AI chat driver — OpenAI chat completions or Anthropic Messages."""
 
 from __future__ import annotations
 
@@ -7,16 +7,19 @@ import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import urllib.request
 import urllib.error
 
 
 # Default backend: Zhipu GLM's official OpenAI-compatible entry. Any
-# OpenAI-compatible endpoint works through config/env overrides.
+# OpenAI-compatible endpoint works through config/env overrides. URLs
+# whose path ends in ``/anthropic`` speak Anthropic Messages instead.
 AI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 AI_MODEL = "glm-5.3"
 AI_MAX_TOKENS = 16384
+ANTHROPIC_VERSION = "2023-06-01"
 
 SYSTEM_PROMPT = """# Charter
 
@@ -65,7 +68,15 @@ Each discipline carries its own evidence discipline: what it may use and what it
 def _get_api_key() -> str | None:
     """Resolve the AI API key from env vars or the TUI config file."""
     # 1. Environment variables (current names first, legacy names still honored)
-    for var in ["GLM_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY", "DEEPSEEK_KEY", "DEEPSEEK_TOKEN"]:
+    for var in [
+        "ANTHROPIC_API_KEY",
+        "XIAOMI_API_KEY",
+        "GLM_API_KEY",
+        "ZHIPU_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_KEY",
+        "DEEPSEEK_TOKEN",
+    ]:
         key = os.environ.get(var)
         if key:
             return key
@@ -75,6 +86,139 @@ def _get_api_key() -> str | None:
         return Config().ai_api_key
     except Exception:
         return None
+
+
+def is_anthropic_endpoint(base_url: str) -> bool:
+    """True when the URL is an Anthropic Messages gateway (``.../anthropic``)."""
+    path = urlparse((base_url or "").rstrip("/")).path.rstrip("/").lower()
+    return path.endswith("/anthropic") or path.endswith("/anthropic/v1")
+
+
+def _openai_tools_to_anthropic(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for tool in tools or []:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if not isinstance(function, dict):
+            function = tool if isinstance(tool, dict) else {}
+        name = function.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        parameters = function.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {"type": "object", "properties": {}}
+        converted.append({
+            "name": name,
+            "description": function.get("description") or "",
+            "input_schema": parameters,
+        })
+    return converted
+
+
+def _openai_payload_to_anthropic(payload: dict[str, Any]) -> dict[str, Any]:
+    """Translate an OpenAI chat-completions body to Anthropic Messages."""
+    system_parts: list[str] = []
+    messages: list[dict[str, Any]] = []
+    pending_tool_results: list[dict[str, Any]] = []
+
+    def flush_tool_results() -> None:
+        nonlocal pending_tool_results
+        if pending_tool_results:
+            messages.append({"role": "user", "content": pending_tool_results})
+            pending_tool_results = []
+
+    for item in payload.get("messages") or []:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role == "system":
+            if isinstance(content, str) and content:
+                system_parts.append(content)
+            continue
+        if role == "tool":
+            pending_tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": item.get("tool_call_id") or "",
+                "content": content if isinstance(content, str) else json.dumps(content),
+            })
+            continue
+        flush_tool_results()
+        if role == "assistant":
+            blocks: list[dict[str, Any]] = []
+            if isinstance(content, str) and content:
+                blocks.append({"type": "text", "text": content})
+            for call in item.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                raw_args = function.get("arguments") or "{}"
+                try:
+                    parsed = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                except (json.JSONDecodeError, TypeError):
+                    parsed = {"_raw": raw_args}
+                blocks.append({
+                    "type": "tool_use",
+                    "id": call.get("id") or "",
+                    "name": function.get("name") or "",
+                    "input": parsed if isinstance(parsed, dict) else {"value": parsed},
+                })
+            messages.append({"role": "assistant", "content": blocks or ""})
+        else:
+            messages.append({"role": "user", "content": content if isinstance(content, str) else json.dumps(content)})
+    flush_tool_results()
+
+    body: dict[str, Any] = {
+        "model": payload.get("model"),
+        "max_tokens": payload.get("max_tokens") or AI_MAX_TOKENS,
+        "messages": messages,
+    }
+    if system_parts:
+        body["system"] = "\n\n".join(system_parts)
+    temperature = payload.get("temperature")
+    if temperature is not None:
+        body["temperature"] = temperature
+    anthropic_tools = _openai_tools_to_anthropic(payload.get("tools"))
+    if anthropic_tools:
+        body["tools"] = anthropic_tools
+    return body
+
+
+def _anthropic_response_to_openai(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize an Anthropic Messages response to the OpenAI chat shape."""
+    texts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    for block in data.get("content") or []:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "text":
+            texts.append(block.get("text") or "")
+        elif kind == "tool_use":
+            tool_calls.append({
+                "id": block.get("id") or "",
+                "type": "function",
+                "function": {
+                    "name": block.get("name") or "",
+                    "arguments": json.dumps(block.get("input") or {}),
+                },
+            })
+    stop = data.get("stop_reason")
+    finish = "tool_calls" if stop in {"tool_use", "tool_calls"} else "stop"
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(texts),
+    }
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return {
+        "model": data.get("model") or "",
+        "choices": [{"message": message, "finish_reason": finish}],
+        "usage": {
+            "prompt_tokens": usage.get("input_tokens", 0),
+            "completion_tokens": usage.get("output_tokens", 0),
+        },
+    }
 
 
 @dataclass
@@ -141,20 +285,36 @@ class AIDriver:
         return self.api_key is not None
 
     def _post(self, payload: dict, base_url: str, key: str):
-        req = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=json.dumps(payload).encode(),
-            headers={
+        anthropic = is_anthropic_endpoint(base_url)
+        if anthropic:
+            url = f"{base_url.rstrip('/')}/v1/messages"
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": key,
+                "anthropic-version": ANTHROPIC_VERSION,
+            }
+            body = _openai_payload_to_anthropic(payload)
+        else:
+            url = f"{base_url.rstrip('/')}/chat/completions"
+            headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {key}",
-            },
+            }
+            body = payload
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers=headers,
             method="POST",
         )
         try:
             # A tool-verification turn legitimately thinks for minutes on
             # a full table; 60s cut real decision passes mid-generation.
             with urllib.request.urlopen(req, timeout=180) as resp:
-                return json.loads(resp.read()), None
+                data = json.loads(resp.read())
+            if anthropic and isinstance(data, dict):
+                data = _anthropic_response_to_openai(data)
+            return data, None
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")[:500]
             return None, f"HTTP {e.code}: {body}"

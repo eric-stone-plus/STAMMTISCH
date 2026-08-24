@@ -250,7 +250,7 @@ class AiProfileSwitchTest(unittest.TestCase):
         self.assertEqual(code, 0)
         saved = self._saved()
         self.assertEqual(saved["ai_model"], "mimo-v2.5-pro")
-        self.assertEqual(saved["ai_base_url"], "https://token-plan-cn.xiaomimimo.com/v1")
+        self.assertEqual(saved["ai_base_url"], "https://token-plan-cn.xiaomimimo.com/anthropic")
         self.assertEqual(saved["ai_api_key"], "tp-mimo-key")
 
         code, _out, _err = run_cli("use", "glm", "glm-key")

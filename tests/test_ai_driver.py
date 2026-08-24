@@ -139,6 +139,50 @@ class AIDriverTest(unittest.TestCase):
             "content": question,
         })
 
+    def test_anthropic_endpoint_uses_messages_api_and_x_api_key(self):
+        question = "ping"
+        answer = "pong"
+        captured = []
+
+        def fake_urlopen(request, timeout):
+            captured.append((request, timeout))
+            return _Response({
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "model": "mimo-v2.5-pro",
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": answer}],
+                "usage": {"input_tokens": 4, "output_tokens": 1},
+            })
+
+        driver = AIDriver(
+            api_key="tp-test-key",
+            base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
+            model="mimo-v2.5-pro",
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = driver.chat(question)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.content, answer)
+        self.assertEqual(result.model, "mimo-v2.5-pro")
+        request, timeout = captured[0]
+        self.assertEqual(
+            request.full_url,
+            "https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages",
+        )
+        self.assertEqual(request.get_header("X-api-key"), "tp-test-key")
+        self.assertEqual(request.get_header("Anthropic-version"), "2023-06-01")
+        self.assertIsNone(request.get_header("Authorization"))
+        self.assertEqual(timeout, 180)
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["model"], "mimo-v2.5-pro")
+        self.assertEqual(body["max_tokens"], AI_MAX_TOKENS)
+        self.assertEqual(body["system"], SYSTEM_PROMPT)
+        self.assertEqual(body["messages"], [{"role": "user", "content": question}])
+        self.assertNotIn("stream", body)
+
     def test_second_turn_round_trips_assistant_reasoning_content(self):
         first_reasoning = "推理草稿 α→β; keep <source> exactly."
         first_answer = "第一轮答案 🧠"
