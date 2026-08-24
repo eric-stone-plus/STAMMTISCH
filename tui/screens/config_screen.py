@@ -9,6 +9,7 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -199,6 +200,11 @@ class ConfigScreen(Screen):
                     yield Input(value=str(self.config.get("chart_port", 0)),
                                 placeholder="0 = auto",
                                 id="cfg-chart-port", classes="cfg-input")
+                with Horizontal(classes="cfg-row"):
+                    yield Static("  Timezone", classes="cfg-label")
+                    yield Input(value=self.config.get("display_timezone", ""),
+                                placeholder="e.g. Asia/Shanghai (empty = UTC)",
+                                id="cfg-timezone", classes="cfg-input")
             with Vertical(classes="panel"):
                 yield Static(self._chrome("config.network", "Egress Proxies"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
@@ -394,6 +400,14 @@ class ConfigScreen(Screen):
                 self.notify(f"Data dir is not usable: {exc}", severity="error")
                 return
 
+        timezone_name = self.query_one("#cfg-timezone", Input).value.strip()
+        if timezone_name:
+            try:
+                ZoneInfo(timezone_name)
+            except (ZoneInfoNotFoundError, ValueError):
+                self.notify(f"Unknown timezone: {timezone_name}", severity="error")
+                return
+
         # Remember the final API key under the profile the Base URL points
         # at, so the provider dropdown restores it on the next switch.
         self._stash_current_key()
@@ -407,6 +421,7 @@ class ConfigScreen(Screen):
                 "state_root": self.query_one("#cfg-state-root", Input).value.strip(),
                 "data_dir": data_dir,
                 "chart_port": chart_port,
+                "display_timezone": timezone_name,
                 "polymarket_proxy_url": self.query_one("#cfg-polymarket-proxy", Input).value.strip(),
                 "eia_api_key": self.query_one("#cfg-eia-key", Input).value.strip(),
                 "energy_proxy_url": self.query_one("#cfg-energy-proxy", Input).value.strip(),

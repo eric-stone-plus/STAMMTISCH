@@ -469,9 +469,16 @@ class AskSessionScreen(Screen):
         if not rows:
             options.add_option(Option(Text("  No matching sessions."), id="empty", disabled=True))
             return
+        app_config = getattr(self.app, "config", None)
+        tz_name = ""
+        if app_config is not None:
+            try:
+                tz_name = str(app_config.get("display_timezone") or "")
+            except Exception:
+                tz_name = ""
         for row in rows:
             mark = "*" if row["id"] == self.current_id else " "
-            stamp = _created_stamp(row["updated_at"]) or row["updated_at"]
+            stamp = _created_stamp(row["updated_at"], tz_name) or row["updated_at"]
             title = row["title"].replace("\n", " ")[:60]
             options.add_option(
                 Option(Text(f" {mark} {stamp}  {title}  ({row['turns']})"), id=row["id"])

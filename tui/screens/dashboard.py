@@ -214,9 +214,16 @@ class DashboardScreen(Screen):
 
         self.app.push_screen(CrawlerPanelScreen(self.config))
 
+    def _display_tz(self) -> str:
+        try:
+            return str(self.config.get("display_timezone") or "")
+        except Exception:
+            return ""
+
     def _intake_session_rows(self) -> list[dict[str, str]]:
         from ..intake_job import list_sessions, supervisor_for
 
+        tz = self._display_tz()
         root = ""
         if self.config:
             root = str(self.config.workspace_root or "")
@@ -229,7 +236,7 @@ class DashboardScreen(Screen):
                 seen.add(sid)
                 stamp = str(live.get("updated_at") or live.get("started_at") or "")
                 created = stamp[:10]
-                name, when = _intake_session_parts(live)
+                name, when = _intake_session_parts(live, tz)
                 rows.append({
                     "title": name,
                     "when": when,
@@ -245,7 +252,7 @@ class DashboardScreen(Screen):
                     continue
                 stamp = str(session.get("updated_at") or session.get("started_at") or "")
                 created = stamp[:10]
-                name, when = _intake_session_parts(session)
+                name, when = _intake_session_parts(session, tz)
                 state = str(session.get("state") or "unknown")
                 if state == "capturing":
                     # Only the live supervisor session can still be
@@ -264,12 +271,13 @@ class DashboardScreen(Screen):
         return rows
 
     def _registry_rows(self, runs: list[dict[str, Any]]) -> list[dict[str, str]]:
+        tz = self._display_tz()
         rows = list(self._intake_session_rows())
         for run in runs:
             created_raw = str(run.get("created_at") or "")
             created = created_raw.split("T")[0] if "T" in created_raw else created_raw
             run_id = str(run.get("_full_id") or run.get("run_id") or "")
-            name, when = run_session_parts(run)
+            name, when = run_session_parts(run, tz)
             rows.append({
                 "title": name,
                 "when": when,

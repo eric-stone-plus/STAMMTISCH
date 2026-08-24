@@ -6,9 +6,10 @@ import json
 import os
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -35,7 +36,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def format_run_session_summary(run_id: str, snapshot: dict[str, Any]) -> str:
+def format_run_session_summary(run_id: str, snapshot: dict[str, Any], tz_name: str = "") -> str:
     """Plain-text session summary from a verified inspect snapshot."""
     manifest = snapshot.get("manifest") if isinstance(snapshot.get("manifest"), dict) else {}
     events = snapshot.get("events") if isinstance(snapshot.get("events"), list) else []
@@ -47,7 +48,7 @@ def format_run_session_summary(run_id: str, snapshot: dict[str, Any]) -> str:
         "pipeline_id": pipeline.get("id"),
         "created_at": manifest.get("created_at"),
         "run_id": run_id,
-    })
+    }, tz_name)
     lines = [
         f"  {name}  {when}",
         f"  Run     {run_id}",
@@ -98,46 +99,68 @@ def format_run_session_summary(run_id: str, snapshot: dict[str, Any]) -> str:
             lines.append(f"    {gate_id}  {decision}")
     lines.append(f"  Evidence  events={len(events)}  gates={len(gates)}  receipts={len(receipts)}")
     if last_type:
-        lines.append(f"  Last     {last_type}  {_created_stamp(last_at) or last_at}")
+        lines.append(f"  Last     {last_type}  {_created_stamp(last_at, tz_name) or last_at}")
     return "\n".join(lines) + "\n"
 _ASK_INTRO = (
     "  Ready. Ask about pipelines, gates, backtests, strategy analysis.\n\n"
 )
 _INPUT_HISTORY_CAP = 200
 _SESSION_KEEP = 80
-def run_session_parts(run: dict[str, Any]) -> tuple[str, str]:
+def run_session_parts(run: dict[str, Any], tz_name: str = "") -> tuple[str, str]:
     """Name and aligned timestamp for a registry row."""
     explicit = run.get("title")
     if isinstance(explicit, str) and explicit.strip():
         name = " ".join(explicit.split())
     else:
         name = str(run.get("pipeline_id") or "").strip() or "run"
-    stamp = _created_stamp(run.get("created_at"))
+    stamp = _created_stamp(run.get("created_at"), tz_name)
     if not stamp:
         rid = str(run.get("run_id") or "")
         stamp = rid[:8]
     return name, stamp
-def run_session_title(run: dict[str, Any]) -> str:
+def run_session_title(run: dict[str, Any], tz_name: str = "") -> str:
     """Single-line title kept for tests and inspector headers."""
-    name, stamp = run_session_parts(run)
+    name, stamp = run_session_parts(run, tz_name)
     return f"{name}  {stamp}".rstrip() if stamp else name
-def _intake_session_parts(session: dict[str, Any]) -> tuple[str, str]:
+def _intake_session_parts(session: dict[str, Any], tz_name: str = "") -> tuple[str, str]:
     title = str(session.get("title") or "daily-intake")
     name = title.split(" · ", 1)[0].strip() or "daily-intake"
-    when = _created_stamp(session.get("started_at") or session.get("updated_at"))
+    when = _created_stamp(session.get("started_at") or session.get("updated_at"), tz_name)
     day = str(session.get("date") or "")
     if not when and len(day) == 8:
         when = f"{day[:4]}-{day[4:6]}-{day[6:]}"
     return name, when
-def _created_stamp(created: Any) -> str:
+def _created_stamp(created: Any, tz_name: str = "") -> str:
     text = str(created or "").strip()
     if not text:
         return ""
     if "T" in text:
         day, rest = text.split("T", 1)
+        if tz_name:
+            shifted = _shift_stamp(day, rest, tz_name)
+            if shifted is not None:
+                return shifted
         hhmm = rest[:5]
         return f"{day} {hhmm}" if len(hhmm) == 5 else day
     return text[:16]
+def _shift_stamp(day: str, rest: str, tz_name: str) -> str | None:
+    """Re-render an ISO day+time pair in a display timezone.
+
+    Returns None when the timestamp does not parse or the zone name is
+    unknown — callers then keep the stored (UTC) rendering. Timestamps
+    written by this workstation are UTC, so naive input is assumed UTC.
+    """
+    try:
+        moment = datetime.fromisoformat(f"{day}T{rest}")
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    try:
+        zone = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    return moment.astimezone(zone).strftime("%Y-%m-%d %H:%M")
 def _thought_line(elapsed: int) -> str:
     return f"  ·  {elapsed}s\n"
 def _ask_dir(app: Any | None = None) -> Path:

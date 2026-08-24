@@ -515,11 +515,18 @@ class RunInspectorScreen(Screen):
             )
         mv.update("\n".join(lines))
         md.digest = p.get("canonical_sha256", "")
+        app_config = getattr(self.app, "config", None)
+        tz_name = ""
+        if app_config is not None:
+            try:
+                tz_name = str(app_config.get("display_timezone") or "")
+            except Exception:
+                tz_name = ""
         title = run_session_title({
             "pipeline_id": p.get("id"),
             "created_at": manifest.get("created_at"),
             "run_id": self.run_id,
-        })
+        }, tz_name)
         short_id = self.run_id[:20] + "..." if len(self.run_id) > 20 else self.run_id
         self.query_one("#ri-header", Static).update(
             f"  {title}  ·  {short_id}  |  [E]xport [V]erify [A]sk [X] Delete [Esc] back"
@@ -529,7 +536,7 @@ class RunInspectorScreen(Screen):
             f"{len(gates)} gates, {len(receipts)} receipts"
         )
         self.query_one("#ri-summary", Static).update(
-            format_run_session_summary(self.run_id, snapshot)
+            format_run_session_summary(self.run_id, snapshot, tz_name)
         )
 
     def _show_inspect_error(self, error: str) -> None:
