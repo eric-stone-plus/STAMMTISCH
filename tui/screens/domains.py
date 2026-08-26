@@ -214,6 +214,7 @@ class FuturesScreen(Screen):
     def on_mount(self) -> None:
         board = self.query_one("#fut-board", DataTable)
         board.add_columns("CODE", "NAME", "RECO", "LAST", "CHG%", "5D%", "20D%", "VOL", "UNIT")
+        self.set_interval(5.0, self._cci_tick)
         self.query_one("#fut-curve", DataTable).add_columns("MONTH", "SETTLE")
         self._render_strip()
         self.action_refresh()
@@ -288,6 +289,24 @@ class FuturesScreen(Screen):
                         "volume": float(df["volume"].iloc[-1] or 0),
                         "recent": recent,
                     }
+        # SGX shipping settlements (FFA) moved onto the futures board.
+        shipping_board = None
+        shipping_argv = tuple(self.config.shipping_argv) if self.config else ()
+        if shipping_argv:
+            from ..domaindata import DomainDriver
+
+            shipped = DomainDriver(shipping_argv).board()
+            if shipped.get("ok"):
+                shipping_board = shipped
+        # CCI indices (all categories) from the cached daily parquets.
+        cci_rows = []
+        try:
+            from .. import signals as _sig
+
+            cci_rows = _sig.cci_daily_board(
+                Path(getattr(self.config, "data_dir", "") or ""))
+        except Exception:
+            cci_rows = []
         adapter_board = None
         adapter_error = None
         argv = tuple(self.config.futures_argv) if self.config else ()
@@ -304,6 +323,8 @@ class FuturesScreen(Screen):
             "quotes": quotes,
             "adapter": adapter_board,
             "adapter_error": adapter_error,
+            "shipping": shipping_board,
+            "cci": cci_rows,
         }
 
     # ── row model ──────────────────────────────────────────────────
@@ -358,6 +379,23 @@ class FuturesScreen(Screen):
                 "recent": recent,
                 "curve": inst.get("curve") or [],
             })
+        shipping = result.get("shipping") or {}
+        for inst in shipping.get("instruments") or []:
+            recent = inst.get("recent") or []
+            group = str(inst.get("group") or "").upper()
+            if not group.startswith("FFA"):
+                continue
+            items.append({
+                "key": f"sgx:{inst['code']}", "source": "sgx",
+                "code": inst["code"], "category": "FFA",
+                "name": inst.get("name", ""), "unit": inst.get("unit", ""),
+                "last": inst.get("settle"), "chg_pct": inst.get("change_pct"),
+                "pct5": self._pct_from_recent(recent, 5),
+                "pct20": self._pct_from_recent(recent, 20),
+                "volume": inst.get("volume") or 0,
+                "recent": recent, "curve": inst.get("curve") or [],
+            })
+        items.extend(result.get("cci") or [])
         cats: list[str] = []
         by_cat: dict[str, list[dict[str, Any]]] = {}
         for item in items:
@@ -379,7 +417,7 @@ class FuturesScreen(Screen):
             return "—"
         return f"{value:+.2f}%"
 
-    def _render_strip(self) -> None:
+    def _strip_text(self) -> Text:
         strip = Text()
         for index, category in enumerate(self._cats):
             if index:
@@ -387,16 +425,22 @@ class FuturesScreen(Screen):
             label = f"  {category}  "
             strip.append(label, style="bold reverse" if index == self._cat_idx
                          else "color(160)")
-        self.query_one("#fut-cats", Static).update(strip)
+        return strip
+
+    def _render_strip(self) -> None:
+        self.query_one("#fut-cats", Static).update(self._strip_text())
 
     def _render_board(self) -> None:
-        from .. import intel as intel_mod
+        from .. import signals as signals_mod
 
         board = self.query_one("#fut-board", DataTable)
         board.clear()
         items = self._by_cat.get(self._cats[self._cat_idx], []) if self._cats else []
         for item in items:
-            reco, why = intel_mod.futures_reco(item)
+            if item.get("source") == "cci":
+                reco, why = signals_mod.cci_reco(item)
+            else:
+                reco, why = signals_mod.futures_reco(item)
             if "error" in item:
                 board.add_row(item["code"], item["name"], "—", item["error"],
                               "", "", "", "", "", key=item["key"])
@@ -459,6 +503,38 @@ class FuturesScreen(Screen):
         if adapter_error:
             self.notify(f"futures_cmd adapter failed: {adapter_error}",
                         severity="warning")
+
+    def _cci_tick(self) -> None:
+        """Overlay realtime ccidx quotes onto CCI rows while mounted."""
+        from .. import ccifeed
+
+        category = self._cats[self._cat_idx] if self._cats else ""
+        cci_items = [i for i in self._by_cat.get(category, [])
+                     if i.get("source") == "cci"]
+        if not cci_items:
+            return
+        feed = ccifeed.feed()
+        snap = feed.snapshot
+        if not snap or not feed.updated_at:
+            return
+        board = self.query_one("#fut-board", DataTable)
+        for item in cci_items:
+            live = snap.get(item["code"])
+            if not live or live.get("last") is None:
+                continue
+            try:
+                board.update_cell(item["key"], "LAST", f"{live['last']:,.2f}")
+                if live.get("chg_pct") is not None:
+                    board.update_cell(item["key"], "CHG%", f"{float(live['chg_pct']):+.2f}%")
+            except Exception:
+                continue
+        try:
+            self.query_one("#fut-cats", Static).update(
+                self._strip_text()
+                + Text(f"   CCI realtime {feed.updated_at} · {ccifeed.FEED_SOURCE}",
+                       style="color(70)"))
+        except Exception:
+            pass
 
     # ── interaction ────────────────────────────────────────────────
 
@@ -850,9 +926,13 @@ class ShippingScreen(Screen):
         if not result.get("ok"):
             self.notify(f"Shipping board failed: {result.get('error')}", severity="error")
             return
-        instruments = result.get("instruments", [])
+        # FFA settlements moved to the futures board (same SGX source);
+        # shipping keeps only the non-FFA groups.
+        instruments = [inst for inst in result.get("instruments", [])
+                       if isinstance(inst, dict)
+                       and not str(inst.get("group") or "").upper().startswith("FFA")]
         self._instruments = {
-            inst["code"]: inst for inst in instruments if isinstance(inst, dict)
+            inst["code"]: inst for inst in instruments
         }
         board = self.query_one("#ship-board", DataTable)
         board.clear()
@@ -1062,7 +1142,7 @@ class SecurityScreen(Screen):
             yield _RowTable(id="sec-board", cursor_type="row")
         with Horizontal(id="sec-bottom"):
             with Vertical(id="sec-intel-wrap"):
-                yield Static("  Intel · sources annotated", classes="sec-label")
+                yield Static("  Signals · sources annotated", classes="sec-label")
                 yield Static("  …", id="sec-intel")
             with Vertical(id="sec-recent-wrap"):
                 yield Static("  Recent", classes="sec-label")
@@ -1070,9 +1150,9 @@ class SecurityScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        from .. import intel as intel_mod
+        from .. import signals as signals_mod
 
-        self._intel_mod = intel_mod
+        self._signals_mod = signals_mod
         self._decision: dict[str, dict[str, Any]] = {}
         self._live: dict[str, dict[str, Any]] = {}
         board = self.query_one("#sec-board", DataTable)
@@ -1292,20 +1372,20 @@ class SecurityScreen(Screen):
 
     def _render_intel(self, zone: str, sig: dict[str, list[dict]]) -> None:
         """Fill the intel panel: zone stance + announcement signals."""
-        intel_mod = getattr(self, "_intel_mod", None)
+        signals_mod = getattr(self, "_signals_mod", None)
         lines: list[str] = []
-        if intel_mod is not None:
+        if signals_mod is not None:
             market = {"A-SHARE": "ashare", "HK": "hk", "US": "us"}.get(zone, "")
             stance = None
             try:
                 reports_root = Path(getattr(self.config, "reports_root", "") or "")
-                stance = intel_mod.sentiment_stance(
+                stance = signals_mod.sentiment_stance(
                     market, reports_root if str(reports_root) else None)
             except Exception:
                 stance = None
             if stance:
                 lines.append(
-                    f"情绪[{zone}] {stance.get('stance')} {stance.get('score'):+} "
+                    f"sent[{zone}] {stance.get('stance')} {stance.get('score'):+} "
                     f"({stance.get('items')}条) · 来源 {stance.get('source')} @{stance.get('date')}")
         for symbol, rows in list(sig.items())[:6]:
             latest = rows[0]
@@ -1313,7 +1393,7 @@ class SecurityScreen(Screen):
                 f"{symbol} {latest['date']} {latest['title'][:34]} "
                 f"[{'/'.join(latest['signals'])}] · {latest['source']}")
         if not lines:
-            lines.append("（该 zone 暂无稳定情报源——按稳定源原则不强行填充）")
+            lines.append("(no stable source wired for this zone — nothing fabricated)")
         try:
             self.query_one("#sec-intel", Static).update(
                 Text("\n".join("  " + l for l in lines)))
@@ -1354,11 +1434,11 @@ class SecurityScreen(Screen):
         board.clear()
         zone = self._zones[self._zone_idx] if self._zones else ""
         items = self._by_zone.get(zone, []) if zone else []
-        intel_mod = getattr(self, "_intel_mod", None)
+        signals_mod = getattr(self, "_signals_mod", None)
         sig: dict[str, list[dict]] = {}
-        if intel_mod is not None and zone == "A-SHARE" and items:
+        if signals_mod is not None and zone == "A-SHARE" and items:
             try:
-                sig = intel_mod.signals_for(
+                sig = signals_mod.signals_for(
                     [i["key"] for i in items],
                     getattr(self.driver, "state_root", None))
             except Exception:
@@ -1370,11 +1450,11 @@ class SecurityScreen(Screen):
             if sig.get(item["key"]):
                 tags = "/".join(sorted({s for row in sig[item["key"]]
                                         for s in row.get("signals", [])}))
-                why = (why + " " if why else "") + f"公告[{tags}]"
+                why = (why + " " if why else "") + f"ann[{tags}]"
                 if "risk" in tags and reco in ("keep", "add"):
                     reco = "trim"
             if why:
-                why += " · SZSE公告API" if sig.get(item["key"]) else ""
+                why += " · SZSE ann API" if sig.get(item["key"]) else ""
             if "error" in item:
                 board.add_row(item["code"], reco, item["error"], "", "", "", "", "",
                               key=item["key"])

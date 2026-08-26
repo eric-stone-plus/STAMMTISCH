@@ -1,4 +1,4 @@
-"""First-hand intelligence for the SECURITY/FUTURES boards.
+"""First-hand market signals for the SECURITY/FUTURES boards.
 
 Every value carries its source; degraded pieces are omitted, never
 faked.  Cheap and cache-friendly: announcements are fetched once per
@@ -17,7 +17,7 @@ from typing import Any
 import requests
 
 SZSE_ENDPOINT = "http://www.szse.cn/api/report/ShowReport/data"
-SZSE_SOURCE = "SZSE 公告 API"
+SZSE_SOURCE = "SZSE announcements API"
 _ST_TOKEN_RE = re.compile(r"(?:^|[^A-Za-z])\*?ST(?:[^A-Za-z]|$)")
 _SIGNALS = {
     "dividend": ["分红", "派息", "利润分配", "DIVIDEND"],
@@ -141,26 +141,119 @@ def futures_reco(item: dict[str, Any]) -> tuple[str, str]:
             # steep backwardation (front >> back) = tight prompt market
             if slope < -3:
                 score += 1
-                why.append(f"陡back({slope:+.1f}%)")
+                why.append(f"steep backw {slope:+.1f}%")
             elif slope > 3:
                 score -= 1
-                why.append(f"contango({slope:+.1f}%)")
+                why.append(f"contango {slope:+.1f}%")
             else:
-                why.append(f"曲线平({slope:+.1f}%)")
+                why.append(f"flat curve {slope:+.1f}%")
     if len(recent) >= 21 and recent[-1].get("close") and recent[-21].get("close"):
         momentum = (recent[-1]["close"] / recent[-21]["close"] - 1) * 100
         if momentum > 3:
             score += 0.5
-            why.append(f"20D动量{momentum:+.1f}%")
+            why.append(f"20D mom {momentum:+.1f}%")
         elif momentum < -3:
             score -= 0.5
-            why.append(f"20D弱{momentum:+.1f}%")
+            why.append(f"20D weak {momentum:+.1f}%")
     if score >= 1:
-        reco = "多配"
+        reco = "LONG"
     elif score <= -1:
-        reco = "回避"
+        reco = "AVOID"
     elif score > 0:
-        reco = "关注"
+        reco = "WATCH"
     else:
-        reco = "中性"
-    return reco, " ".join(why) + " · 来源: SGX结算/导出日线"
+        reco = "NEUTRAL"
+    return reco, " ".join(why) + " · src: SGX settle / export bars"
+
+
+# ── CCI (China Securities commodity futures indices) daily board ────────
+
+CCI_DAILY_SOURCE = "CCI daily parquet (ccidx daily fetch)"
+_CCI_CATEGORY = {
+    "000001": "COMPOSITE", "000002": "COMPOSITE",
+    "100001": "COMPOSITE",
+    "000101": "INDUSTRIALS", "100101": "INDUSTRIALS",
+    "000102": "AGRI-LIVESTOCK", "100102": "AGRI-LIVESTOCK",
+    "000103": "PRECIOUS", "100103": "PRECIOUS",
+    "000104": "ENERGY-CHEM", "100104": "ENERGY-CHEM",
+    "000105": "NONFERROUS", "100105": "NONFERROUS",
+    "000106": "FERROUS", "100106": "FERROUS",
+    "000107": "AGRI-PRODUCTS", "100107": "AGRI-PRODUCTS",
+    "000108": "INDUSTRIALS", "100108": "INDUSTRIALS",
+    "630101": "BONDS", "630102": "BONDS", "630103": "BONDS",
+    "900001": "COMPOSITE",
+}
+
+
+def cci_category(index_id: str) -> str:
+    code = index_id.split(".")[0]
+    return _CCI_CATEGORY.get(code, "COMPOSITE")
+
+
+def cci_daily_board(data_dir: Path | None) -> list[dict[str, Any]]:
+    """One row per CCI index from the cached daily parquets."""
+    if data_dir is None:
+        return []
+    try:
+        import pandas as pd
+    except ImportError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(Path(data_dir).glob("cci_auto_*.parquet")):
+        stem = path.name.split("_")
+        if len(stem) < 3:
+            continue
+        index_id = stem[2] + ".CCI" if not stem[2].endswith(".CCI") else stem[2]
+        try:
+            df = pd.read_parquet(path)
+        except Exception:
+            continue
+        if "close" not in df.columns or len(df) < 25:
+            continue
+        closes = [float(v) for v in df["close"].dropna()]
+        if not closes:
+            continue
+        last, prev = closes[-1], closes[-2] if len(closes) > 1 else None
+
+        def _pct(days: int) -> float | None:
+            if len(closes) > days and closes[-1 - days] > 0:
+                return round((last / closes[-1 - days] - 1) * 100, 2)
+            return None
+
+        recent = [
+            {"date": str(ts)[:10], "close": round(float(row["close"]), 4)}
+            for ts, row in df.tail(12).iterrows()
+        ]
+        rows.append({
+            "key": f"cci:{index_id}", "source": "cci",
+            "code": index_id,
+            "category": cci_category(index_id),
+            "name": index_id,
+            "unit": "pt",
+            "last": last,
+            "chg_pct": round((last / prev - 1) * 100, 2) if prev else None,
+            "pct5": _pct(5), "pct20": _pct(20),
+            "volume": float(df.get("volume", pd.Series([0] * len(df))).iloc[-1] or 0),
+            "recent": recent,
+            "curve": [],
+            "intel_source": CCI_DAILY_SOURCE,
+        })
+    return rows
+
+
+def cci_reco(row: dict[str, Any]) -> tuple[str, str]:
+    """Deterministic momentum read for one CCI index row."""
+    why: list[str] = []
+    score = 0.0
+    for label, value in (("5D", row.get("pct5")), ("20D", row.get("pct20"))):
+        if value is None:
+            continue
+        if value > 2:
+            score += 1 if label == "20D" else 0.5
+            why.append(f"{label} {value:+.1f}%")
+        elif value < -2:
+            score -= 1 if label == "20D" else 0.5
+            why.append(f"{label} {value:+.1f}%")
+    reco = ("LONG" if score >= 1 else "AVOID" if score <= -1
+            else "WATCH" if score > 0 else "NEUTRAL")
+    return reco, (" ".join(why) + f" · {CCI_DAILY_SOURCE}").strip()
