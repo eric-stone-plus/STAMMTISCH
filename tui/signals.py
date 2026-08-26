@@ -54,7 +54,10 @@ def load_announcements(state_root: str | None, days: int = 30,
     cache = _intel_root(state_root) / f"szse-announcements-{date.today().isoformat()}.json"
     if cache.is_file():
         try:
-            return json.loads(cache.read_text(encoding="utf-8"))
+            rows = json.loads(cache.read_text(encoding="utf-8"))
+            for row in rows:
+                row["source"] = SZSE_SOURCE  # normalize cached labels
+            return rows
         except (ValueError, OSError):
             pass
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -199,7 +202,10 @@ def cci_daily_board(data_dir: Path | None) -> list[dict[str, Any]]:
     except ImportError:
         return []
     rows: list[dict[str, Any]] = []
-    for path in sorted(Path(data_dir).glob("cci_auto_*.parquet")):
+    base = Path(data_dir)
+    paths = sorted(base.glob("cci_auto_*.parquet"))
+    paths += sorted((base / "cache").glob("cci_auto_*.parquet"))
+    for path in paths:
         stem = path.name.split("_")
         if len(stem) < 3:
             continue
@@ -257,3 +263,47 @@ def cci_reco(row: dict[str, Any]) -> tuple[str, str]:
     reco = ("LONG" if score >= 1 else "AVOID" if score <= -1
             else "WATCH" if score > 0 else "NEUTRAL")
     return reco, (" ".join(why) + f" · {CCI_DAILY_SOURCE}").strip()
+
+
+def szse_search_link(code: str) -> str:
+    """Stable per-stock disclosure search link on szse.cn."""
+    return f"https://www.szse.cn/application/search/index.html?keyword={code.split('.')[0]}"
+
+
+_MD_LINK = re.compile(r"\[([^\]]{20,140})\]\((https://www\.fool\.com/[^)\s]{10,140})\)")
+
+
+def us_headlines(reports_root: Path | None, limit: int = 4) -> list[dict[str, str]]:
+    """Headline + link pairs from the latest fin-daily US (fool) dump."""
+    if reports_root is None:
+        return []
+    try:
+        days = sorted(p for p in reports_root.iterdir() if p.is_dir())[-2:]
+    except OSError:
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for day in reversed(days):
+        md = day / f"fin-us-{day.name}" / "fool.md"
+        if not md.is_file():
+            continue
+        try:
+            text = md.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for match in _MD_LINK.finditer(text):
+            title = " ".join(match.group(1).replace("\n", " ").split())
+            url = match.group(2)
+            if url.rstrip("/") in seen or "mms/mark" in url:
+                continue
+            if title.startswith(("Arrow", "Accessibility", "Log In")):
+                continue
+            if not any(seg in url for seg in
+                       ("/investing/", "/market-activity", "/quote/", "/news/", "/articles/")):
+                continue
+            seen.add(url.rstrip("/"))
+            out.append({"title": title[:90], "url": url,
+                        "source": "Motley Fool daily dump"})
+            if len(out) >= limit:
+                return out
+    return out

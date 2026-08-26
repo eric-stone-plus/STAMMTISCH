@@ -214,7 +214,7 @@ class FuturesScreen(Screen):
     def on_mount(self) -> None:
         board = self.query_one("#fut-board", DataTable)
         board.add_columns("CODE", "NAME", "RECO", "LAST", "CHG%", "5D%", "20D%", "VOL", "UNIT")
-        self.set_interval(5.0, self._cci_tick)
+        self._cci_timer = self.set_interval(5.0, self._cci_tick)
         self.query_one("#fut-curve", DataTable).add_columns("MONTH", "SETTLE")
         self._render_strip()
         self.action_refresh()
@@ -504,8 +504,15 @@ class FuturesScreen(Screen):
             self.notify(f"futures_cmd adapter failed: {adapter_error}",
                         severity="warning")
 
+    def on_unmount(self) -> None:
+        timer = getattr(self, "_cci_timer", None)
+        if timer is not None:
+            timer.stop()
+
     def _cci_tick(self) -> None:
         """Overlay realtime ccidx quotes onto CCI rows while mounted."""
+        if not self.is_mounted:
+            return
         from .. import ccifeed
 
         category = self._cats[self._cat_idx] if self._cats else ""
@@ -1040,6 +1047,14 @@ def _decision_symbols(config: Any, state_root: str | None = None) -> list[str]:
     return out
 
 
+def _reports_root(config: Any) -> Path | None:
+    try:
+        raw = str(getattr(config, "reports_root", "") or "").strip()
+        return Path(raw).expanduser() if raw else None
+    except Exception:
+        return None
+
+
 def security_watchlist(config: Any, state_root: str | None = None) -> list[str]:
     """Board names: manual watchlist, else today's decision, else recents.
 
@@ -1156,11 +1171,11 @@ class SecurityScreen(Screen):
         self._decision: dict[str, dict[str, Any]] = {}
         self._live: dict[str, dict[str, Any]] = {}
         board = self.query_one("#sec-board", DataTable)
-        board.add_columns("CODE", "RECO", "WHY", "LAST", "CHG%", "5D%", "20D%", "VOL")
+        board.add_columns("CODE", "RECO", "LAST", "CHG%", "5D%", "20D%", "VOL")
         self.query_one("#sec-recent", DataTable).add_columns(
             "DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"
         )
-        self.set_interval(5.0, self._live_tick)
+        self._live_timer = self.set_interval(5.0, self._live_tick)
         cached = self._cached_board()
         if cached is not None:
             self._zone_idx = int(cached.get("zone_idx") or 0)
@@ -1172,8 +1187,15 @@ class SecurityScreen(Screen):
 
     # ── live quote layer (batch, one request per tick) ─────────────
 
+    def on_unmount(self) -> None:
+        timer = getattr(self, "_live_timer", None)
+        if timer is not None:
+            timer.stop()
+
     def _live_tick(self) -> None:
         """Poll live quotes for the visible zone; refreshes in-place."""
+        if not self.is_mounted:
+            return
         from .. import livefeed
 
         zone = self._zones[self._zone_idx] if self._zones else ""
@@ -1387,11 +1409,18 @@ class SecurityScreen(Screen):
                 lines.append(
                     f"sent[{zone}] {stance.get('stance')} {stance.get('score'):+} "
                     f"({stance.get('items')}条) · 来源 {stance.get('source')} @{stance.get('date')}")
-        for symbol, rows in list(sig.items())[:6]:
+        for symbol, rows in list(sig.items())[:4]:
             latest = rows[0]
             lines.append(
-                f"{symbol} {latest['date']} {latest['title'][:34]} "
-                f"[{'/'.join(latest['signals'])}] · {latest['source']}")
+                f"{latest['date']} {symbol} — {latest['title'][:46]} "
+                f"[{'/'.join(latest['signals'])}]")
+            lines.append(
+                f"    {signals_mod.szse_search_link(symbol)} · {latest['source']}")
+        if zone == "US":
+            for item in (signals_mod.us_headlines(
+                    _reports_root(self.config), limit=4) if signals_mod else []):
+                lines.append(f"US — {item['title']}")
+                lines.append(f"    {item['url']} · {item['source']}")
         if not lines:
             lines.append("(no stable source wired for this zone — nothing fabricated)")
         try:
@@ -1446,23 +1475,18 @@ class SecurityScreen(Screen):
         for item in items:
             decision = self._decision.get(item["key"]) or {}
             reco = decision.get("action") or "—"
-            why = decision.get("thesis") or ""
             if sig.get(item["key"]):
-                tags = "/".join(sorted({s for row in sig[item["key"]]
-                                        for s in row.get("signals", [])}))
-                why = (why + " " if why else "") + f"ann[{tags}]"
+                tags = {s for row in sig[item["key"]]
+                        for s in row.get("signals", [])}
                 if "risk" in tags and reco in ("keep", "add"):
                     reco = "trim"
-            if why:
-                why += " · SZSE ann API" if sig.get(item["key"]) else ""
             if "error" in item:
-                board.add_row(item["code"], reco, item["error"], "", "", "", "", "",
+                board.add_row(item["code"], reco, item["error"], "", "", "", "",
                               key=item["key"])
                 continue
             board.add_row(
                 item["code"],
                 reco,
-                why[:38],
                 "—" if item["last"] is None else f"{item['last']:,.2f}",
                 self._fmt_pct(item["chg_pct"]),
                 self._fmt_pct(item["pct5"]),

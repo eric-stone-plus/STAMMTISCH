@@ -70,7 +70,9 @@ def _run_async(screen: Any, target: Callable, callback: Callable,
         try:
             screen.app.call_from_thread(_deliver)
         except Exception:
-            logger.exception("call_from_thread failed (app torn down?)")
+            # Periodic refresh workers routinely race app teardown on
+            # exit; that is the normal shutdown path, not an error.
+            logger.debug("call_from_thread skipped (app torn down)")
 
     threading.Thread(target=_worker, daemon=True).start()
 
