@@ -55,6 +55,42 @@ def _scan_zone(engine: QuantEngine, symbols: list[str]) -> list[dict[str, Any]]:
 
     start = (date.today() - timedelta(days=730)).isoformat()
 
+    def _cached_backtest(symbol: str) -> dict[str, Any] | None:
+        """Local-parquet fallback: a live-fetch outage must not void the
+        zone when fresh-enough bars sit in the provider cache."""
+        try:
+            import glob as _glob
+
+            from quantkit.backtest import dual_ma_signal, run_long_only
+            from quantkit.data import load_cache
+
+            data_dir = str(engine.data_dir)
+            hits = (_glob.glob(f"{data_dir}/*auto_{symbol}_1d*.parquet")
+                    or _glob.glob(f"{data_dir}/cache/*auto_{symbol}_1d*.parquet"))
+            if not hits:
+                return None
+            df = load_cache(sorted(hits)[-1])
+            if df is None or "close" not in df.columns or len(df) < 60:
+                return None
+            df = df[df.index >= start]
+            close = df["close"].dropna()
+            if len(close) < 60:
+                return None
+            res = run_long_only(close, dual_ma_signal(close, 20, 50),
+                                cost_tier="low")
+            return {
+                "symbol": symbol,
+                "tr": round(res.total_return * 100, 1),
+                "cagr": round(res.cagr * 100, 1),
+                "sharpe": round(res.sharpe, 2),
+                "maxdd": round(res.max_drawdown * 100, 1),
+                "win": round(res.win_rate * 100),
+                "trades": res.trades,
+                "src": f"cached bars (as of {str(df.index[-1])[:10]})",
+            }
+        except Exception:
+            return None
+
     def _backtest_one(symbol: str) -> dict[str, Any]:
         result = None
         for attempt in (1, 2):
@@ -65,6 +101,9 @@ def _scan_zone(engine: QuantEngine, symbols: list[str]) -> list[dict[str, Any]]:
                 time.sleep(2.0)  # transient provider hiccups (delisted-style
                 # errors are usually rate shapes): one retry, then it's real
         if not result or not result.get("ok"):
+            cached = _cached_backtest(symbol)
+            if cached is not None:
+                return cached
             return {"symbol": symbol,
                     "error": str(result.get("error"))[:80] if result else "no result"}
         s = result["summary"]
@@ -302,6 +341,31 @@ def run(force: bool = False) -> int:
         kronos_lines = [line for line in kronos_results if line]
         headlines = _headlines(config, market_by_zone.get(zone, ""))
 
+        # First-hand intel: SZSE announcement signals for the zone's
+        # names + today's tape stance, both source-labelled.
+        intel_lines: list[str] = []
+        try:
+            from . import signals as _sig
+
+            if zone == "A-SHARE":
+                for symbol, rows in _sig.signals_for(
+                        symbols, str(base)).items():
+                    for row in rows[:2]:
+                        intel_lines.append(
+                            f"{row['date']} {symbol} — {row['title'][:60]} "
+                            f"[{'/'.join(row['signals'])}] ({row['source']})")
+            reports_root = Path(str(getattr(config, "reports_root", "") or ""))
+            stance = _sig.sentiment_stance(
+                market_by_zone.get(zone, ""),
+                reports_root if str(reports_root) else None)
+            if stance:
+                intel_lines.append(
+                    f"tape stance {stance.get('stance')} {stance.get('score'):+} "
+                    f"({stance.get('items')} items, {stance.get('source')} "
+                    f"@{stance.get('date')})")
+        except Exception:
+            intel_lines = []
+
         context_parts = [
             (f"Today strategy scan — zone {zone}, full-market screen "
              f"(dual_ma 20/50, cost low, 2y window), sorted by TR. Candidates "
@@ -316,6 +380,13 @@ def run(force: bool = False) -> int:
         ]
         if headlines:
             context_parts.append("Today's crawled headlines (news tape):\n" + "\n".join(headlines))
+        if intel_lines:
+            context_parts.append(
+                "First-hand signals (announcement classifier + tape stance, "
+                "source-labelled — announcement titles classify into "
+                "dividend/egm/risk/merger/buyback/pledge; a risk tag on a "
+                "name you keep must be addressed in the note):\n"
+                + "\n".join(intel_lines))
         if kronos_lines:
             context_parts.append(
                 "Kronos forecasts (auxiliary ONLY — the frozen model's curves "
