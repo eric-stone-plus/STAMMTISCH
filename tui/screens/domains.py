@@ -175,6 +175,7 @@ class FuturesScreen(Screen):
     CSS = """
     FuturesScreen { layout: vertical; }
     #fut-cats { height: 1; padding: 0 1; background: #202020; }
+    #fut-fetch { height: 1; padding: 0 1; color: #808080; }
     #fut-board-wrap { height: 1fr; border: solid #505050; background: #000000; }
     #fut-detail { height: 16; layout: horizontal; }
     .fut-side { width: 1fr; border: solid #505050; background: #000000; }
@@ -190,6 +191,23 @@ class FuturesScreen(Screen):
         self._by_cat: dict[str, list[dict[str, Any]]] = {}
         self._cat_idx = 0
         self._detail_source: str | None = None
+        self._quotes_cache: dict[str, dict[str, Any]] = {}
+
+    def _set_fetch_status(self, text: str) -> None:
+        try:
+            self.query_one("#fut-fetch", Static).update(f"  {text}")
+        except Exception:
+            pass
+
+    def _post_progress(self, text: str) -> None:
+        def _ui() -> None:
+            if self.is_mounted:
+                self._set_fetch_status(text)
+
+        try:
+            self.app.call_from_thread(_ui)
+        except Exception:
+            pass
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -198,6 +216,7 @@ class FuturesScreen(Screen):
             classes="header-bar",
         )
         yield Static("", id="fut-cats")
+        yield Static("  ", id="fut-fetch")
         with Vertical(id="fut-board-wrap"):
             yield Static("  Continuous contracts & exchange settlements (daily)",
                          classes="fut-label")
@@ -231,6 +250,8 @@ class FuturesScreen(Screen):
             )
             return
         _run_async(self, self._load, self._apply, dedup_key="futures-board")
+        _run_async(self, self._load_adapters, self._apply_adapters,
+                   dedup_key="futures-adapters")
         _run_async(self, self._load_quotes, self._apply_quotes,
                    dedup_key="futures-quotes")
 
@@ -264,8 +285,11 @@ class FuturesScreen(Screen):
                           for symbol in self._symbols}
             else:
                 start = (date.today() - timedelta(days=400)).isoformat()
-                for raw in self._symbols:
+                total = len(self._symbols)
+                for index, raw in enumerate(self._symbols, 1):
                     symbol = _normalize_symbol(raw)
+                    self._post_progress(
+                        f"fetching quotes {index}/{total}  {symbol}")
                     try:
                         df = fetch_ohlcv(
                             symbol, market="auto", start=start,
@@ -312,30 +336,45 @@ class FuturesScreen(Screen):
         return self._assemble(quotes)
 
     def _assemble(self, quotes: dict[str, dict[str, Any]]) -> dict[str, Any]:
-        # SGX shipping settlements (FFA) moved onto the futures board.
-        shipping_board = None
-        shipping_argv = tuple(self.config.shipping_argv) if self.config else ()
-        if shipping_argv:
-            from ..domaindata import DomainDriver
-
-            shipped = DomainDriver(shipping_argv).board()
-            if shipped.get("ok"):
-                shipping_board = shipped
-        # CCI indices (all categories) from the cached daily parquets.
+        # CCI indices (all categories) from the cached daily parquets —
+        # the only thing on the critical path; SGX adapters and provider
+        # quotes stream in via their own async passes.
         cci_rows = []
         try:
             from .. import signals as _sig
 
+            self._post_progress("loading CCI daily board…")
             cci_rows = _sig.cci_daily_board(
                 Path(getattr(self.config, "data_dir", "") or ""))
         except Exception:
             cci_rows = []
+        return {
+            "ok": True,
+            "quotes": quotes,
+            "adapter": None,
+            "adapter_error": None,
+            "shipping": None,
+            "cci": cci_rows,
+        }
+
+    def _load_adapters(self) -> dict[str, Any]:
+        """Slow leg: exchange settlement downloads, off the render path."""
+        shipping_board = None
         adapter_board = None
         adapter_error = None
+        shipping_argv = tuple(self.config.shipping_argv) if self.config else ()
+        if shipping_argv:
+            from ..domaindata import DomainDriver
+
+            self._post_progress("loading SGX FFA settlements…")
+            shipped = DomainDriver(shipping_argv).board()
+            if shipped.get("ok"):
+                shipping_board = shipped
         argv = tuple(self.config.futures_argv) if self.config else ()
         if argv:
             from ..domaindata import DomainDriver
 
+            self._post_progress("loading SGX exchange settlements…")
             board = DomainDriver(argv).board()
             if board.get("ok"):
                 adapter_board = board
@@ -343,11 +382,11 @@ class FuturesScreen(Screen):
                 adapter_error = str(board.get("error", "adapter failed"))
         return {
             "ok": True,
-            "quotes": quotes,
+            "quotes": {},
             "adapter": adapter_board,
             "adapter_error": adapter_error,
             "shipping": shipping_board,
-            "cci": cci_rows,
+            "cci": [],
         }
 
     # ── row model ──────────────────────────────────────────────────
@@ -522,11 +561,23 @@ class FuturesScreen(Screen):
         for point in item.get("curve") or []:
             curve_table.add_row(point["month"], f"{point['settle']:,.2f}")
 
+    def _apply_adapters(self, result: dict[str, Any]) -> None:
+        """Merge exchange settlements into the standing board."""
+        if not self.is_mounted or not result.get("ok"):
+            return
+        self._build_items({"quotes": self._quotes_cache, **result})
+        self._render_strip()
+        self._render_board()
+        if result.get("adapter_error"):
+            self.notify(f"futures_cmd adapter failed: {result['adapter_error']}",
+                        severity="warning")
+
     def _apply_quotes(self, result: dict[str, Any]) -> None:
         """Second pass: merge provider quotes into the standing board."""
         if not self.is_mounted or not result.get("ok"):
             return
         quotes = result.get("quotes") or {}
+        self._quotes_cache.update(quotes)
         changed = False
         for items in self._by_cat.values():
             for item in items:
@@ -559,6 +610,10 @@ class FuturesScreen(Screen):
         if adapter_error:
             self.notify(f"futures_cmd adapter failed: {adapter_error}",
                         severity="warning")
+        rows = sum(len(v) for v in self._by_cat.values())
+        self._set_fetch_status(
+            f"{rows} instruments · SGX settlements + provider quotes "
+            f"loading in background  ·  [R] refresh")
 
     def on_unmount(self) -> None:
         timer = getattr(self, "_cci_timer", None)
