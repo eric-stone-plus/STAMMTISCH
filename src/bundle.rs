@@ -506,7 +506,12 @@ pub fn verify(bundle: &Path) -> Result<(bool, Value), AppError> {
         if entry.get("kind").and_then(Value::as_str) != Some("receipt") {
             continue;
         }
-        let rel = entry["path"].as_str().expect("schema-checked");
+        // The schema pass above only accumulates failures; it does not
+        // stop this walk, so a malformed manifest still reaches here.
+        let Some(rel) = entry.get("path").and_then(Value::as_str) else {
+            failures.push("receipt entry 'path' is not a string".to_string());
+            continue;
+        };
         match std::fs::read(bundle.join(rel)) {
             Ok(bytes) => match crate::contracts::validate_receipt(&bytes) {
                 Err(e) => failures.push(format!("receipt '{rel}' rejected: {e}")),
@@ -546,7 +551,10 @@ pub fn verify(bundle: &Path) -> Result<(bool, Value), AppError> {
         if entry.get("kind").and_then(Value::as_str) != Some("gate_record") {
             continue;
         }
-        let rel = entry["path"].as_str().expect("schema-checked");
+        let Some(rel) = entry.get("path").and_then(Value::as_str) else {
+            failures.push("gate record entry 'path' is not a string".to_string());
+            continue;
+        };
         let stage = entry.get("stage").and_then(Value::as_str).unwrap_or("");
         let bytes = match std::fs::read(bundle.join(rel)) {
             Ok(b) => b,
@@ -953,7 +961,17 @@ fn reevaluate_gate(
         move |_name: &str| -> Result<(String, Vec<u8>), AppError> {
             for entry in &entries {
                 if entry.get("sha256").and_then(Value::as_str) == Some(want.as_str()) {
-                    let rel = entry["path"].as_str().expect("schema-checked");
+                    let rel = entry
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            AppError::integrity(
+                                "gate_artifact_missing",
+                                format!(
+                                    "entry with digest {want} has a non-string 'path'"
+                                ),
+                            )
+                        })?;
                     return Ok((want.clone(), std::fs::read(bundle.join(rel))?));
                 }
             }
@@ -1004,6 +1022,52 @@ fn reevaluate_gate(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn verify_reports_malformed_manifest_paths_instead_of_panicking() {
+        // A third-party bundle may carry a MANIFEST.json whose entries
+        // violate the bundle schema (e.g. a numeric `path`). The schema
+        // pass only accumulates failures, so the later receipt/gate
+        // walks must treat non-string paths as failures, never panic.
+        let dir = std::env::temp_dir().join(format!(
+            "stammtisch-bundle-{}",
+            crate::ids::uuid_v7().unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = serde_json::json!({
+            "manifest_version": "3.0",
+            "run_id": "00000000-0000-7000-8000-000000000001",
+            "created_at": "2026-08-26T00:00:00Z",
+            "pipeline": {"id": "p", "canonical_sha256": "sha256:00"},
+            "doctrine": {"pack": "std", "resolved_sha256": "sha256:00"},
+            "entries": [
+                {"path": 12345, "kind": "receipt", "sha256": "sha256:00", "stage": "s1"},
+                {"path": 67890, "kind": "gate_record", "sha256": "sha256:00", "stage": "s1"},
+            ],
+        });
+        std::fs::write(
+            dir.join("MANIFEST.json"),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        let (pass, report) = verify(&dir).unwrap();
+        assert!(!pass, "malformed manifest must not pass verification");
+        let failures = report
+            .get("failures")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let text = format!("{failures:?}");
+        assert!(
+            text.contains("receipt entry 'path' is not a string"),
+            "expected a receipt path failure, got: {text}"
+        );
+        assert!(
+            text.contains("gate record entry 'path' is not a string"),
+            "expected a gate record path failure, got: {text}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn find_receipt_path_scans_beyond_sixteen() {
