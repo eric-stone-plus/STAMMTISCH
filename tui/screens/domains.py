@@ -518,7 +518,7 @@ class FuturesScreen(Screen):
                 self._fmt_pct(item["pct5"]),
                 self._fmt_pct(item["pct20"]),
                 f"{item['volume']:.0f}",
-                item["unit"],
+                item.get("unit", ""),
                 key=item["key"],
             )
         if board.row_count:
@@ -595,6 +595,11 @@ class FuturesScreen(Screen):
                     if field in quote:
                         item[field] = quote[field]
                 item.pop("error", None)
+                # placeholder rows (built from the pending error branch)
+                # never carried the static board fields — restore them so
+                # the renderer sees a complete row.
+                item.setdefault("unit", "")
+                item.setdefault("curve", [])
                 changed = True
         if changed:
             self._render_board()
