@@ -462,6 +462,26 @@ def run(force: bool = False) -> int:
     (history_dir / f"{today}.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"decide: {today} written to {latest_path}")
+
+    # Recents follow the decision: only symbols today's pipeline still
+    # ranks (positions ∪ scan_top) survive, so stale board residue (eric:
+    # 广州发展怎么老在) expires at the next decide. add_recent_symbol
+    # inserts at the front — feed reversed to preserve rank order.
+    try:
+        relevant: list[str] = []
+        for zone_data in outcomes.values():
+            if not isinstance(zone_data, dict):
+                continue
+            for source in ("positions", "scan_top"):
+                for row in zone_data.get(source) or []:
+                    symbol = str((row or {}).get("symbol") or "").strip().upper()
+                    if symbol and symbol not in relevant:
+                        relevant.append(symbol)
+        if relevant:
+            for symbol in reversed(relevant[:20]):
+                config.add_recent_symbol(symbol)
+    except Exception:
+        pass
     return 0 if failures == 0 else 3
 
 

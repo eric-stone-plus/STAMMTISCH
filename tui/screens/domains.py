@@ -103,6 +103,11 @@ FUTURES_NAMES = {
     "GC=F": "COMEX Gold, front-month continuous",
     "SI=F": "COMEX Silver, front-month continuous",
 }
+# Marine-fuel groups from the SGX adapters render on the SHIPPING board —
+# they are freight-side instruments (VLSFO/gasoil physical bunkers), not
+# futures-side holdings (eric, 2026-08-26: bunker 放 SHIPPING).
+MARINE_FUEL_GROUPS = ("BUNKER",)
+
 # Category assignment for provider-backed tickers. Exchange-settled adapter
 # instruments carry their own ``group`` from the board payload.
 FUTURES_CATEGORIES = {
@@ -419,6 +424,9 @@ class FuturesScreen(Screen):
             })
         adapter = result.get("adapter") or {}
         for inst in adapter.get("instruments") or []:
+            group = str(inst.get("group") or "").upper()
+            if group in MARINE_FUEL_GROUPS:
+                continue
             recent = inst.get("recent") or []
             items.append({
                 "key": f"sgx:{inst['code']}", "source": "sgx",
@@ -596,9 +604,11 @@ class FuturesScreen(Screen):
             self.notify(f"futures_cmd adapter failed: {adapter_error}",
                         severity="warning")
         rows = sum(len(v) for v in self._by_cat.values())
+        cat = self._cats[self._cat_idx] if self._cats else "?"
+        cat_rows = len(self._by_cat.get(cat, []))
         self._set_fetch_status(
-            f"{rows} instruments · SGX settlements + provider quotes "
-            f"loading in background  ·  [R] refresh")
+            f"{cat_rows} in {cat} · {rows} instruments total · SGX settlements "
+            f"+ provider quotes loading in background  ·  [R] refresh")
 
     def on_unmount(self) -> None:
         timer = getattr(self, "_cci_timer", None)
@@ -887,12 +897,32 @@ class ShippingScreen(Screen):
         from ..domaindata import DomainDriver, validate_spval_board_v2
 
         if self._cat_idx == 0:
-            argv = tuple(self.config.shipping_argv) if self.config else ()
-            if not argv:
+            shipping_argv = tuple(self.config.shipping_argv) if self.config else ()
+            futures_argv = tuple(self.config.futures_argv) if self.config else ()
+            if not shipping_argv:
                 self.notify("Shipping adapter is not configured (shipping_cmd).",
                             severity="warning")
                 return
-            _run_async(self, DomainDriver(argv).board, self._apply,
+
+            def _ffa_board() -> dict[str, Any]:
+                """FFA feed plus the futures adapter's marine-fuel rows.
+
+                Bunker (VLSFO/gasoil) settles live on the futures adapter's
+                feed but belong on this board — one merged settlement table.
+                """
+                result = DomainDriver(shipping_argv).board()
+                if not result.get("ok"):
+                    return result
+                if futures_argv:
+                    extra = DomainDriver(futures_argv).board()
+                    for inst in extra.get("instruments") or []:
+                        if (isinstance(inst, dict)
+                                and str(inst.get("group") or "").upper()
+                                in MARINE_FUEL_GROUPS):
+                            result.setdefault("instruments", []).append(inst)
+                return result
+
+            _run_async(self, _ffa_board, self._apply,
                        dedup_key="shipping-board")
         else:
             argv = tuple(self.config.spval_argv) if self.config else ()
