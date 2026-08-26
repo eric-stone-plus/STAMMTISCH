@@ -52,10 +52,14 @@ class ConfigScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("ctrl+s", "save", "Save"),
+        Binding("left", "prev_page", "Prev Page", priority=True),
+        Binding("right", "next_page", "Next Page", priority=True),
     ]
     CSS = """
     ConfigScreen { layout: vertical; }
     #cfg-scroll { height: 1fr; }
+    #cfg-pages { height: 1; padding: 0 1; background: #202020; }
+    .cfg-page-off { display: none; }
     .cfg-row { height: 3; }
     .cfg-label { width: 16; color: #a0a0a0; padding: 1 0; }
     .cfg-input { width: 1fr; }
@@ -163,9 +167,11 @@ class ConfigScreen(Screen):
         # "custom": leave both fields exactly as they are.
 
     def compose(self) -> ComposeResult:
-        yield Static("  Config  |  [Ctrl+S] Save  [Esc] Cancel", classes="header-bar")
+        yield Static("  Config  |  [←→] Page  [Ctrl+S] Save  [Esc] Cancel",
+                     classes="header-bar")
+        yield Static("", id="cfg-pages")
         with ScrollableContainer(id="cfg-scroll"):
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-1"):
                 yield Static(self._chrome("config.ai", "AI Service"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Provider", classes="cfg-label")
@@ -186,7 +192,7 @@ class ConfigScreen(Screen):
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Model", classes="cfg-label")
                     yield Input(value=self.config.ai_model, id="cfg-model", classes="cfg-input")
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-2"):
                 yield Static(self._chrome("config.workspace", "Workspace"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  State Root", classes="cfg-label")
@@ -205,7 +211,7 @@ class ConfigScreen(Screen):
                     yield Input(value=self.config.get("display_timezone", ""),
                                 placeholder="e.g. Asia/Shanghai (empty = UTC)",
                                 id="cfg-timezone", classes="cfg-input")
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-3"):
                 yield Static(self._chrome("config.network", "Egress Proxies"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Policy", classes="cfg-label")
@@ -239,14 +245,14 @@ class ConfigScreen(Screen):
                         id="cfg-energy-proxy",
                         classes="cfg-input",
                     )
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-2"):
                 yield Static(self._chrome("config.energy", "Energy (EIA)"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  EIA API Key", classes="cfg-label")
                     yield Input(value=self.config.get("eia_api_key", ""), password=True,
                                 placeholder="register free at eia.gov/opendata",
                                 id="cfg-eia-key", classes="cfg-input")
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-4"):
                 yield Static(self._chrome("config.intake", "Daily Data Intake"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Intake Cmd", classes="cfg-label")
@@ -279,7 +285,7 @@ class ConfigScreen(Screen):
                         id="cfg-intake-builder",
                         classes="cfg-input",
                     )
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-4"):
                 yield Static(self._chrome("config.forecast", "Forecast"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Forecast Cmd", classes="cfg-label")
@@ -290,7 +296,7 @@ class ConfigScreen(Screen):
                     yield Static("  Horizon", classes="cfg-label")
                     yield Input(value=str(self.config.get("kronos_horizon", 20)),
                                 id="cfg-kronos-horizon", classes="cfg-input")
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-5"):
                 yield Static(self._chrome("config.domains", "Domains"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Security Symbols", classes="cfg-label")
@@ -324,7 +330,7 @@ class ConfigScreen(Screen):
                         id="cfg-shipping-cmd",
                         classes="cfg-input",
                     )
-            with Vertical(classes="panel"):
+            with Vertical(classes="panel cfg-pg cfg-page-6"):
                 yield Static(self._chrome("config.backtest", "Backtest Defaults"), classes="panel-title")
                 with Horizontal(classes="cfg-row"):
                     yield Static("  Strategy", classes="cfg-label")
@@ -349,8 +355,41 @@ class ConfigScreen(Screen):
             yield Button("Cancel", id="cfg-cancel")
         yield Footer()
 
+    PAGE_TITLES = {1: "AI", 2: "WORKSPACE", 3: "NETWORK", 4: "DATA",
+                   5: "DOMAINS", 6: "BACKTEST"}
+
     def on_mount(self) -> None:
+        self._page = 1
+        self._show_page()
         self.query_one("#cfg-key", Input).focus()
+
+    def _show_page(self) -> None:
+        """All widgets stay mounted (save reads them by id); paging only
+        toggles a display:none class per panel group."""
+        for panel in self.query(".cfg-pg"):
+            classes = panel.classes
+            on = f"cfg-page-{self._page}" in classes
+            if on:
+                panel.remove_class("cfg-page-off")
+            else:
+                panel.add_class("cfg-page-off")
+        strip = Text()
+        ordered = sorted(self.PAGE_TITLES.items())
+        for index, (page, title) in enumerate(ordered):
+            if index:
+                strip.append(" ")
+            strip.append(f"  {title}  ",
+                         style="bold reverse" if page == self._page
+                         else "color(160)")
+        self.query_one("#cfg-pages", Static).update(strip)
+
+    def action_prev_page(self) -> None:
+        self._page = (self._page - 2) % len(self.PAGE_TITLES) + 1
+        self._show_page()
+
+    def action_next_page(self) -> None:
+        self._page = self._page % len(self.PAGE_TITLES) + 1
+        self._show_page()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cfg-save":
