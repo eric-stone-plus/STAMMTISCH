@@ -363,6 +363,13 @@ def run(force: bool = False) -> int:
                     f"tape stance {stance.get('stance')} {stance.get('score'):+} "
                     f"({stance.get('items')} items, {stance.get('source')} "
                     f"@{stance.get('date')})")
+            _leak = _sig.leak_regime_classes(str(base))
+            if _leak:
+                intel_lines.append(
+                    "leak regime (pre-CAR t>=2): "
+                    + ", ".join(f"{k} t={v['t']:+.1f} n={v['n']}"
+                                for k, v in _leak.items())
+                    + " — adds in these announcement classes are vetoed")
         except Exception:
             intel_lines = []
 
@@ -423,13 +430,53 @@ def run(force: bool = False) -> int:
             continue
 
         payload = _parse_positions(response.content)
+        positions = (payload or {}).get("positions")
+        # ── mechanical risk brake (eric: 风险厌恶, 推荐要稳) ──────────
+        # The model may not add into an announcement-day cooldown or a
+        # statistically significant leak-regime class. Vetoed adds are
+        # downgraded to watch with the reason in the note; every veto is
+        # also surfaced in the rationale. Brake-only by design: the
+        # event study is backward-looking and is never used to front-run.
+        veto_log: list[str] = []
+        if isinstance(positions, list):
+            try:
+                from . import signals as _brake
+
+                zone_syms = [str((p or {}).get("symbol") or "").upper()
+                             for p in positions if isinstance(p, dict)]
+                cooldown = _brake.event_cooldown_symbols(zone_syms, str(base))
+                leak = _brake.leak_regime_classes(str(base))
+                leak_tags: dict[str, set] = {}
+                if leak:
+                    for sym, rows in _brake.signals_for(zone_syms, str(base)).items():
+                        leak_tags[sym] = {t for r in rows
+                                          for t in (r.get("signals") or [])}
+                for p in positions:
+                    if not isinstance(p, dict):
+                        continue
+                    sym = str(p.get("symbol") or "").upper()
+                    if str(p.get("action") or "").lower() not in ("add", "buy"):
+                        continue
+                    if sym in cooldown:
+                        p["action"] = "watch"
+                        p["note"] = (str(p.get("note") or "")
+                                     + " [brake:公告事件冷静期T+1]")
+                        veto_log.append(f"{sym} event-cooldown")
+                    elif leak and leak_tags.get(sym, set()) & set(leak):
+                        p["action"] = "watch"
+                        p["note"] = (str(p.get("note") or "")
+                                     + " [brake:泄露域类别禁加仓]")
+                        veto_log.append(f"{sym} leak-regime")
+            except Exception:
+                veto_log = []
         outcomes[zone] = {
             "stance": (payload or {}).get("stance"),
-            "positions": (payload or {}).get("positions"),
+            "positions": positions,
             "exclusions": (payload or {}).get("exclusions"),
             "triggers": (payload or {}).get("triggers"),
             "structured": payload is not None,
             "rationale": response.content,
+            "vetoes": veto_log,
             "scan_rows": len(ok_rows),
             # Screen rankings behind the model's picks: the SECURITY board
             # surfaces these so the backtest work is visible even when the

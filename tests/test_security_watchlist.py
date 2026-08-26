@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import pathlib
+from datetime import date, timedelta
 import os
 import tempfile
 import unittest
@@ -130,3 +132,40 @@ class SecurityWatchlistTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InsiderBrakeTest(unittest.TestCase):
+    """Leak-regime + event-cooldown guards (brake-only by design)."""
+
+    def _intel(self, rows=None, report=None):
+        import tempfile
+        root = tempfile.mkdtemp()
+        intel = pathlib.Path(root) / "intel"
+        intel.mkdir(parents=True)
+        if rows is not None:
+            (intel / f"szse-announcements-{date.today().isoformat()}.json").write_text(
+                json.dumps(rows), encoding="utf-8")
+        if report is not None:
+            (intel / "insider-report.json").write_text(
+                json.dumps({"generated_at": "test", "report": report}),
+                encoding="utf-8")
+        return root
+
+    def test_leak_regime_requires_t2_and_car3(self):
+        from tui import signals
+        report = {"egm": {"pre_t_stat": 2.4, "mean_pre_car": 0.05, "n": 30},
+                  "weak": {"pre_t_stat": 1.5, "mean_pre_car": 0.09, "n": 30},
+                  "lowcar": {"pre_t_stat": 3.0, "mean_pre_car": 0.01, "n": 30}}
+        out = signals.leak_regime_classes(self._intel(report=report))
+        self.assertEqual(set(out), {"egm"})
+
+    def test_event_cooldown_window(self):
+        from tui import signals
+        today = date.today().isoformat()
+        old = (date.today() - timedelta(days=9)).isoformat()
+        rows = [{"symbol": "600722.SS", "date": today, "title": "股东会"},
+                {"symbol": "000001.SZ", "date": old, "title": "旧公告"}]
+        out = signals.event_cooldown_symbols(["600722.SS", "000001.SZ"],
+                                             self._intel(rows=rows))
+        self.assertIn("600722.SS", out)
+        self.assertNotIn("000001.SZ", out)

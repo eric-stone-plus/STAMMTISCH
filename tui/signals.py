@@ -387,3 +387,58 @@ _CCI_SUBCATEGORY = {
 
 def cci_name(index_id: str) -> str:
     return CCI_NAMES.get(index_id, index_id)
+
+
+# ── insider-footprint guards (brake-only by design) ────────────────
+# The event-study sidecar (insider_intel.py --json) is backward-looking:
+# pre-CAR is measurable only AFTER the announcement. These guards use it
+# to AVOID (event-day cooldown, leak-regime veto), never to front-run.
+
+LEAK_T_STAT = 2.0
+LEAK_MEAN_CAR = 0.03
+EVENT_COOLDOWN_DAYS = 2
+
+
+def leak_regime_classes(state_root: str | None) -> dict[str, dict[str, Any]]:
+    """Announcement classes in a statistically significant leak regime.
+
+    Reads the insider-report.json sidecar written by insider_intel.py;
+    a class qualifies at t >= 2.0 and mean pre-CAR >= 3%.
+    """
+    try:
+        doc = json.loads(
+            (_intel_root(state_root) / "insider-report.json").read_text(
+                encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for sig, r in (doc.get("report") or {}).items():
+        try:
+            if ((r.get("pre_t_stat") or 0) >= LEAK_T_STAT
+                    and (r.get("mean_pre_car") or 0) >= LEAK_MEAN_CAR):
+                out[sig] = {"t": r.get("pre_t_stat"),
+                            "car": r.get("mean_pre_car"),
+                            "n": r.get("n")}
+        except (AttributeError, TypeError):
+            continue
+    return out
+
+
+def event_cooldown_symbols(symbols: list[str], state_root: str | None,
+                           days: int = EVENT_COOLDOWN_DAYS) -> dict[str, list[str]]:
+    """Board symbols with an announcement inside the cooldown window.
+
+    No position should be ADDED into an announcement day or its T+1:
+    the post-announcement landscape is exactly where the measured
+    information asymmetry lives.
+    """
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    wanted = {s.upper() for s in symbols}
+    out: dict[str, list[str]] = {}
+    for row in load_announcements(state_root):
+        symbol = (row.get("symbol") or "").upper()
+        when = str(row.get("date") or "")
+        if symbol in wanted and when >= cutoff:
+            out.setdefault(symbol, []).append(
+                f"{when} {str(row.get('title') or '')[:40]}")
+    return out
