@@ -359,17 +359,8 @@ class FuturesScreen(Screen):
 
     def _load_adapters(self) -> dict[str, Any]:
         """Slow leg: exchange settlement downloads, off the render path."""
-        shipping_board = None
         adapter_board = None
         adapter_error = None
-        shipping_argv = tuple(self.config.shipping_argv) if self.config else ()
-        if shipping_argv:
-            from ..domaindata import DomainDriver
-
-            self._post_progress("loading SGX FFA settlements…")
-            shipped = DomainDriver(shipping_argv).board()
-            if shipped.get("ok"):
-                shipping_board = shipped
         argv = tuple(self.config.futures_argv) if self.config else ()
         if argv:
             from ..domaindata import DomainDriver
@@ -385,7 +376,9 @@ class FuturesScreen(Screen):
             "quotes": {},
             "adapter": adapter_board,
             "adapter_error": adapter_error,
-            "shipping": shipping_board,
+            # FFA settlements render on the SHIPPING board (2026-08-26);
+            # the futures board no longer fetches the shipping adapter.
+            "shipping": None,
             "cci": [],
         }
 
@@ -442,21 +435,8 @@ class FuturesScreen(Screen):
                 "curve": inst.get("curve") or [],
             })
         shipping = result.get("shipping") or {}
-        for inst in shipping.get("instruments") or []:
-            recent = inst.get("recent") or []
-            group = str(inst.get("group") or "").upper()
-            if not group.startswith("FFA"):
-                continue
-            items.append({
-                "key": f"sgx:{inst['code']}", "source": "sgx",
-                "code": inst["code"], "category": "FFA",
-                "name": inst.get("name", ""), "unit": inst.get("unit", ""),
-                "last": inst.get("settle"), "chg_pct": inst.get("change_pct"),
-                "pct5": self._pct_from_recent(recent, 5),
-                "pct20": self._pct_from_recent(recent, 20),
-                "volume": inst.get("volume") or 0,
-                "recent": recent, "curve": inst.get("curve") or [],
-            })
+        # FFA settlements render on the SHIPPING board again (2026-08-26);
+        # the futures board stays CCI-only plus its exchange groups.
         # CCI (local parquet) leads so the default category is the one
         # that renders instantly; provider-backed categories load later.
         items = list(result.get("cci") or []) + items
@@ -668,6 +648,8 @@ class FuturesScreen(Screen):
         row_key = board.coordinate_to_cell_key(board.cursor_coordinate).row_key
         if row_key is None:
             return None
+        if not self._cats:
+            return None
         for item in self._by_cat.get(self._cats[self._cat_idx], []):
             if item["key"] == str(row_key.value):
                 return item
@@ -675,6 +657,10 @@ class FuturesScreen(Screen):
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "fut-board" or event.row_key is None:
+            return
+        # Row highlights can fire before the category model lands (async
+        # load); an empty _cats must not crash the handler.
+        if not self._cats:
             return
         key = str(event.row_key.value)
         for item in self._by_cat.get(self._cats[self._cat_idx], []):
@@ -769,8 +755,10 @@ class ShippingScreen(Screen):
     #risk-bottom { height: 12; layout: horizontal; }
     """
 
-    # FFA settlements live on the futures board now.
-    CATEGORIES = ("S&P VALUATION", "MARKET", "RISK")
+    # FFA settlements (and the non-FFA groups like bunker in the same SGX
+    # feed) live here — the futures board is CCI-crowded enough (eric,
+    # 2026-08-26: moved back from the futures board).
+    CATEGORIES = ("FFA", "S&P VALUATION", "MARKET", "RISK")
 
     def __init__(self, config: Any, **kwargs: Any):
         super().__init__(**kwargs)
@@ -1050,11 +1038,10 @@ class ShippingScreen(Screen):
         if not result.get("ok"):
             self.notify(f"Shipping board failed: {result.get('error')}", severity="error")
             return
-        # FFA settlements moved to the futures board (same SGX source);
-        # shipping keeps only the non-FFA groups.
+        # Full SGX board: FFA groups and their non-FFA neighbours (bunker
+        # etc.) share this settlement table.
         instruments = [inst for inst in result.get("instruments", [])
-                       if isinstance(inst, dict)
-                       and not str(inst.get("group") or "").upper().startswith("FFA")]
+                       if isinstance(inst, dict)]
         self._instruments = {
             inst["code"]: inst for inst in instruments
         }
@@ -1151,16 +1138,24 @@ def _decision_symbols(config: Any, state_root: str | None = None) -> list[str]:
         if not isinstance(zone_data, dict):
             continue
         positions = zone_data.get("positions")
-        if not isinstance(positions, list):
-            continue
-        for position in positions:
-            if not isinstance(position, dict):
-                continue
-            if str(position.get("action") or "").strip().lower() == "cut":
-                continue
-            symbol = str(position.get("symbol") or "").strip()
-            if symbol:
-                out.append(symbol)
+        if isinstance(positions, list):
+            for position in positions:
+                if not isinstance(position, dict):
+                    continue
+                if str(position.get("action") or "").strip().lower() == "cut":
+                    continue
+                symbol = str(position.get("symbol") or "").strip()
+                if symbol:
+                    out.append(symbol)
+        # Screened top rows fill the board with the pipeline's ranked
+        # candidates — acted positions alone leave the page half-empty.
+        scan_top = zone_data.get("scan_top")
+        if isinstance(scan_top, list):
+            for row in scan_top:
+                if isinstance(row, dict):
+                    symbol = str(row.get("symbol") or "").strip()
+                    if symbol:
+                        out.append(symbol)
     return out
 
 
@@ -1583,6 +1578,19 @@ class SecurityScreen(Screen):
                         "thesis": str(position.get("thesis")
                                       or position.get("reason") or "")[:120],
                     }
+                # Screened candidates: RECO=cand, thesis carries the
+                # backtest card so the ranking is visible on selection.
+                for rank, row in enumerate(zone_data.get("scan_top") or [], 1):
+                    symbol = str(row.get("symbol") or "").upper()
+                    if symbol and symbol not in out:
+                        out[symbol] = {
+                            "action": "cand",
+                            "thesis": (f"#{rank} TR{row.get('tr')}% "
+                                       f"Sharpe{row.get('sharpe')} "
+                                       f"DD-{row.get('maxdd')}% "
+                                       f"win{row.get('win')}% "
+                                       f"{row.get('trades')}笔"),
+                        }
             self._decision = out
         except Exception:
             self._decision = {}

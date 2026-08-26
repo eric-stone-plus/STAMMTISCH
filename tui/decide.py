@@ -431,6 +431,15 @@ def run(force: bool = False) -> int:
             "structured": payload is not None,
             "rationale": response.content,
             "scan_rows": len(ok_rows),
+            # Screen rankings behind the model's picks: the SECURITY board
+            # surfaces these so the backtest work is visible even when the
+            # model only acts on a handful (eric, 2026-08-26: 我可以不买,
+            # 但你不能不推荐).
+            "scan_top": [
+                {k: r.get(k) for k in
+                 ("symbol", "tr", "cagr", "sharpe", "maxdd", "win", "trades")}
+                for r in ok_rows[:15] if "error" not in r
+            ],
         }
         structured = "structured" if payload else "PROSE-ONLY (unparsed)"
         print(f"[{zone}] decision recorded ({structured}, {len(ok_rows)} scanned)")
