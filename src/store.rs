@@ -404,7 +404,7 @@ mod tests {
         let run_dir = root.path.join("runs").join("r1");
         fs::create_dir_all(&run_dir).unwrap();
         let mut w = EventWriter::new(&run_dir, "r1");
-        w.emit("run.created", None, serde_json::json!({})).unwrap();
+        w.emit("run.created", None, serde_json::json!({"stages": [{"id": "s", "product": "p"}]})).unwrap();
         w.emit("run.staged", None, serde_json::json!({})).unwrap();
         let events = read_events(&run_dir).unwrap();
         assert_eq!(events.len(), 2);
@@ -415,6 +415,38 @@ mod tests {
         let e = read_events(&run_dir).unwrap_err();
         assert_eq!(e.code, "run_corrupt");
         fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn schema_rejects_poisoned_payloads() {
+        // The schema layer now enforces the load-bearing payload
+        // contracts (artifact/receipt digests, gate record digests)
+        // that the fold used to catch alone.
+        let root = tmp_root();
+        let run_dir = root.path.join("runs").join("r9");
+        fs::create_dir_all(&run_dir).unwrap();
+        let mut w = EventWriter::new(&run_dir, "r9");
+        w.emit("run.created", None, serde_json::json!({
+            "stages": [{"id": "s", "product": "p"}]
+        }))
+        .unwrap();
+        append_line_fsync(
+            &run_dir.join("events.jsonl"),
+            &crate::canon::canonical(&serde_json::json!({
+                "schema": EVENT_SCHEMA, "run_id": "r9", "seq": 2,
+                "type": "stage.artifact_recorded", "at": "2026-08-26T00:00:00.000Z",
+                "stage": "s", "payload": {"name": "out", "digest": 12345},
+            })),
+        )
+        .unwrap();
+        let e = read_events(&run_dir).unwrap_err();
+        assert_eq!(e.code, "run_corrupt");
+        assert!(
+            e.message.contains("violates run-event schema"),
+            "expected schema violation, got: {}",
+            e.message
+        );
+        fs::remove_dir_all(&run_dir).ok();
     }
 
     #[test]
@@ -439,7 +471,7 @@ mod tests {
         fs::create_dir_all(&run_dir).unwrap();
         let mut writer = EventWriter::new(&run_dir, "r3");
         writer
-            .emit("run.created", None, serde_json::json!({}))
+            .emit("run.created", None, serde_json::json!({"stages": [{"id": "s", "product": "p"}]}))
             .unwrap();
         let mixed = crate::canon::canonical(&serde_json::json!({
             "schema": EVENT_SCHEMA,

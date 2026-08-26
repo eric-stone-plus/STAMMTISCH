@@ -3,27 +3,204 @@
   "$id": "stammtisch.run-event.v0",
   "title": "STAMMTISCH Run Event v0 (one line of events.jsonl — the authority)",
   "type": "object",
-  "required": ["schema", "run_id", "seq", "type", "at"],
+  "required": [
+    "schema",
+    "run_id",
+    "seq",
+    "type",
+    "at"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema": {"const": "stammtisch.run-event.v0"},
-    "run_id": {"type": "string"},
-    "seq": {"type": "integer", "minimum": 1},
-    "at": {"type": "string", "format": "date-time"},
+    "schema": {
+      "const": "stammtisch.run-event.v0"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
     "type": {
       "enum": [
-        "run.created", "run.staged", "run.cancelled",
-        "stage.started", "stage.receipt_accepted", "stage.artifact_recorded",
-        "stage.gate_passed", "stage.gate_failed", "stage.failed",
-        "run.gating", "run.completed", "run.blocked", "run.failed",
-        "run.halted", "run.reconciled", "run.resumed"
+        "run.created",
+        "run.staged",
+        "run.cancelled",
+        "stage.started",
+        "stage.receipt_accepted",
+        "stage.artifact_recorded",
+        "stage.gate_passed",
+        "stage.gate_failed",
+        "stage.failed",
+        "run.gating",
+        "run.completed",
+        "run.blocked",
+        "run.failed",
+        "run.halted",
+        "run.reconciled",
+        "run.resumed"
       ]
     },
-    "stage": {"type": "string"},
+    "stage": {
+      "type": "string"
+    },
     "payload": {
       "type": "object",
-      "description": "Typed per event: digests, receipt references, gate decisions, error taxonomy. Never model prose.",
+      "description": "Typed per event. The four load-bearing contracts below (artifact digests, receipt digests, gate record digests) are exactly what the fold has always enforced at read time — the schema now rejects them at the boundary instead. Unknown annotation keys stay tolerated: events are append-only history and older lines may carry keys today's writer no longer emits.",
       "additionalProperties": true
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "run.created"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "stages"
+            ],
+            "properties": {
+              "stages": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "product"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "product": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stage.artifact_recorded"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "name",
+              "digest"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stage.receipt_accepted"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "digest"
+            ],
+            "properties": {
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "stage.gate_passed",
+              "stage.gate_failed"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "record_sha256"
+            ],
+            "properties": {
+              "record_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "run.completed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "bundle_manifest_sha256": {
+                "type": "string"
+              },
+              "completed_at": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
