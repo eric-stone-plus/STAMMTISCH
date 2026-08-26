@@ -35,18 +35,51 @@ def _ws_connect() -> socket.socket:
     req = (
         f"GET {WS_PATH} HTTP/1.1{nl}Host: {WS_HOST}{nl}"
         f"Upgrade: websocket{nl}Connection: Upgrade{nl}"
-        f"Sec-WebSocket-Key: {key}{nl}Sec-WebSocket-Version: 13{nl}{nl}"
+        f"Sec-WebSocket-Key: {key}{nl}Sec-WebSocket-Version: 13{nl}"
+        f"Origin: http://www.ccidx.com{nl}{nl}"
     )
     s.send(req.encode())
-    resp = s.recv(4096)
-    if b"101" not in resp.split(b"\r\n")[0]:
-        raise ConnectionError(f"handshake failed: {resp[:80]!r}")
-    return s
-
-
-def _read_frames(sock: socket.socket, deadline: float) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+    # The 101 response carries a large header block (~20 KB of cache
+    # headers); read until the terminator so no header bytes leak into
+    # the frame parser (stray 'X' = 0x58 parses as a CLOSE opcode).
     buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            raise ConnectionError("handshake eof")
+        buf += chunk
+        if len(buf) > 65536:
+            raise ConnectionError("handshake headers too large")
+    if b"101" not in buf.split(b"\r\n", 1)[0]:
+        raise ConnectionError(f"handshake failed: {buf[:80]!r}")
+    # The first data frames usually arrive in the same TCP segment as
+    # the headers; hand the post-terminator remainder to the parser
+    # instead of discarding it mid-frame.
+    _head, _, remainder = buf.partition(b"\r\n\r\n")
+    return s, remainder
+
+
+def _send_client_frame(sock: socket.socket, opcode: int, payload: bytes) -> None:
+    """Masked client frame (RFC 6455 §5.3: client→server MUST mask;
+    an unmasked pong makes a compliant server abort the connection)."""
+    import os as _os
+
+    mask = _os.urandom(4)
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    header = bytes([0x80 | opcode])
+    length = len(payload)
+    if length < 126:
+        header += bytes([0x80 | length])
+    elif length < 65536:
+        header += bytes([0x80 | 126]) + struct.pack("!H", length)
+    else:
+        header += bytes([0x80 | 127]) + struct.pack("!Q", length)
+    sock.sendall(header + mask + masked)
+
+
+def _read_frames(sock: socket.socket, deadline: float,
+                  buf: bytes = b"") -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     while time.time() < deadline:
         try:
             chunk = sock.recv(65536)
@@ -55,8 +88,10 @@ def _read_frames(sock: socket.socket, deadline: float) -> list[dict[str, Any]]:
         if not chunk:
             raise ConnectionError("closed by server")
         buf += chunk
+        fragment = b""
         while len(buf) >= 2:
-            opcode = buf[0] & 0x0F
+            frame_head = buf[0]
+            opcode = frame_head & 0x0F
             length = buf[1] & 0x7F
             offset = 2
             if length == 126:
@@ -73,18 +108,35 @@ def _read_frames(sock: socket.socket, deadline: float) -> list[dict[str, Any]]:
                 break
             payload = buf[offset: offset + length]
             buf = buf[offset + length:]
+            fin = bool(frame_head & 0x80)
             if opcode == 9:
                 try:
-                    sock.send(bytes([0x8A, len(payload)]) + payload)
+                    _send_client_frame(sock, 0xA, payload)
                 except OSError:
                     raise ConnectionError("pong failed") from None
             elif opcode == 8:
                 raise ConnectionError("CLOSE received")
             elif opcode in (1, 2):
-                try:
-                    out.append(json.loads(payload.decode()))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    pass
+                # The server fragments one large JSON array across
+                # 8192-byte frames (first 0x01 no-FIN, continuations
+                # 0x00, last with FIN) — reassemble before parsing.
+                if fin:
+                    fragment = payload
+                    try:
+                        out.append(json.loads(fragment.decode()))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        pass
+                    fragment = b""
+                else:
+                    fragment = payload
+            elif opcode == 0:
+                fragment += payload
+                if fin:
+                    try:
+                        out.append(json.loads(fragment.decode()))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        pass
+                    fragment = b""
     return out
 
 
@@ -101,11 +153,13 @@ class CciFeed(threading.Thread):
         while not self._stop.is_set():
             sock = None
             try:
-                sock = _ws_connect()
+                sock, remainder = _ws_connect()
                 self.connected = True
                 reconnects = 0
                 while not self._stop.is_set():
-                    for data in _read_frames(sock, time.time() + 5.0):
+                    for data in _read_frames(sock, time.time() + 5.0,
+                                             buf=remainder):
+                        remainder = b""
                         items = data if isinstance(data, list) else [data]
                         now = datetime.now(timezone.utc).strftime("%H:%M:%S")
                         for item in items:
