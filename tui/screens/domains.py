@@ -6,7 +6,7 @@ import json
 import os
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -213,7 +213,7 @@ class FuturesScreen(Screen):
 
     def on_mount(self) -> None:
         board = self.query_one("#fut-board", DataTable)
-        board.add_columns("CODE", "NAME", "LAST", "CHG%", "5D%", "20D%", "VOL", "UNIT")
+        board.add_columns("CODE", "NAME", "RECO", "LAST", "CHG%", "5D%", "20D%", "VOL", "UNIT")
         self.query_one("#fut-curve", DataTable).add_columns("MONTH", "SETTLE")
         self._render_strip()
         self.action_refresh()
@@ -390,17 +390,21 @@ class FuturesScreen(Screen):
         self.query_one("#fut-cats", Static).update(strip)
 
     def _render_board(self) -> None:
+        from .. import intel as intel_mod
+
         board = self.query_one("#fut-board", DataTable)
         board.clear()
         items = self._by_cat.get(self._cats[self._cat_idx], []) if self._cats else []
         for item in items:
+            reco, why = intel_mod.futures_reco(item)
             if "error" in item:
-                board.add_row(item["code"], item["name"], item["error"],
+                board.add_row(item["code"], item["name"], "—", item["error"],
                               "", "", "", "", "", key=item["key"])
                 continue
             board.add_row(
                 item["code"],
                 item["name"],
+                reco,
                 "—" if item["last"] is None else f"{item['last']:,.2f}",
                 self._fmt_pct(item["chg_pct"]),
                 self._fmt_pct(item["pct5"]),
@@ -1011,13 +1015,6 @@ class SecurityScreen(Screen):
         Binding("escape", "back", "Back"),
         Binding("r", "refresh", "Refresh"),
         Binding("k", "chart", "K-line"),
-        Binding("a", "chat", "Ask"),
-        Binding("b", "backtest", "Backtest"),
-        Binding("e", "config", "Config"),
-        Binding("f", "fetch", "Fetch"),
-        Binding("p", "portfolio", "Portfolio"),
-        Binding("s", "sentiment", "Sentiment"),
-        Binding("t", "indicators", "Indicators"),
         Binding("g", "strategy_scan", "Strategy scan"),
         Binding("question_mark", "show_help", "Keys"),
         # Priority: the board table would otherwise consume the arrows as
@@ -1030,7 +1027,10 @@ class SecurityScreen(Screen):
     #sec-cats { height: 1; padding: 0 1; background: #202020; }
     #sec-fetch { height: 1; padding: 0 1; color: #808080; }
     #sec-board-wrap { height: 1fr; border: solid #505050; background: #000000; }
-    #sec-recent-wrap { height: 14; border: solid #505050; background: #000000; }
+    #sec-bottom { height: 16; layout: horizontal; }
+    #sec-intel-wrap { width: 1fr; border: solid #505050; background: #000000; }
+    #sec-intel { padding: 0 1; color: #c0c0c0; }
+    #sec-recent-wrap { width: 1fr; border: solid #505050; background: #000000; }
     .sec-label { dock: top; height: 1; padding: 0 1; background: #303030; text-style: bold; color: #ffffff; }
     """
 
@@ -1052,26 +1052,35 @@ class SecurityScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static(
             "  SECURITY  |  [←→] Zone  [R] Refresh  [K] K-line  "
-            "[G] Strategy scan  [B/F/T/P] Quant  [S] Sentiment  "
-            "[A] Ask  [E] Config  [?] Keys  [Esc] Back",
+            "[G] Strategy scan  [?] Keys  [Esc] Back",
             classes="header-bar",
         )
         yield Static("", id="sec-cats")
         yield Static("  ", id="sec-fetch")
         with Vertical(id="sec-board-wrap"):
-            yield Static("  Watchlist by market zone (daily)", classes="sec-label")
+            yield Static("  Recommended board (daily bars + live quotes)", classes="sec-label")
             yield _RowTable(id="sec-board", cursor_type="row")
-        with Vertical(id="sec-recent-wrap"):
-            yield Static("  Recent", classes="sec-label")
-            yield DataTable(id="sec-recent", cursor_type="row")
+        with Horizontal(id="sec-bottom"):
+            with Vertical(id="sec-intel-wrap"):
+                yield Static("  Intel · sources annotated", classes="sec-label")
+                yield Static("  …", id="sec-intel")
+            with Vertical(id="sec-recent-wrap"):
+                yield Static("  Recent", classes="sec-label")
+                yield DataTable(id="sec-recent", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
+        from .. import intel as intel_mod
+
+        self._intel_mod = intel_mod
+        self._decision: dict[str, dict[str, Any]] = {}
+        self._live: dict[str, dict[str, Any]] = {}
         board = self.query_one("#sec-board", DataTable)
-        board.add_columns("CODE", "LAST", "CHG%", "5D%", "20D%", "VOL")
+        board.add_columns("CODE", "RECO", "WHY", "LAST", "CHG%", "5D%", "20D%", "VOL")
         self.query_one("#sec-recent", DataTable).add_columns(
             "DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"
         )
+        self.set_interval(5.0, self._live_tick)
         cached = self._cached_board()
         if cached is not None:
             self._zone_idx = int(cached.get("zone_idx") or 0)
@@ -1080,6 +1089,59 @@ class SecurityScreen(Screen):
             self._set_fetch_status("cached — [R] refresh")
             return
         self.action_refresh()
+
+    # ── live quote layer (batch, one request per tick) ─────────────
+
+    def _live_tick(self) -> None:
+        """Poll live quotes for the visible zone; refreshes in-place."""
+        from .. import livefeed
+
+        zone = self._zones[self._zone_idx] if self._zones else ""
+        if not zone or zone not in ("A-SHARE", "US"):
+            return
+        symbols = [item["key"] for item in self._by_zone.get(zone, [])
+                   if "error" not in item]
+        if not symbols:
+            return
+
+        def _work() -> dict[str, Any]:
+            return {"zone": zone,
+                    "quotes": livefeed.fetch_batch(symbols),
+                    "phase": livefeed.market_phase(zone),
+                    "at": datetime.now().strftime("%H:%M:%S")}
+
+        _run_async(self, _work, self._apply_live, dedup_key="security-live")
+
+    def _apply_live(self, result: dict[str, Any]) -> None:
+        from .. import livefeed
+
+        quotes = result.get("quotes") or {}
+        if not quotes:
+            return
+        self._live.update(quotes)
+        zone = result.get("zone")
+        board = self.query_one("#sec-board", DataTable)
+        items = self._by_zone.get(zone, []) if zone else []
+        try:
+            for item in items:
+                symbol = item.get("key")
+                live = quotes.get(symbol)
+                if not live or "error" in item:
+                    continue
+                row_key = item.get("key")
+                last = live.get("last")
+                prev = live.get("prev_close")
+                if last is None or not prev:
+                    continue
+                board.update_cell(row_key, "LAST", f"{last:,.2f}")
+                board.update_cell(row_key, "CHG%", f"{(last / prev - 1) * 100:+.2f}%")
+                if live.get("volume") is not None:
+                    board.update_cell(row_key, "VOL", f"{live['volume']:.0f}")
+            phase = "盘中" if result.get("phase") == "open" else "闭市"
+            self._set_fetch_status(
+                f"行情截至 {result.get('at')} ({phase}) · {livefeed.QT_SOURCE}")
+        except Exception:
+            pass
 
     def _board_state(self) -> dict[str, Any]:
         state = getattr(self.app, "_security_board", None)
@@ -1218,6 +1280,7 @@ class SecurityScreen(Screen):
             state["zone_idx"] = self._zone_idx
             state["selected"] = getattr(self, "_restore_selected", None)
             self._set_fetch_status(f"{len(quotes)} names  ·  [R] refresh")
+        self._load_decision()
         self._render_strip()
         self._render_board()
 
@@ -1226,6 +1289,55 @@ class SecurityScreen(Screen):
         if value is None:
             return "—"
         return f"{value:+.2f}%"
+
+    def _render_intel(self, zone: str, sig: dict[str, list[dict]]) -> None:
+        """Fill the intel panel: zone stance + announcement signals."""
+        intel_mod = getattr(self, "_intel_mod", None)
+        lines: list[str] = []
+        if intel_mod is not None:
+            market = {"A-SHARE": "ashare", "HK": "hk", "US": "us"}.get(zone, "")
+            stance = None
+            try:
+                reports_root = Path(getattr(self.config, "reports_root", "") or "")
+                stance = intel_mod.sentiment_stance(
+                    market, reports_root if str(reports_root) else None)
+            except Exception:
+                stance = None
+            if stance:
+                lines.append(
+                    f"情绪[{zone}] {stance.get('stance')} {stance.get('score'):+} "
+                    f"({stance.get('items')}条) · 来源 {stance.get('source')} @{stance.get('date')}")
+        for symbol, rows in list(sig.items())[:6]:
+            latest = rows[0]
+            lines.append(
+                f"{symbol} {latest['date']} {latest['title'][:34]} "
+                f"[{'/'.join(latest['signals'])}] · {latest['source']}")
+        if not lines:
+            lines.append("（该 zone 暂无稳定情报源——按稳定源原则不强行填充）")
+        try:
+            self.query_one("#sec-intel", Static).update(
+                Text("\n".join("  " + l for l in lines)))
+        except Exception:
+            pass
+
+    def _load_decision(self) -> None:
+        """Latest daily decision positions keyed by symbol (RECO/WHY)."""
+        try:
+            base = Path(getattr(self.driver, "state_root", None)
+                        or Path.home() / ".local/share/stammtisch")
+            payload = json.loads(
+                (base / "decisions" / "latest.json").read_text(encoding="utf-8"))
+            out: dict[str, dict[str, Any]] = {}
+            for zone_data in (payload.get("zones") or {}).values():
+                for position in zone_data.get("positions", []):
+                    out[str(position.get("symbol", "")).upper()] = {
+                        "action": str(position.get("action") or "—"),
+                        "thesis": str(position.get("thesis")
+                                      or position.get("reason") or "")[:120],
+                    }
+            self._decision = out
+        except Exception:
+            self._decision = {}
 
     def _render_strip(self) -> None:
         strip = Text()
@@ -1240,14 +1352,37 @@ class SecurityScreen(Screen):
     def _render_board(self) -> None:
         board = self.query_one("#sec-board", DataTable)
         board.clear()
-        items = self._by_zone.get(self._zones[self._zone_idx], []) if self._zones else []
+        zone = self._zones[self._zone_idx] if self._zones else ""
+        items = self._by_zone.get(zone, []) if zone else []
+        intel_mod = getattr(self, "_intel_mod", None)
+        sig: dict[str, list[dict]] = {}
+        if intel_mod is not None and zone == "A-SHARE" and items:
+            try:
+                sig = intel_mod.signals_for(
+                    [i["key"] for i in items],
+                    getattr(self.driver, "state_root", None))
+            except Exception:
+                sig = {}
         for item in items:
+            decision = self._decision.get(item["key"]) or {}
+            reco = decision.get("action") or "—"
+            why = decision.get("thesis") or ""
+            if sig.get(item["key"]):
+                tags = "/".join(sorted({s for row in sig[item["key"]]
+                                        for s in row.get("signals", [])}))
+                why = (why + " " if why else "") + f"公告[{tags}]"
+                if "risk" in tags and reco in ("keep", "add"):
+                    reco = "trim"
+            if why:
+                why += " · SZSE公告API" if sig.get(item["key"]) else ""
             if "error" in item:
-                board.add_row(item["code"], item["error"], "", "", "", "",
+                board.add_row(item["code"], reco, item["error"], "", "", "", "", "",
                               key=item["key"])
                 continue
             board.add_row(
                 item["code"],
+                reco,
+                why[:38],
                 "—" if item["last"] is None else f"{item['last']:,.2f}",
                 self._fmt_pct(item["chg_pct"]),
                 self._fmt_pct(item["pct5"]),
@@ -1255,6 +1390,7 @@ class SecurityScreen(Screen):
                 f"{item['volume']:.0f}",
                 key=item["key"],
             )
+        self._render_intel(zone, sig)
         if board.row_count:
             restore = getattr(self, "_restore_selected", None)
             row = 0
