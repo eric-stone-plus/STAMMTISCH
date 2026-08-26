@@ -1459,6 +1459,8 @@ class SecurityScreen(Screen):
         _run_async(self, self._load, self._apply, dedup_key="security-board")
 
     def _load(self) -> dict[str, Any]:
+        from concurrent.futures import ThreadPoolExecutor
+
         from ..engine import _missing_ohlcv, _normalize_symbol
 
         quotes: dict[str, dict[str, Any]] = {}
@@ -1471,50 +1473,66 @@ class SecurityScreen(Screen):
             return {"ok": True, "quotes": quotes}
         start = (date.today() - timedelta(days=400)).isoformat()
         total = len(self._symbols)
-        for index, raw in enumerate(self._symbols, 1):
+
+        def _fetch_one(indexed: tuple[int, str]) -> tuple[str, dict[str, Any] | None, str]:
+            """One symbol's bars; returns (symbol, quote-dict-or-None, error)."""
+            index, raw = indexed
             symbol = _normalize_symbol(raw)
             self._post_progress(f"fetching {index}/{total}  {symbol}")
             result = engine.fetch_data(symbol, start=start)
             if not result.get("ok"):
-                quotes[symbol] = {"error": str(result.get("error") or "no bars")[:120]}
-                continue
+                return symbol, None, str(result.get("error") or "no bars")[:120]
             df = result.get("df")
             if _missing_ohlcv(df):
-                quotes[symbol] = {"error": "no bars"}
-                continue
+                return symbol, None, "no bars"
             df = df.dropna(subset=["close"])
             if df.empty:
-                quotes[symbol] = {"error": "no bars"}
-                continue
-            closes = [float(v) for v in df["close"]]
-            last = closes[-1]
+                return symbol, None, "no bars"
+            return symbol, self._quote_from_bars(symbol, df), ""
 
-            def _pct(days: int, _closes: list[float] = closes,
-                     _last: float = last) -> float | None:
-                if len(_closes) > days and _closes[-1 - days] > 0:
-                    return round((_last / _closes[-1 - days] - 1) * 100, 2)
-                return None
-
-            prev = closes[-2] if len(closes) > 1 else None
-            recent = []
-            for ts, row in df.tail(12).iterrows():
-                recent.append({
-                    "date": str(ts)[:10],
-                    "open": round(float(row["open"]), 4),
-                    "high": round(float(row["high"]), 4),
-                    "low": round(float(row["low"]), 4),
-                    "close": round(float(row["close"]), 4),
-                    "volume": float(row.get("volume", 0) or 0),
-                })
-            quotes[symbol] = {
-                "last": last,
-                "chg_pct": round((last / prev - 1) * 100, 2) if prev else None,
-                "pct5": _pct(5),
-                "pct20": _pct(20),
-                "volume": float(df["volume"].iloc[-1] or 0),
-                "recent": recent,
-            }
+        # Parallel fetch: the serial loop took seconds per symbol, which
+        # left names/quotes blank for the better part of a minute on a
+        # full board (eric, 2026-08-26: 股票名称渲染有点慢).
+        with ThreadPoolExecutor(max_workers=min(8, total)) as pool:
+            for symbol, quote, error in pool.map(_fetch_one,
+                                                 enumerate(self._symbols, 1)):
+                if quote is not None:
+                    quotes[symbol] = quote
+                else:
+                    quotes[symbol] = {"error": error}
         return {"ok": True, "quotes": quotes}
+
+    @staticmethod
+    def _quote_from_bars(symbol: str, df: Any) -> dict[str, Any]:
+        """Board quote fields from an OHLCV frame (shared by fetch paths)."""
+        closes = [float(v) for v in df["close"]]
+        last = closes[-1]
+
+        def _pct(days: int, _closes: list[float] = closes,
+                 _last: float = last) -> float | None:
+            if len(_closes) > days and _closes[-1 - days] > 0:
+                return round((_last / _closes[-1 - days] - 1) * 100, 2)
+            return None
+
+        prev = closes[-2] if len(closes) > 1 else None
+        recent = []
+        for ts, row in df.tail(12).iterrows():
+            recent.append({
+                "date": str(ts)[:10],
+                "open": round(float(row["open"]), 4),
+                "high": round(float(row["high"]), 4),
+                "low": round(float(row["low"]), 4),
+                "close": round(float(row["close"]), 4),
+                "volume": float(row.get("volume", 0) or 0),
+            })
+        return {
+            "last": last,
+            "chg_pct": round((last / prev - 1) * 100, 2) if prev else None,
+            "pct5": _pct(5),
+            "pct20": _pct(20),
+            "volume": float(df["volume"].iloc[-1] or 0),
+            "recent": recent,
+        }
 
     # ── row model + rendering ──────────────────────────────────────
 
@@ -1608,14 +1626,14 @@ class SecurityScreen(Screen):
                         "thesis": str(position.get("thesis")
                                       or position.get("reason") or "")[:120],
                     }
-                # Screened candidates: RECO=cand, thesis carries the
-                # backtest card so the ranking is visible on selection.
+                # Screened candidates: RECO shows the screen rank (#1…);
+                # thesis carries the backtest card for selection detail.
                 for rank, row in enumerate(zone_data.get("scan_top") or [], 1):
                     symbol = str(row.get("symbol") or "").upper()
                     if symbol and symbol not in out:
                         out[symbol] = {
-                            "action": "cand",
-                            "thesis": (f"#{rank} TR{row.get('tr')}% "
+                            "action": f"#{rank}",
+                            "thesis": (f"scan #{rank} TR{row.get('tr')}% "
                                        f"Sharpe{row.get('sharpe')} "
                                        f"DD-{row.get('maxdd')}% "
                                        f"win{row.get('win')}% "
