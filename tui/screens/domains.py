@@ -482,10 +482,15 @@ class FuturesScreen(Screen):
                     str(bar.get("month", "")),
                 )
             else:
+                # Row shapes vary by source (CCI daily rows carry close
+                # only); every cell degrades to a dash instead of raising.
+                def _cell(field: str, fmt: str = "{:.2f}") -> str:
+                    value = bar.get(field)
+                    return "—" if value is None else fmt.format(float(value))
+
                 recent_table.add_row(
-                    bar["date"], f"{bar['open']:.2f}", f"{bar['high']:.2f}",
-                    f"{bar['low']:.2f}", f"{bar['close']:.2f}",
-                    f"{bar['volume']:.0f}",
+                    bar.get("date", "—"), _cell("open"), _cell("high"),
+                    _cell("low"), _cell("close"), _cell("volume", "{:.0f}"),
                 )
         curve_table = self.query_one("#fut-curve", DataTable)
         curve_table.clear()

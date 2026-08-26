@@ -227,7 +227,15 @@ def cci_daily_board(data_dir: Path | None) -> list[dict[str, Any]]:
             return None
 
         recent = [
-            {"date": str(ts)[:10], "close": round(float(row["close"]), 4)}
+            {
+                "date": str(ts)[:10],
+                **({"open": round(float(row["open"]), 4),
+                    "high": round(float(row["high"]), 4),
+                    "low": round(float(row["low"]), 4)}
+                   if all(c in df.columns for c in ("open", "high", "low")) else {}),
+                "close": round(float(row["close"]), 4),
+                "volume": float(row.get("volume", 0) or 0),
+            }
             for ts, row in df.tail(12).iterrows()
         ]
         rows.append({
