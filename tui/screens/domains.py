@@ -709,7 +709,8 @@ class ShippingScreen(Screen):
     #risk-bottom { height: 12; layout: horizontal; }
     """
 
-    CATEGORIES = ("FFA", "S&P VALUATION", "MARKET", "RISK")
+    # FFA settlements live on the futures board now.
+    CATEGORIES = ("S&P VALUATION", "MARKET", "RISK")
 
     def __init__(self, config: Any, **kwargs: Any):
         super().__init__(**kwargs)
