@@ -28,6 +28,8 @@ _FIELD_RE = re.compile(r'v_(?P<code>[A-Za-z]{2}\w+)="(?P<payload>[^"]*)"')
 def to_tencent_code(symbol: str) -> str | None:
     """Map a board symbol to the Tencent quote code, or None if unmappable."""
     text = symbol.strip().upper()
+    if text == "HSI":
+        return "hkHSI"
     if text.endswith(".SZ"):
         return "sz" + text[: -len(".SZ")]
     if text.endswith((".SS", ".BJ")):

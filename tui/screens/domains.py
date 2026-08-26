@@ -1287,8 +1287,16 @@ class SecurityScreen(Screen):
         self._signals_mod = signals_mod
         self._decision: dict[str, dict[str, Any]] = {}
         self._live: dict[str, dict[str, Any]] = {}
+        self._names: dict[str, str] = {}
+        try:
+            names_path = (Path(getattr(self.driver, "state_root", None)
+                               or Path.home() / ".local/share/stammtisch")
+                          / "intel" / "names.json")
+            self._names = json.loads(names_path.read_text(encoding="utf-8"))
+        except Exception:
+            self._names = {}
         board = self.query_one("#sec-board", DataTable)
-        board.add_columns("CODE", "RECO", "LAST", "CHG%", "5D%", "20D%", "VOL")
+        board.add_columns("CODE", "NAME", "RECO", "LAST", "CHG%", "5D%", "20D%", "VOL")
         self.query_one("#sec-recent", DataTable).add_columns(
             "DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"
         )
@@ -1338,6 +1346,18 @@ class SecurityScreen(Screen):
         if not quotes:
             return
         self._live.update(quotes)
+        new_names = {s: q["name"] for s, q in quotes.items() if q.get("name")}
+        if new_names:
+            self._names.update(new_names)
+            try:
+                names_path = (Path(getattr(self.driver, "state_root", None)
+                                   or Path.home() / ".local/share/stammtisch")
+                              / "intel" / "names.json")
+                names_path.parent.mkdir(parents=True, exist_ok=True)
+                names_path.write_text(
+                    json.dumps(self._names, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
         zone = result.get("zone")
         board = self.query_one("#sec-board", DataTable)
         items = self._by_zone.get(zone, []) if zone else []
@@ -1354,6 +1374,8 @@ class SecurityScreen(Screen):
                     continue
                 board.update_cell(row_key, "LAST", f"{last:,.2f}")
                 board.update_cell(row_key, "CHG%", f"{(last / prev - 1) * 100:+.2f}%")
+                if live.get("name"):
+                    board.update_cell(row_key, "NAME", live["name"])
                 if live.get("volume") is not None:
                     board.update_cell(row_key, "VOL", f"{live['volume']:.0f}")
             phase = "盘中" if result.get("phase") == "open" else "闭市"
@@ -1597,12 +1619,14 @@ class SecurityScreen(Screen):
                         for s in row.get("signals", [])}
                 if "risk" in tags and reco in ("keep", "add"):
                     reco = "trim"
+            name = self._names.get(item["code"], "")
             if "error" in item:
-                board.add_row(item["code"], reco, item["error"], "", "", "", "",
+                board.add_row(item["code"], name, reco, item["error"], "", "", "", "",
                               key=item["key"])
                 continue
             board.add_row(
                 item["code"],
+                name,
                 reco,
                 "—" if item["last"] is None else f"{item['last']:,.2f}",
                 self._fmt_pct(item["chg_pct"]),

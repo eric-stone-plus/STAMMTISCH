@@ -145,6 +145,67 @@ class DashboardScreen(Screen):
                     "  " + self._chrome_text("help.hint", "[?] HELP"),
                     id="help-hint",
                 )
+                with Vertical(classes="panel"):
+                    yield Static("  Market Glance", classes="panel-title")
+                    yield Static("  …", id="dash-glance", markup=False)
+
+    def _glance_tick(self) -> None:
+        """Sidebar market glance: index snapshot + tape stance, sourced."""
+        if not self.is_mounted:
+            return
+
+        def _work() -> dict:
+            from .. import ccifeed, livefeed as lf, signals as sig
+
+            out: dict = {"quotes": lf.fetch_batch(
+                ["000001.SS", "HSI", "QQQ"]), "cci": None, "sent": {}}
+            try:
+                feed = ccifeed.feed()
+                snap = feed.snapshot.get("100001.CCI")
+                if snap:
+                    out["cci"] = snap
+            except Exception:
+                pass
+            try:
+                root = Path(str(getattr(self.config, "reports_root", "") or ""))
+                for market in ("hk", "us"):
+                    stance = sig.sentiment_stance(
+                        market, root if str(root) else None)
+                    if stance:
+                        out["sent"][market] = stance
+            except Exception:
+                pass
+            return out
+
+        def _deliver(result: dict) -> None:
+            if not self.is_mounted:
+                return
+            lines = []
+            labels = {"000001.SS": "SH COMP", "HSI": "HSI", "QQQ": "QQX(US)"}
+            for sym, label in labels.items():
+                q = (result.get("quotes") or {}).get(sym)
+                if not q:
+                    continue
+                chg = ((q["last"] / q["prev_close"] - 1) * 100
+                       if q.get("prev_close") else 0.0)
+                lines.append(
+                    f"  {label:<8} {q['last']:>10,.0f}  {chg:+5.2f}%")
+            cci = result.get("cci")
+            if cci and cci.get("last") is not None:
+                lines.append(f"  {'CCI':<8} {cci['last']:>10,.0f}"
+                             f"  {float(cci.get('chg_pct') or 0):+5.2f}%")
+            for market, stance in (result.get("sent") or {}).items():
+                lines.append(f"  tape {market.upper():<4} {stance.get('stance')}"
+                             f" {stance.get('score'):+.2f}")
+            if lines:
+                lines.append("  src: qt.gtimg.cn · ccidx · fin-daily")
+            try:
+                self.query_one("#dash-glance", Static).update(
+                    "\n".join(lines) or "  (no data)")
+            except Exception:
+                pass
+
+        _run_async(self, _work, _deliver, dedup_key="dash-glance")
 
     @property
     def _language(self) -> str:
@@ -201,6 +262,7 @@ class DashboardScreen(Screen):
             pass
 
     def on_mount(self) -> None:
+        self.set_interval(30.0, self._glance_tick)
         # No pre-selected row in Quick Start: hover feedback only on demand.
         self.query_one("#quick-list", OptionList).highlighted = None
         self._relabel()
@@ -384,7 +446,7 @@ class DashboardScreen(Screen):
             for p in pipelines
             if p.stem.lower() != "fullstack"
         ]
-        entries += [("CRYPTO", "domain:CRYPTO"), ("ENERGY", "domain:ENERGY")]
+        entries += [("ENERGY", "domain:ENERGY")]
         entries += [
             (plugin["label"], f"domain:{plugin['label']}")
             for plugin in (self.config.plugins if self.config else [])

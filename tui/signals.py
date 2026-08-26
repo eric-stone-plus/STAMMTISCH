@@ -189,6 +189,8 @@ _CCI_CATEGORY = {
 
 
 def cci_category(index_id: str) -> str:
+    if index_id in _CCI_SUBCATEGORY:
+        return _CCI_SUBCATEGORY[index_id]
     code = index_id.split(".")[0]
     return _CCI_CATEGORY.get(code, "COMPOSITE")
 
@@ -242,7 +244,7 @@ def cci_daily_board(data_dir: Path | None) -> list[dict[str, Any]]:
             "key": f"cci:{index_id}", "source": "cci",
             "code": index_id,
             "category": cci_category(index_id),
-            "name": index_id,
+            "name": cci_name(index_id),
             "unit": "pt",
             "last": last,
             "chg_pct": round((last / prev - 1) * 100, 2) if prev else None,
@@ -315,3 +317,73 @@ def us_headlines(reports_root: Path | None, limit: int = 4) -> list[dict[str, st
             if len(out) >= limit:
                 return out
     return out
+
+
+# Official index names (data, from the ccidx catalog used by the
+# fetch scripts) and refined sub-index categories.
+CCI_NAMES = {
+    "000001.CCI": "中证商品期货价格指数",
+    "000101.CCI": "中证工业品期货价格指数",
+    "000102.CCI": "中证农畜期货价格指数",
+    "000103.CCI": "中证贵金属期货价格指数",
+    "000104.CCI": "中证能化期货价格指数",
+    "000105.CCI": "中证有色金属期货价格指数",
+    "000106.CCI": "中证黑色期货价格指数",
+    "000107.CCI": "中证农产品期货价格指数",
+    "000108.CCI": "中证畜产品价格",
+    "000109.CCI": "中证能源价格",
+    "000110.CCI": "中证化工价格",
+    "000111.CCI": "中证油脂油料价格",
+    "000112.CCI": "中证谷物价格",
+    "000113.CCI": "中证软商品价格",
+    "000114.CCI": "中证油品价格",
+    "000115.CCI": "中证烯烃价格",
+    "000116.CCI": "中证芳烃价格",
+    "000117.CCI": "中证聚酯价格",
+    "000118.CCI": "中证橡胶价格",
+    "000119.CCI": "中证黑色原料价格",
+    "000120.CCI": "中证黑色成材价格",
+    "100001.CCI": "中证商品期货指数",
+    "100101.CCI": "中证工业品期货指数",
+    "100102.CCI": "中证农畜期货指数",
+    "100103.CCI": "中证贵金属期货指数",
+    "100104.CCI": "中证能化期货指数",
+    "100105.CCI": "中证有色金属期货指数",
+    "100106.CCI": "中证黑色期货指数",
+    "100107.CCI": "中证农产品期货指数",
+    "606001.CCI": "中证监控中国商品期货指数",
+    "606002.CCI": "中证监控中国农产品期货指数",
+    "606009.CCI": "中证监控中国工业品期货指数",
+    "606010.CCI": "监控能化",
+    "606011.CCI": "监控钢铁",
+    "630101.CCI": "中国国债期货收益指数10年期",
+    "630102.CCI": "中国国债期货收益指数5年期",
+    "630103.CCI": "中国国债期货收益指数2年期",
+    "900001.CCI": "中证中金公司商品期货综合指数"
+}
+
+_CCI_SUBCATEGORY = {
+    "000108.CCI": "AGRI-PRODUCTS",
+    "000109.CCI": "ENERGY-CHEM",
+    "000110.CCI": "ENERGY-CHEM",
+    "000111.CCI": "AGRI-PRODUCTS",
+    "000112.CCI": "AGRI-PRODUCTS",
+    "000113.CCI": "AGRI-PRODUCTS",
+    "000114.CCI": "ENERGY-CHEM",
+    "000115.CCI": "ENERGY-CHEM",
+    "000116.CCI": "ENERGY-CHEM",
+    "000117.CCI": "ENERGY-CHEM",
+    "000118.CCI": "ENERGY-CHEM",
+    "000119.CCI": "FERROUS",
+    "000120.CCI": "FERROUS",
+    "606001.CCI": "MONITOR",
+    "606002.CCI": "MONITOR",
+    "606009.CCI": "MONITOR",
+    "606010.CCI": "MONITOR",
+    "606011.CCI": "MONITOR",
+    "900001.CCI": "COMPOSITE"
+}
+
+
+def cci_name(index_id: str) -> str:
+    return CCI_NAMES.get(index_id, index_id)
