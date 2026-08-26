@@ -38,10 +38,18 @@ def _run_async(screen: Any, target: Callable, callback: Callable,
     if inflight is None:
         inflight = {}
         screen._async_inflight = inflight
+    # Per-key delivery generation: screens now run several keyed loads at
+    # once (futures board/adapters/quotes). A single screen-wide counter
+    # silently discarded every callback but the last-submitted one.
+    key_gen = getattr(screen, "_async_key_gen", None)
+    if key_gen is None:
+        key_gen = {}
+        screen._async_key_gen = key_gen
     if dedup_key is not None:
         if dedup_key in inflight:
             return
         inflight[dedup_key] = gen
+        key_gen[dedup_key] = gen
 
     def _worker():
         try:
@@ -56,7 +64,10 @@ def _run_async(screen: Any, target: Callable, callback: Callable,
         def _deliver():
             if not screen.is_mounted:
                 return
-            if getattr(screen, "_async_gen", 0) != gen:
+            if dedup_key is not None:
+                if getattr(screen, "_async_key_gen", {}).get(dedup_key) != gen:
+                    return
+            elif getattr(screen, "_async_gen", 0) != gen:
                 return
             try:
                 callback(result)
