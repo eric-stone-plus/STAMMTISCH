@@ -100,6 +100,14 @@ def market_phase(zone: str, now: datetime | None = None) -> str:
         if dtime(9, 15) <= now.time() <= dtime(11, 30) or dtime(13, 0) <= now.time() <= dtime(15, 0):
             return "open"
         return "closed" if t > 15 * 60 else "pre"
+    if zone == "HK":
+        now = now or datetime.now(CN_TZ)  # HKT == CST
+        if now.weekday() >= 5:
+            return "closed"
+        if (dtime(9, 30) <= now.time() <= dtime(12, 0)
+                or dtime(13, 0) <= now.time() <= dtime(16, 0)):
+            return "open"
+        return "pre" if now.hour * 60 + now.minute < 9 * 60 + 30 else "closed"
     if zone == "US":
         now = now or datetime.now(US_TZ)
         if now.weekday() >= 5:
