@@ -231,8 +231,28 @@ class FuturesScreen(Screen):
             )
             return
         _run_async(self, self._load, self._apply, dedup_key="futures-board")
+        _run_async(self, self._load_quotes, self._apply_quotes,
+                   dedup_key="futures-quotes")
 
     def _load(self) -> dict[str, Any]:
+        """Fast board pass: CCI parquets + exchange adapters, no network
+        round-trip on the critical path (provider quotes stream in via
+        _load_quotes and merge on arrival)."""
+        from ..engine import _missing_ohlcv, _normalize_symbol
+
+        quotes: dict[str, dict[str, Any]] = {}
+        if self._symbols:
+            try:
+                from quantkit.data import fetch_ohlcv
+            except ImportError:
+                quotes = {symbol: {"error": "quantkit is not installed"}
+                          for symbol in self._symbols}
+            else:
+                for symbol in self._symbols:
+                    quotes[symbol] = {"error": "pending"}
+        return self._assemble(quotes)
+
+    def _load_quotes(self) -> dict[str, Any]:
         from ..engine import _missing_ohlcv, _normalize_symbol
 
         quotes: dict[str, dict[str, Any]] = {}
@@ -289,6 +309,9 @@ class FuturesScreen(Screen):
                         "volume": float(df["volume"].iloc[-1] or 0),
                         "recent": recent,
                     }
+        return self._assemble(quotes)
+
+    def _assemble(self, quotes: dict[str, dict[str, Any]]) -> dict[str, Any]:
         # SGX shipping settlements (FFA) moved onto the futures board.
         shipping_board = None
         shipping_argv = tuple(self.config.shipping_argv) if self.config else ()
@@ -395,7 +418,9 @@ class FuturesScreen(Screen):
                 "volume": inst.get("volume") or 0,
                 "recent": recent, "curve": inst.get("curve") or [],
             })
-        items.extend(result.get("cci") or [])
+        # CCI (local parquet) leads so the default category is the one
+        # that renders instantly; provider-backed categories load later.
+        items = list(result.get("cci") or []) + items
         cats: list[str] = []
         by_cat: dict[str, list[dict[str, Any]]] = {}
         for item in items:
@@ -496,6 +521,32 @@ class FuturesScreen(Screen):
         curve_table.clear()
         for point in item.get("curve") or []:
             curve_table.add_row(point["month"], f"{point['settle']:,.2f}")
+
+    def _apply_quotes(self, result: dict[str, Any]) -> None:
+        """Second pass: merge provider quotes into the standing board."""
+        if not self.is_mounted or not result.get("ok"):
+            return
+        quotes = result.get("quotes") or {}
+        changed = False
+        for items in self._by_cat.values():
+            for item in items:
+                if item.get("source") != "yahoo":
+                    continue
+                quote = quotes.get(item.get("code"))
+                if not quote:
+                    continue
+                if "error" in quote:
+                    if item.get("error") != quote["error"]:
+                        item["error"] = quote["error"]
+                        changed = True
+                    continue
+                for field in ("last", "chg_pct", "pct5", "pct20", "volume", "recent"):
+                    if field in quote:
+                        item[field] = quote[field]
+                item.pop("error", None)
+                changed = True
+        if changed:
+            self._render_board()
 
     def _apply(self, result: dict[str, Any]) -> None:
         if not result.get("ok"):
