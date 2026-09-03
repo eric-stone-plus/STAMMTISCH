@@ -26,6 +26,7 @@ pub enum Command {
         public_key: Option<PathBuf>,
     },
     Delete { run_id: String, force: bool },
+    Version,
 }
 
 pub struct Cli {
@@ -64,6 +65,12 @@ pub fn parse_args(args: &[String]) -> Result<Cli, AppError> {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--version" => {
+                return Ok(Cli {
+                    json: false,
+                    command: Command::Version,
+                })
+            }
             "--json" => json = true,
             "--force" => force = true,
             "--abandoned" => abandoned = true,
@@ -192,12 +199,17 @@ pub fn command_name(c: &Command) -> &'static str {
         Command::Export { .. } => "export",
         Command::Verify { .. } => "verify",
         Command::Delete { .. } => "delete",
+        Command::Version => "version",
     }
 }
 
 /// Execute one command: prints the envelope when `--json`, human text on
 /// stderr always, and returns the process exit code.
 pub fn dispatch(cli: &Cli) -> i32 {
+    if matches!(cli.command, Command::Version) {
+        println!("stammtisch-core {}", env!("CARGO_PKG_VERSION"));
+        return 0;
+    }
     let name = command_name(&cli.command);
     match execute(&cli.command) {
         Ok((code, data, human)) => {
@@ -880,6 +892,11 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
             let data = json!({"run_id": run_id, "state": state, "removed": true});
             Ok((0, data, format!("deleted run {run_id}")))
         }
+        Command::Version => Ok((
+            0,
+            json!({ "version": env!("CARGO_PKG_VERSION") }),
+            format!("stammtisch-core {}", env!("CARGO_PKG_VERSION")),
+        )),
     }
 }
 
@@ -899,4 +916,17 @@ fn require_root() -> Result<StateRoot, AppError> {
 
 fn runs_len(data: &Value) -> usize {
     data["runs"].as_array().map(Vec::len).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_flag_parses_and_prints_identity() {
+        let cli = parse_args(&["--version".to_string()]).expect("--version parses");
+        assert!(matches!(cli.command, Command::Version));
+        assert_eq!(dispatch(&cli), 0);
+        assert_eq!(command_name(&cli.command), "version");
+    }
 }

@@ -1,0 +1,154 @@
+name: Release binaries
+run-name: Release v${{ inputs.version }} from ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable Cargo version to release (for example 0.1.0)
+        required: true
+        type: string
+
+concurrency:
+  group: stammtisch-release
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  RELEASE_CANDIDATE: ${{ github.sha }}
+
+jobs:
+  validate:
+    name: Bind immutable release candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+      - name: Reject reused identity or candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-guard.sh "$RELEASE_VERSION" "$RELEASE_CANDIDATE"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: stammtisch-core-x86_64-apple-darwin.tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: stammtisch-core-aarch64-apple-darwin.tar.gz
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: stammtisch-core-x86_64-unknown-linux-gnu.tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: stammtisch-core-aarch64-unknown-linux-gnu.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ env.RELEASE_CANDIDATE }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - name: Test native target
+        run: cargo test --locked --all-features --target "${{ matrix.target }}"
+      - name: Build release binary
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+      - name: Verify binary identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_CANDIDATE"
+          test "$(target/${{ matrix.target }}/release/stammtisch-core --version)" = "stammtisch-core $RELEASE_VERSION"
+      - name: Package binary
+        run: tar -C "target/${{ matrix.target }}/release" -czf "${{ matrix.archive }}" stammtisch-core
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    name: Create immutable tag and release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_CANDIDATE }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Recheck candidate and exact asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/release-guard.sh "$RELEASE_VERSION" "$RELEASE_CANDIDATE"
+          scripts/release-guard.sh --assets dist
+      - name: Create annotated tag through non-updating REST endpoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$RELEASE_VERSION"
+          tag_object="$(jq -nc \
+            --arg tag "$tag" \
+            --arg message "Release $tag" \
+            --arg object "$RELEASE_CANDIDATE" \
+            --arg name "github-actions[bot]" \
+            --arg email "41898282+github-actions[bot]@users.noreply.github.com" \
+            '{tag:$tag,message:$message,object:$object,type:"commit",tagger:{name:$name,email:$email}}')"
+          tag_sha="$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+            --input - --jq '.sha' <<<"$tag_object")"
+          [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]]
+          ref_object="$(jq -nc --arg ref "refs/tags/$tag" --arg sha "$tag_sha" '{ref:$ref,sha:$sha}')"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" --input - <<<"$ref_object" >/dev/null
+      - name: Verify remote tag and publish exact checksummed assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$RELEASE_VERSION"
+          git fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
+          test "$(git cat-file -t "$tag")" = tag
+          test "$(git rev-parse "$tag^{commit}")" = "$RELEASE_CANDIDATE"
+          cd dist
+          LC_ALL=C sha256sum \
+            stammtisch-core-aarch64-apple-darwin.tar.gz \
+            stammtisch-core-aarch64-unknown-linux-gnu.tar.gz \
+            stammtisch-core-x86_64-apple-darwin.tar.gz \
+            stammtisch-core-x86_64-unknown-linux-gnu.tar.gz > SHA256SUMS
+          cd ..
+          scripts/release-guard.sh --assets dist --checksums
+          gh release create "$tag" \
+            dist/stammtisch-core-aarch64-apple-darwin.tar.gz \
+            dist/stammtisch-core-aarch64-unknown-linux-gnu.tar.gz \
+            dist/stammtisch-core-x86_64-apple-darwin.tar.gz \
+            dist/stammtisch-core-x86_64-unknown-linux-gnu.tar.gz \
+            dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --target "$RELEASE_CANDIDATE" \
+            --generate-notes
