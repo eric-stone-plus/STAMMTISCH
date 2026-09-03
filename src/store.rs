@@ -103,11 +103,11 @@ pub fn fsync_dir(dir: &Path) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        // Linux/POSIX O_DIRECTORY: fail closed if `dir` is not a directory.
-        const O_DIRECTORY: i32 = 0o200000;
+        // O_DIRECTORY (value differs per OS/arch — libc owns it): fail
+        // closed if `dir` is not a directory.
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(O_DIRECTORY)
+            .custom_flags(libc::O_DIRECTORY)
             .open(dir)
             .map_err(|e| {
                 AppError::internal(format!(

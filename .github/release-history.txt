@@ -1,3 +1,4 @@
 # Burned STAMMTISCH package versions. Entries are permanent, whether an attempt
 # succeeded, failed, was cancelled, was deleted, or reused a tag.
 0.1.0 attempted-validate-jq-syntax
+0.1.1 attempted-ci-fsync-dir-portability

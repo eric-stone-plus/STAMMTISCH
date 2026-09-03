@@ -1,11 +1,12 @@
 [package]
 name = "stammtisch"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "CLI-first delivery platform: deterministic pipelines, evidence store, offline-verifiable bundles"
 license = "Apache-2.0"
 
 [dependencies]
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
