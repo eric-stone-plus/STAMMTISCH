@@ -39,7 +39,9 @@ class MirrorParityTest(unittest.TestCase):
 
         close = _trending_close()
         result = run_long_only(close, dual_ma_signal(close), cost_tier="low")
-        mirror = _dual_ma_metrics(close.to_numpy(float), 20.0)
+        # quantkit charges half the round-trip tier per one-sided unit:
+        # "low" 0.2% round trip = 10 bps per side.
+        mirror = _dual_ma_metrics(close.to_numpy(float), 10.0)
         self.assertAlmostEqual(mirror["tr"], result.total_return, places=8)
         self.assertAlmostEqual(mirror["sharpe"], result.sharpe, places=2)
         self.assertEqual(mirror["trades"], result.trades)

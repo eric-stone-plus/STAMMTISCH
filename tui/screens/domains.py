@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import threading
-import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,23 +10,13 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
-from textual.message import Message
-from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Input, OptionList, Select, Static, TextArea
+from textual.widgets import DataTable, Footer, Static
 from rich.text import Text
-from textual.widgets.option_list import Option
 
-from ..driver import StammtischDriver
-from ..ai_driver import AIDriver, ChatResponse
 from ..engine import QuantEngine
-from ..analysis import DataFetchScreen, BacktestScreen, IndicatorsScreen, PortfolioScreen, GatesScreen
+from ..analysis import DataFetchScreen, BacktestScreen, IndicatorsScreen, PortfolioScreen
 from ..analysis import _run_async
-from ..widgets import (
-    GRAY, DIM, GREEN, AMBER, RED, CYAN, WHITE,
-    status_badge, DigestWidget, EventTimeline, GateCard,
-    StageFlowWidget, SystemHud,
-)
 
 import logging
 
@@ -264,12 +251,11 @@ class FuturesScreen(Screen):
         """Fast board pass: CCI parquets + exchange adapters, no network
         round-trip on the critical path (provider quotes stream in via
         _load_quotes and merge on arrival)."""
-        from ..engine import _missing_ohlcv, _normalize_symbol
 
         quotes: dict[str, dict[str, Any]] = {}
         if self._symbols:
             try:
-                from quantkit.data import fetch_ohlcv
+                import quantkit.data  # noqa: F401 — availability probe only
             except ImportError:
                 quotes = {symbol: {"error": "quantkit is not installed"}
                           for symbol in self._symbols}
@@ -442,7 +428,6 @@ class FuturesScreen(Screen):
                 "recent": recent,
                 "curve": inst.get("curve") or [],
             })
-        shipping = result.get("shipping") or {}
         # FFA settlements render on the SHIPPING board again (2026-08-26);
         # the futures board stays CCI-only plus its exchange groups.
         # CCI (local parquet) leads so the default category is the one
@@ -550,10 +535,20 @@ class FuturesScreen(Screen):
             curve_table.add_row(point["month"], f"{point['settle']:,.2f}")
 
     def _apply_adapters(self, result: dict[str, Any]) -> None:
-        """Merge exchange settlements into the standing board."""
+        """Merge exchange settlements into the standing board.
+
+        The rebuild must keep every yahoo row alive: quotes already
+        merged win, symbols still loading keep their pending placeholder
+        (an adapter pass that lands before the quote pass would otherwise
+        wipe the rows, and `_apply_quotes` can only update rows that
+        still exist). ``result["quotes"]`` must not shadow the merge.
+        """
         if not self.is_mounted or not result.get("ok"):
             return
-        self._build_items({"quotes": self._quotes_cache, **result})
+        quotes = dict(self._quotes_cache)
+        for symbol in self._symbols:
+            quotes.setdefault(symbol, {"error": "pending"})
+        self._build_items({**result, "quotes": quotes})
         self._render_strip()
         self._render_board()
         if result.get("adapter_error"):

@@ -22,7 +22,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer, Vertical
+from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Input, Static
 

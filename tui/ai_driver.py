@@ -69,6 +69,7 @@ def _get_api_key() -> str | None:
     """Resolve the AI API key from env vars or the TUI config file."""
     # 1. Environment variables (current names first, legacy names still honored)
     for var in [
+        "QIANWEN_TP_PERSONAL_KEY",
         "ANTHROPIC_API_KEY",
         "XIAOMI_API_KEY",
         "GLM_API_KEY",

@@ -29,7 +29,6 @@ from tui.chart_server import (
     ChartHandler,
     ThreadingHTTPServer,
     candles_payload,
-    ensure_running,
     find_available_port,
     is_running,
     parse_validated_reference,

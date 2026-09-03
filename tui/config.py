@@ -28,9 +28,11 @@ def default_config_file() -> Path:
 # remembered in the ai_profile_keys config dict, so switching back and
 # forth never requires re-entering keys.
 AI_PROFILES = {
-    "glm": ("GLM official (bigmodel v4)", "https://open.bigmodel.cn/api/paas/v4", "glm-5.3"),
+    "glm": ("GLM official (bigmodel, Anthropic)", "https://open.bigmodel.cn/api/anthropic", "glm-5.3"),
     "mimo": ("MiMo (Xiaomi Anthropic)", "https://token-plan-cn.xiaomimimo.com/anthropic", "mimo-v2.5-pro"),
     "deepseek": ("DeepSeek official", "https://api.deepseek.com/v1", "deepseek-v4-pro"),
+    "qwen": ("Qwen3.8 Max (Bailian Token Plan, Anthropic)",
+             "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic", "qwen3.8-max"),
 }
 
 
@@ -185,7 +187,8 @@ class Config:
         # Environment variable overrides (never persisted to disk).
         # Current GLM names first; legacy DeepSeek names stay honored.
         env_key = (
-            os.environ.get("ANTHROPIC_API_KEY")
+            os.environ.get("QIANWEN_TP_PERSONAL_KEY")
+            or os.environ.get("ANTHROPIC_API_KEY")
             or os.environ.get("XIAOMI_API_KEY")
             or os.environ.get("GLM_API_KEY")
             or os.environ.get("ZHIPU_API_KEY")

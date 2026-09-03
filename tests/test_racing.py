@@ -107,7 +107,6 @@ class RacingScreenTest(unittest.TestCase):
 
         async def run():
             screen = RacingScreen(config)
-            app = mock.Mock()
             # run_test needs a real app context; mount through a host app
             from textual.app import App
 

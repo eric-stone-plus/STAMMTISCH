@@ -3,32 +3,24 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
-import time
-from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
-from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Input, OptionList, Select, Static, TextArea
-from rich.text import Text
+from textual.widgets import Button, Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ..driver import StammtischDriver
-from ..ai_driver import AIDriver, ChatResponse
-from ..engine import QuantEngine
-from ..analysis import DataFetchScreen, BacktestScreen, IndicatorsScreen, PortfolioScreen, GatesScreen
+from ..ai_driver import AIDriver
 from ..analysis import _run_async
 from ..widgets import (
-    GRAY, DIM, GREEN, AMBER, RED, CYAN, WHITE,
-    status_badge, DigestWidget, EventTimeline, GateCard,
-    StageFlowWidget, SystemHud,
+    DigestWidget, EventTimeline, GateCard,
+    StageFlowWidget,
 )
 
 import logging

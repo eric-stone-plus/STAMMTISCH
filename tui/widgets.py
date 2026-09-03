@@ -65,9 +65,9 @@ class StageFlowWidget(Widget):
                 out.append("      │\n", style=DIM if state != "completed" else GREEN)
                 out.append("      ▼\n", style=DIM if state != "completed" else GREEN)
 
-            out.append(f"  [", style=DIM)
+            out.append("  [", style=DIM)
             out.append(f"{state.upper():>9}", style=color)
-            out.append(f"] ", style=DIM)
+            out.append("] ", style=DIM)
             out.append(f"{icon}", style=f"bold {color}")
             out.append(f" ─ {product}\n", style=GRAY)
 

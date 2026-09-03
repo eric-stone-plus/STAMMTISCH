@@ -116,8 +116,6 @@ class SubprocShimTest(unittest.TestCase):
                 f"open({str(marker)!r}, 'w').write(str(os.getpid())); "
                 "time.sleep(120)"
             )
-            done = threading.Event()
-
             def _work() -> None:
                 run_bounded([sys.executable, "-c", code], 120, "owned")
 

@@ -215,33 +215,6 @@ class DomainDriverSpvalTest(unittest.TestCase):
         self.assertIn("schema", result["error"])
 
 
-class DomainDriverSpvalTest(unittest.TestCase):
-    def test_spval_roundtrip_with_validator(self) -> None:
-        script = _script(
-            f"""
-            import json
-            print(json.dumps({VALID_SPVAL_BOARD!r}))
-            """
-        )
-        self.addCleanup(os.unlink, script)
-        result = DomainDriver((sys.executable, script),
-                              validator=validate_spval_board).board()
-        self.assertTrue(result["ok"], result.get("error"))
-        self.assertEqual(result["maxbid"]["value"], 4803150.0)
-
-    def test_default_validator_still_sgx(self) -> None:
-        script = _script(
-            f"""
-            import json
-            print(json.dumps({VALID_SPVAL_BOARD!r}))
-            """
-        )
-        self.addCleanup(os.unlink, script)
-        result = DomainDriver((sys.executable, script)).board()
-        self.assertFalse(result["ok"])
-        self.assertIn("schema", result["error"])
-
-
 VALID_SPVAL_BOARD_V2 = dict(VALID_SPVAL_BOARD, **{
     "schema": "stammtisch.spval-board.v2",
     "market": {

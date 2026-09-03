@@ -22,8 +22,29 @@ def run_cli(*args: str) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
+# Operator shells really export API keys; tests asserting on the key
+# resolution chain must start from a clean environment.
+_ENV_HYGIENE_KEYS = (
+    "QIANWEN_TP_PERSONAL_KEY", "ANTHROPIC_API_KEY", "XIAOMI_API_KEY",
+    "GLM_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY", "DEEPSEEK_KEY",
+    "DEEPSEEK_TOKEN", "EIA_API_KEY",
+)
+
+
+def _strip_key_env() -> dict[str, str]:
+    saved = {k: os.environ[k] for k in _ENV_HYGIENE_KEYS if k in os.environ}
+    for key in saved:
+        del os.environ[key]
+    return saved
+
+
+def _restore_key_env(saved: dict[str, str]) -> None:
+    os.environ.update(saved)
+
+
 class ConfigCliTest(unittest.TestCase):
     def setUp(self) -> None:
+        self._saved_key_env = _strip_key_env()
         self.tmp = tempfile.TemporaryDirectory()
         self.cfg_path = os.path.join(self.tmp.name, "config.json")
         self.env_patch = mock.patch.dict(
@@ -34,6 +55,7 @@ class ConfigCliTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.env_patch.stop()
         self.tmp.cleanup()
+        _restore_key_env(self._saved_key_env)
 
     def test_default_config_file_env_override(self) -> None:
         self.assertEqual(str(default_config_file()), self.cfg_path)
@@ -220,6 +242,7 @@ class AiProfileSwitchTest(unittest.TestCase):
     """`config use PROFILE` swaps base_url/model and remembers keys per profile."""
 
     def setUp(self) -> None:
+        self._saved_key_env = _strip_key_env()
         self.tmp = tempfile.TemporaryDirectory()
         self.cfg_path = os.path.join(self.tmp.name, "config.json")
         self.env_patch = mock.patch.dict(
@@ -230,6 +253,7 @@ class AiProfileSwitchTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.env_patch.stop()
         self.tmp.cleanup()
+        _restore_key_env(self._saved_key_env)
 
     def _saved(self) -> dict:
         with open(self.cfg_path) as handle:

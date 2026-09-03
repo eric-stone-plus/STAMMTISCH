@@ -25,7 +25,26 @@ from tui.app import StammtischTUI
 from tui.screens import ConfigScreen, DashboardScreen
 
 
+# Operator shells really export API keys; headless app boots must resolve
+# their AI credentials from the fixture config, not the host environment.
+_ENV_HYGIENE_KEYS = (
+    "QIANWEN_TP_PERSONAL_KEY", "ANTHROPIC_API_KEY", "XIAOMI_API_KEY",
+    "GLM_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY", "DEEPSEEK_KEY",
+    "DEEPSEEK_TOKEN", "EIA_API_KEY",
+)
+
+
 class TuiSmokeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._saved_key_env = {
+            k: os.environ[k] for k in _ENV_HYGIENE_KEYS if k in os.environ
+        }
+        for key in self._saved_key_env:
+            del os.environ[key]
+
+    def tearDown(self) -> None:
+        os.environ.update(self._saved_key_env)
+
     def test_clickable_menus_and_edit_screen(self) -> None:
         asyncio.run(self._scenario())
 
@@ -479,15 +498,11 @@ class TuiSmokeTest(unittest.TestCase):
                     async with app.run_test(size=(100, 30)) as pilot:
                         await pilot.pause()
                         self.assertIsInstance(app.screen, DashboardScreen)
-                        # ENERGY is a Plugins-list module, alphabetically
-                        # after CRYPTO.
+                        # ENERGY is a built-in Plugins-list module (CRYPTO
+                        # left the launcher deliberately).
                         pipeline_list = app.screen.query_one("#pipeline-list", OptionList)
                         option_labels = [str(option.prompt) for option in pipeline_list.options]
-                        self.assertIn("CRYPTO", option_labels)
                         self.assertIn("ENERGY", option_labels)
-                        self.assertLess(
-                            option_labels.index("CRYPTO"), option_labels.index("ENERGY")
-                        )
                         pipeline_list.focus()
                         pipeline_list.highlighted = option_labels.index("ENERGY")
                         await pilot.press("enter")
@@ -579,7 +594,9 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertEqual(board.row_count, 2)
                         row = [str(cell) for cell in board.get_row_at(0)]
                         self.assertEqual(row[0], "600188.SS")
-                        self.assertEqual(row[1], "15.20")
+                        # Columns are CODE/NAME/RECO/LAST… since the
+                        # screen-rank RECO board; LAST sits at index 3.
+                        self.assertEqual(row[3], "15.20")
                         # Recent detail renders for the highlighted row.
                         recent = app.screen.query_one("#sec-recent", DataTable)
                         self.assertGreater(recent.row_count, 0)
@@ -907,10 +924,22 @@ class TuiSmokeTest(unittest.TestCase):
                 # Default futures_symbols (["BZ=F"]) applies.
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
+            quotes_result = {
+                "ok": True, "quotes": canned["quotes"], "adapter": None,
+                "adapter_error": None, "shipping": None, "cci": [],
+            }
+            adapters_result = {
+                "ok": True, "quotes": {}, "adapter": None,
+                "adapter_error": None, "shipping": None, "cci": [],
+            }
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
                 with mock.patch.object(
                     FuturesScreen, "_load", lambda self: canned
+                ), mock.patch.object(
+                    FuturesScreen, "_load_quotes", lambda self: quotes_result
+                ), mock.patch.object(
+                    FuturesScreen, "_load_adapters", lambda self: adapters_result
                 ):
                     async with app.run_test(size=(120, 40)) as pilot:
                         await pilot.pause()
@@ -932,7 +961,8 @@ class TuiSmokeTest(unittest.TestCase):
                         row = [str(cell) for cell in board.get_row_at(0)]
                         self.assertEqual(row[0], "BZ=F")
                         self.assertIn("Brent", row[1])
-                        self.assertEqual(row[2], "88.52")
+                        # CODE/NAME/RECO/LAST… — LAST sits at index 3.
+                        self.assertEqual(row[3], "88.52")
                         recent = app.screen.query_one("#fut-recent", DataTable)
                         self.assertGreater(recent.row_count, 0)
                         await pilot.press("escape")
@@ -958,7 +988,7 @@ class TuiSmokeTest(unittest.TestCase):
                 "ok": True, "schema": "mktdaily.sgx-board.v1", "asof": "2026-08-14",
                 "instruments": [
                     {
-                        "code": "MF5F", "group": "Bunker",
+                        "code": "MF5F", "group": "Chem",
                         "name": "Marine Fuel 0.5% FOB Singapore (VLSFO)",
                         "unit": "USD/mt", "front_month": "2026-08",
                         "settle": 734.81, "volume": 10.0, "open_interest": 81.0,
@@ -970,7 +1000,7 @@ class TuiSmokeTest(unittest.TestCase):
                                     "month": "2026-08"}],
                     },
                     {
-                        "code": "GOF", "group": "Bunker",
+                        "code": "GOF", "group": "Chem",
                         "name": "Gasoil FOB Singapore", "unit": "USD/bbl",
                         "front_month": "2026-08", "settle": 156.11,
                         "volume": 0.0, "open_interest": 0.0,
@@ -994,9 +1024,19 @@ class TuiSmokeTest(unittest.TestCase):
                 "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
+            quotes_result = {
+                "ok": True, "quotes": canned["quotes"], "adapter": None,
+                "adapter_error": None, "shipping": None, "cci": [],
+            }
+            adapters_result = {
+                "ok": True, "quotes": {}, "adapter": canned["adapter"],
+                "adapter_error": None, "shipping": None, "cci": [],
+            }
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                with mock.patch.object(FuturesScreen, "_load", lambda self: canned):
+                with mock.patch.object(FuturesScreen, "_load", lambda self: canned), \
+                     mock.patch.object(FuturesScreen, "_load_quotes", lambda self: quotes_result), \
+                     mock.patch.object(FuturesScreen, "_load_adapters", lambda self: adapters_result):
                     async with app.run_test(size=(130, 42)) as pilot:
                         await pilot.pause()
                         app.push_screen(FuturesScreen(app.screen.engine, app.screen.config))
@@ -1012,8 +1052,10 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertEqual(str(board.get_row_at(0)[0]), "BZ=F")
                         strip = str(app.screen.query_one("#fut-cats", Static).render())
                         self.assertIn("ENERGY", strip)
-                        self.assertIn("BUNKER", strip)
-                        # Switch to the BUNKER category: the two fuel rows.
+                        # Bunker groups render on the SHIPPING board now;
+                        # the futures board keeps every other SGX group.
+                        self.assertIn("CHEM", strip)
+                        # Switch to the CHEM category: the two fuel rows.
                         await pilot.press("right")
                         await pilot.pause()
                         self.assertEqual(board.row_count, 2)
@@ -1053,7 +1095,7 @@ class TuiSmokeTest(unittest.TestCase):
             "adapter": {
                 "ok": True, "schema": "mktdaily.sgx-board.v1", "asof": "2026-08-14",
                 "instruments": [{
-                    "code": "MF5F", "group": "Bunker",
+                    "code": "MF5F", "group": "Chem",
                     "name": "Marine Fuel 0.5% FOB Singapore (VLSFO)",
                     "unit": "USD/mt", "front_month": "2026-08",
                     "settle": 734.81, "volume": 10.0, "open_interest": 81.0,
@@ -1077,9 +1119,19 @@ class TuiSmokeTest(unittest.TestCase):
                 "external_bars_root": str(root / "export"),
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
+            quotes_result = {
+                "ok": True, "quotes": canned["quotes"], "adapter": None,
+                "adapter_error": None, "shipping": None, "cci": [],
+            }
+            adapters_result = {
+                "ok": True, "quotes": {}, "adapter": canned["adapter"],
+                "adapter_error": None, "shipping": None, "cci": [],
+            }
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                with mock.patch.object(FuturesScreen, "_load", lambda self: canned):
+                with mock.patch.object(FuturesScreen, "_load", lambda self: canned), \
+                     mock.patch.object(FuturesScreen, "_load_quotes", lambda self: quotes_result), \
+                     mock.patch.object(FuturesScreen, "_load_adapters", lambda self: adapters_result):
                     async with app.run_test(size=(130, 42)) as pilot:
                         await pilot.pause()
                         app.push_screen(FuturesScreen(app.screen.engine, app.screen.config))
@@ -1445,7 +1497,7 @@ class TuiSmokeTest(unittest.TestCase):
                     self.assertIsInstance(app.screen, DashboardScreen)
 
     async def _plugins_click_scenario(self) -> None:
-        from tui.polymarket import CryptoScreen
+        from tui.energy import EnergyScreen
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1456,35 +1508,34 @@ class TuiSmokeTest(unittest.TestCase):
                 "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
                 "plugins": [{"label": "futures", "root": str(futures)}],
             }), encoding="utf-8")
-            fake_pm = {"ok": True, "markets": [], "error": None}
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                with mock.patch("tui.polymarket.fetch_markets", return_value=fake_pm):
-                    async with app.run_test(size=(120, 40)) as pilot:
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    pipeline_list = app.screen.query_one("#pipeline-list", OptionList)
+                    labels = [str(option.prompt) for option in pipeline_list.options]
+                    # Pipelines, built-in modules, and configured
+                    # plugins share one alphabetical list (CRYPTO left
+                    # the launcher deliberately).
+                    self.assertEqual(
+                        labels[:3], ["ENERGY", "FUTURES", "SECURITY"]
+                    )
+                    self.assertNotIn("FULLSTACK", labels)
+                    self.assertIn("SECURITY", labels)
+                    # The list draws a top border, so option row N sits
+                    # at y=N+1 relative to the widget region; ENERGY is
+                    # the first row.
+                    await pilot.click("#pipeline-list", offset=(3, 1))
+                    for _ in range(20):
                         await pilot.pause()
-                        pipeline_list = app.screen.query_one("#pipeline-list", OptionList)
-                        labels = [str(option.prompt) for option in pipeline_list.options]
-                        # Pipelines, built-in modules, and configured
-                        # plugins share one alphabetical list.
-                        self.assertEqual(
-                            labels[:3], ["CRYPTO", "ENERGY", "FUTURES"]
-                        )
-                        self.assertNotIn("FULLSTACK", labels)
-                        self.assertIn("SECURITY", labels)
-                        # The list draws a top border, so option row N sits
-                        # at y=N+1 relative to the widget region; CRYPTO is
-                        # the first row.
-                        await pilot.click("#pipeline-list", offset=(3, 1))
-                        for _ in range(20):
-                            await pilot.pause()
-                            if not isinstance(app.screen, DashboardScreen):
-                                break
-                        # Clicking the CRYPTO row must open CRYPTO, not the
-                        # row below it.
-                        self.assertIsInstance(app.screen, CryptoScreen)
-                        await pilot.press("escape")
-                        await pilot.pause()
-                        self.assertIsInstance(app.screen, DashboardScreen)
+                        if not isinstance(app.screen, DashboardScreen):
+                            break
+                    # Clicking the ENERGY row must open ENERGY, not the
+                    # row below it.
+                    self.assertIsInstance(app.screen, EnergyScreen)
+                    await pilot.press("escape")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, DashboardScreen)
 
     async def _quick_click_scenario(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1893,8 +1944,6 @@ class TuiSmokeTest(unittest.TestCase):
                     # Above the driver's ceiling: the config editor accepts
                     # it, IntakeDriver rejects it.
                     "intake_timeout_seconds": 7200,
-                    # Keeps the landing view's history index inside tmp.
-                    "workspace_root": os.path.join(tmp, "ws"),
                 }, f)
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": cfg_path}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
@@ -1937,9 +1986,9 @@ class TuiSmokeTest(unittest.TestCase):
             (root / "ws").mkdir()
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
-                "intake_cmd": "fixture-intake",
+                "state_root": str(root / "state"),
                 "workspace_root": str(root / "ws"),
+                "intake_cmd": "fixture-intake",
             }), encoding="utf-8")
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
@@ -2071,7 +2120,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as handle:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
+                    "state_root": os.path.join(tmp, "state"),
                     "workspace_root": str(workspace),
                 }, handle)
             # A session file left `capturing` on disk by an app that died
@@ -2391,7 +2440,7 @@ class TuiSmokeTest(unittest.TestCase):
             }, ensure_ascii=False), encoding="utf-8")
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
+                "state_root": str(root / "state"),
                 "data_dir": str(root / "data"),
                 "intake_cmd": "fixture-intake",
                 "workspace_root": str(root),
@@ -2536,7 +2585,7 @@ class TuiSmokeTest(unittest.TestCase):
             )
             cfg_path = root / "config.json"
             cfg_path.write_text(json.dumps({
-                "state_root": str(root / "state"), "workspace_root": str(root / "ws"),
+                "state_root": str(root / "state"),
                 "data_dir": str(root / "data"),
                 "intake_cmd": "fixture-intake",
                 "workspace_root": str(root),
@@ -2607,7 +2656,7 @@ class TuiSmokeTest(unittest.TestCase):
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w") as f:
                 json.dump({
-                    "state_root": os.path.join(tmp, "state"), "workspace_root": os.path.join(tmp, "ws"),
+                    "state_root": os.path.join(tmp, "state"),
                     "data_dir": os.path.join(tmp, "data"),
                     "reports_root": str(reports),
                     "workspace_root": str(workspace),
@@ -2631,7 +2680,6 @@ class TuiSmokeTest(unittest.TestCase):
                     self.assertIsInstance(app.screen, DashboardScreen)
 
     async def _pipeline_view_scenario(self) -> None:
-        from textual.widgets import TextArea
 
         from tui.screens import PipelineViewScreen
 
@@ -2727,7 +2775,11 @@ class TuiSmokeTest(unittest.TestCase):
                     # general utilities in the bottom Quick Start list.
                     pipeline_list = app.screen.query_one("#pipeline-list", OptionList)
                     option_labels = [str(option.prompt) for option in pipeline_list.options]
-                    self.assertIn("CRYPTO", option_labels)
+                    # ENERGY is the only built-in domain entry; CRYPTO/CASINO
+                    # left the launcher deliberately (widescreen-fill commit).
+                    self.assertIn("ENERGY", option_labels)
+                    self.assertNotIn("CRYPTO", option_labels)
+                    self.assertNotIn("CASINO", option_labels)
 
                     quick = app.screen.query_one("#quick-list", OptionList)
                     labels = [str(option.prompt) for option in quick.options]
@@ -2808,35 +2860,10 @@ class TuiSmokeTest(unittest.TestCase):
                     await pilot.pause()
                     self.assertIsInstance(app.screen, DashboardScreen)
 
-                    # C opens the Crypto module (Polymarket tape, no network).
-                    from tui.polymarket import CryptoScreen
-
-                    fake_pm = {
-                        "ok": True,
-                        "markets": [{
-                            "id": "1",
-                            "question": "Will BTC close above 100k?",
-                            "slug": "btc-100k",
-                            "yes": 0.42,
-                            "volume24hr": 12500.0,
-                            "volume": 1e6,
-                            "end": "2026-12-31",
-                            "fee_rate": 0.07,
-                            "category": "Crypto",
-                        }],
-                        "error": None,
-                    }
-                    with mock.patch("tui.polymarket.fetch_markets", return_value=fake_pm):
-                        # CRYPTO row in the Plugins list opens the module.
-                        pipeline_list.highlighted = option_labels.index("CRYPTO")
-                        await pilot.press("enter")
-                        await pilot.pause()
-                        self.assertIsInstance(app.screen, CryptoScreen)
-                        body = str(app.screen.query_one("#pm-detail", Static).render())
-                        self.assertIn("Read-only", body)
-                        await pilot.press("escape")
-                        await pilot.pause()
-                    self.assertIsInstance(app.screen, DashboardScreen)
+                    # CRYPTO left the launcher deliberately (widescreen-fill
+                    # commit): no sidebar row, no key binding — the module's
+                    # own coverage lives in test_polymarket.py.
+                    self.assertNotIn("CRYPTO", option_labels)
 
 
 class _ok_result:

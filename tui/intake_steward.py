@@ -15,12 +15,11 @@ from __future__ import annotations
 import json
 import threading
 import time
-import urllib.error
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .intake_job import IntakeSupervisor, supervisor_for
+from .intake_job import supervisor_for
 
 TICK_SECONDS = 300.0
 _SHANGHAI = ZoneInfo("Asia/Shanghai")

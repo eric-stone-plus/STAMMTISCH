@@ -54,6 +54,9 @@ from .runs import (
 )
 from .config_screen import ConfigScreen
 
+# Every import above is part of the facade surface (including the
+# underscore helpers older callers still reach through this package),
+# so __all__ names them all instead of dropping them to F401 cleanup.
 __all__ = [
     "AskSessionScreen",
     "KeyHelpScreen",
@@ -77,4 +80,33 @@ __all__ = [
     "ValidateScreen",
     "security_zone",
     "run_session_title",
+    "SECURITY_ZONES",
+    "GENERAL_ITEMS",
+    "_ASK_INTRO",
+    "_INPUT_HISTORY_CAP",
+    "_SESSION_KEEP",
+    "_RowTable",
+    "_ask_dir",
+    "_atomic_write_json",
+    "_atomic_write_text",
+    "_created_stamp",
+    "_galahad_report_analysis",
+    "_history_store",
+    "_intake_session_parts",
+    "_load_json",
+    "_new_ask_session_id",
+    "_open_browser_chart",
+    "_pipeline_summary",
+    "_report_digest",
+    "_session_path",
+    "_thought_line",
+    "delete_ask_session",
+    "format_run_session_summary",
+    "list_ask_sessions",
+    "load_ask_session",
+    "load_input_history",
+    "render_ask_session",
+    "run_session_parts",
+    "save_ask_session",
+    "save_input_history",
 ]

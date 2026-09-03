@@ -32,12 +32,12 @@ MIN_MAXDD = -0.55  # drawdown floor: worse than -55% disqualifies
 
 FAST = 20
 SLOW = 50
-# Round-trip tier rates in bps. NOTE: the live engine currently charges
-# this FULL rate per unit of one-sided turnover (the private quantkit
-# copy predates the per-side halving the public mirror carries), so the
-# mirror below charges the same way — parity with the numbers the
-# decision chain sees beats textbook correctness here.
-COST_TIER_BPS = {"low": 20.0, "mid": 40.0, "high": 50.0}
+# Per-side rates in bps. quantkit COST_TIERS declare a round-trip
+# (both legs) rate and charge half per unit of one-sided turnover
+# (quantkit/backtest.py: ``per_side_bps = notional_bps / 2``), so the
+# mirror carries the same halved per-side numbers — parity with the
+# engine pass the decision chain trusts.
+COST_TIER_BPS = {"low": 10.0, "mid": 20.0, "high": 25.0}
 
 
 def _symbol_of(path: Path) -> str | None:

@@ -7,11 +7,10 @@ from typing import Any, Callable
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer, Vertical
+from textual.containers import ScrollableContainer
 from textual.screen import Screen
 from textual.widgets import Footer, Input, Static
 
-from .widgets import GRAY, DIM, GREEN, AMBER, RED, CYAN, WHITE
 
 import logging
 
@@ -174,10 +173,10 @@ class BacktestScreen(Screen):
                 recent += f"  Symbols: {', '.join(symbols)}"
             if strategies:
                 recent += f"  |  Strategies: {', '.join(strategies)}"
-        yield Static(f"  Backtest  |  Format: SYMBOL STRATEGY FAST SLOW  |  Esc back", classes="header-bar")
+        yield Static("  Backtest  |  Format: SYMBOL STRATEGY FAST SLOW  |  Esc back", classes="header-bar")
         if recent:
             yield Static(recent, classes="header-bar")
-        yield Input(placeholder=f"e.g. AAPL dual_ma 20 50", id="bt-input")
+        yield Input(placeholder="e.g. AAPL dual_ma 20 50", id="bt-input")
         with ScrollableContainer():
             yield Static(
                 "  Strategies:\n"
