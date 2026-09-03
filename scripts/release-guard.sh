@@ -242,7 +242,7 @@ jq -e '
   else
     (.total_count | type == "number") and (.workflow_runs | type == "array") and
     ((.workflow_runs | length) >= .total_count)
-  fi
+  end
 ' "$api_tmp/runs.json" >/dev/null \
   || die "Actions history returned malformed data"
 if jq -e \
