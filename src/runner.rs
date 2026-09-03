@@ -157,7 +157,21 @@ fn pid_is_alive(pid: u32) -> bool {
     {
         Path::new(&format!("/proc/{pid}")).exists()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        // Signal 0 probes existence without delivering anything. ESRCH:
+        // no such process. EINVAL: the pid cannot exist on this system.
+        // Anything else (success, EPERM) means a live process.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == 0 {
+            return true;
+        }
+        !matches!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(e) if e == libc::ESRCH || e == libc::EINVAL
+        )
+    }
+    #[cfg(not(unix))]
     {
         let _ = pid;
         // Unknown platform: treat as live so we never seal a run the

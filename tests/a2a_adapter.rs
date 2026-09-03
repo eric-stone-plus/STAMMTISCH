@@ -22,17 +22,29 @@ use stammtisch::runner::{run_pipeline, Terminal};
 use stammtisch::store::StateRoot;
 use support::fake_a2a::{FakeA2a, Script};
 
+/// Wall-clock nanoseconds alone collided across parallel test threads on
+/// macOS CI (coarse clock): two tests shared one state root, and the
+/// loser's Drop deleted the winner's run mid-flight. Pid + an atomic
+/// sequence number make the suffix unique by construction.
+fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!(
+        "{nanos}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::SeqCst)
+    )
+}
+
 struct Tmp(PathBuf);
 
 impl Tmp {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "stammtisch-a2a-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = std::env::temp_dir().join(format!("stammtisch-a2a-{}", unique_suffix()));
         fs::create_dir_all(&dir).unwrap();
         Self(dir)
     }
