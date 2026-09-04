@@ -225,6 +225,12 @@ string — mainnet `"live"` included — stays refused
 sessions keep `galahad.paper-session.v1`. No shipped example pipeline
 uses it: the offline-first rule is unchanged.
 
+The adapter reads `GALAHAD_CONFIG` (operator-local, same injection style
+as `GALAHAD_HOME` / `GALAHAD_PYTHON`) and forwards it as `--config`, so
+local rehearsals can point at config overrides (risk gate, session bound,
+venue endpoints) without putting host paths in a pipeline spec. Absent
+the env gate the product falls back to its own default `config.yaml`.
+
 ### 5.3 A2A adapter (wire runtime)
 
 Products with a `runtime` binding (QUINTE and any future wire-backed

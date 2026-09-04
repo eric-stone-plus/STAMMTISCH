@@ -241,6 +241,31 @@ pub fn missing_session() -> AppError {
     )
 }
 
+/// Append the `--config` argument pair from the operator-local
+/// `GALAHAD_CONFIG` env gate (same injection style as `GALAHAD_HOME` /
+/// `GALAHAD_PYTHON`). The testnet rehearsal needs local config overrides
+/// (risk gate, session bound, venue endpoints) that never belong in a
+/// pipeline spec; without the env gate the product falls back to its own
+/// default `config.yaml`. A set-but-empty value is a usage error: a
+/// resolved-but-broken config fails closed, never silently ignored.
+fn push_config_arg<'a>(
+    config: Option<&'a str>,
+    args: &mut Vec<&'a str>,
+) -> Result<(), AppError> {
+    let Some(path) = config else {
+        return Ok(());
+    };
+    if path.trim().is_empty() {
+        return Err(AppError::usage(
+            "galahad_config_invalid",
+            "GALAHAD_CONFIG is set but empty",
+        ));
+    }
+    args.push("--config");
+    args.push(path);
+    Ok(())
+}
+
 /// Append the `--engine` argument pair for a stage-declared backend.
 ///
 /// The nautilus backend is an optional dependency in the galahad-futures
@@ -367,6 +392,7 @@ impl Adapter for GalahadAdapter {
         let out_s = out_dir.to_str().unwrap_or("");
         let python = super::cli::resolve_python("GALAHAD_PYTHON")?;
         let script_s = self.script.to_str().unwrap_or("");
+        let galahad_config = std::env::var("GALAHAD_CONFIG").ok();
         let mut args: Vec<&str> = vec![
             script_s,
             "--source",
@@ -377,6 +403,7 @@ impl Adapter for GalahadAdapter {
             "--strategy",
             "dual_ma",
         ];
+        push_config_arg(galahad_config.as_deref(), &mut args)?;
         push_engine_arg(ctx.stage, &mut args)?;
         ensure_testnet_gate(ctx.stage)?;
         let (_code, summary) = super::cli::run_json(&python, &args)?;
@@ -542,6 +569,29 @@ mod engine_tests {
         let mut args: Vec<&str> = vec!["script"];
         push_engine_arg(&s, &mut args).unwrap();
         assert_eq!(args, vec!["script", "--engine", "nautilus_live"]);
+    }
+
+    #[test]
+    fn config_arg_absent_without_env_value() {
+        let mut args: Vec<&str> = vec!["script"];
+        push_config_arg(None, &mut args).unwrap();
+        assert_eq!(args, vec!["script"]);
+    }
+
+    #[test]
+    fn config_arg_passes_env_value() {
+        let mut args: Vec<&str> = vec!["script"];
+        push_config_arg(Some("/tmp/t.yaml"), &mut args).unwrap();
+        assert_eq!(args, vec!["script", "--config", "/tmp/t.yaml"]);
+    }
+
+    #[test]
+    fn config_arg_empty_env_value_fails_closed() {
+        for empty in ["", "   "] {
+            let mut args: Vec<&str> = vec!["script"];
+            let err = push_config_arg(Some(empty), &mut args).unwrap_err();
+            assert_eq!(err.code, "galahad_config_invalid", "{err}");
+        }
     }
 
     #[test]
