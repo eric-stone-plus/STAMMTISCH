@@ -154,6 +154,6 @@ fn galahad_paper_fixture_collects_identity_and_targets() {
 
 #[test]
 fn galahad_missing_session_fail_closes() {
-    let err = stammtisch::adapters::galahad::map_paper_session(None, None).unwrap_err();
+    let err = stammtisch::adapters::galahad::map_session(None, None, None, false).unwrap_err();
     assert_eq!(err.code, "galahad_session_missing");
 }
