@@ -34,8 +34,10 @@ pub struct Stage {
     /// Product working directory (GALAHAD project root). HIGHBALL evidence
     /// comes exclusively from declared, content-addressed stage inputs.
     pub workdir: Option<PathBuf>,
-    /// GALAHAD execution backend ("paper" | "nautilus"). None = product
-    /// default (the reference paper book). Schema-validated.
+    /// GALAHAD execution backend ("paper" | "nautilus" | "nautilus_live").
+    /// None = product default (the reference paper book). "nautilus_live"
+    /// is the gated Binance testnet pass-through (schemas/pipeline.schema.json).
+    /// Schema-validated.
     pub engine: Option<String>,
 }
 

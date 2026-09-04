@@ -209,6 +209,22 @@ selection identity (`run_id` / `as_of` / symbol / strategy) plus target
 positions, or an explicit `NO-GO` / no-trade. Live mode is refused.
 STAMMTISCH does not spawn QUINTE.
 
+A stage declaring `engine: "nautilus_live"` is a controlled Binance
+**testnet** pass-through — never mainnet. Acceptance requires ALL THREE,
+fail-closed otherwise: (1) the schema-validated stage engine
+`"nautilus_live"`, (2) a product summary reporting `mode: "testnet"`
+(the product never reports `"live"` for these sessions), and
+(3) `GALAHAD_ENABLE_TESTNET=1` in the adapter's environment at run time;
+a declared-but-ungated stage fails before any product contact
+(`galahad_testnet_disabled`, usage error), and a testnet summary without
+the declared engine is `galahad_testnet_undeclared`. Any other mode
+string — mainnet `"live"` included — stays refused
+(`galahad_live_refused`). Accepted testnet sessions receipt as
+`galahad.testnet-session.v1` (venue + reconciliation digest fields:
+`orders_submitted` / `orders_filled` / `position_mismatch`); paper
+sessions keep `galahad.paper-session.v1`. No shipped example pipeline
+uses it: the offline-first rule is unchanged.
+
 ### 5.3 A2A adapter (wire runtime)
 
 Products with a `runtime` binding (QUINTE and any future wire-backed
@@ -412,6 +428,11 @@ Status as of 2026-08-18:
   renamed file and then fsyncs the parent directory (POSIX `O_DIRECTORY`
   open + `fsync`) so a crash immediately after rename cannot drop the
   directory entry. Covered by the unit test on the real helper.
+- **Landed: GALAHAD testnet pass-through.** `engine: "nautilus_live"`
+  runs a Binance testnet session behind the three-condition gate in
+  §5.2b (declared engine + summary `mode: "testnet"` +
+  `GALAHAD_ENABLE_TESTNET=1`); accepted sessions receipt as
+  `galahad.testnet-session.v1`, mainnet stays refused everywhere.
 - **Remaining: conformance suite publication.** The conformance suite lives
   in-tree (`tests/conformance.rs`, §11 items 1–10 plus the P3 additions) and
   runs under `cargo test`; it is not published as a standalone artifact.

@@ -96,8 +96,8 @@
           "description": "Product working directory. GALAHAD uses the galahad-futures project root. HIGHBALL does not read workdir evidence: its route request and residual trace are typed, declared upstream artifacts."
         },
         "engine": {
-          "enum": ["paper", "nautilus"],
-          "description": "GALAHAD execution backend selection (run_paper.py --engine). paper = reference book (default). nautilus = NautilusTrader 1.231.0 event-driven backtest engine; requires the optional dependency in the galahad-futures tree, and a missing package is a hard error (no silent fallback)."
+          "enum": ["paper", "nautilus", "nautilus_live"],
+          "description": "GALAHAD execution backend selection (run_paper.py --engine). paper = reference book (default). nautilus = NautilusTrader 1.231.0 event-driven backtest engine; requires the optional dependency in the galahad-futures tree, and a missing package is a hard error (no silent fallback). nautilus_live = gated Binance TESTNET pass-through only: accepted solely when the product summary reports mode \"testnet\" AND GALAHAD_ENABLE_TESTNET=1 is set at adapter run time; mainnet (\"live\") stays refused everywhere (galahad_live_refused)."
         },
         "gate": {
           "type": "string",

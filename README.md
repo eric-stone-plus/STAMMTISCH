@@ -203,6 +203,11 @@ the same decision layer:
 - `"nautilus"` — NautilusTrader 1.231.0 event-driven backtest engine
   (pinned): synthetic L1 books from the OHLC bars, taker fees, venue
   margin machinery. Optional dependency in the product tree.
+- `"nautilus_live"` — gated Binance **testnet** pass-through (never
+  mainnet): accepted only when the product summary reports
+  `mode: "testnet"` and `GALAHAD_ENABLE_TESTNET=1` is set at adapter run
+  time; receipts as `galahad.testnet-session.v1`. Any other mode —
+  `"live"` included — stays refused.
 
 The adapter appends `--engine`, refuses any other value, and fail-closes
 when the product summary's `engine` field disagrees with the declared stage

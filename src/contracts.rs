@@ -54,10 +54,40 @@ pub const GALAHAD_PAPER_SESSION_V1: &str = r#"{
   }
 }"#;
 
+/// Contract revision the GALAHAD adapter emits for an accepted Binance
+/// TESTNET session (`--engine nautilus_live`, summary `mode: "testnet"`).
+/// Mainnet is never receipted: any other mode is refused upstream of the
+/// receipt (see src/adapters/galahad.rs).
+pub const GALAHAD_TESTNET_SESSION_V1: &str = r#"{
+  "type": "object",
+  "required": ["schema", "run_id", "symbol", "verdict", "mode", "venue", "reconciliation", "summary_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "galahad.testnet-session.v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "minLength": 1},
+    "verdict": {"enum": ["GO", "NO-GO"]},
+    "mode": {"const": "testnet"},
+    "venue": {"type": "string", "minLength": 1},
+    "reconciliation": {
+      "type": "object",
+      "required": ["orders_submitted", "orders_filled", "position_mismatch"],
+      "additionalProperties": false,
+      "properties": {
+        "orders_submitted": {"type": "integer", "minimum": 0},
+        "orders_filled": {"type": "integer", "minimum": 0},
+        "position_mismatch": {"type": "boolean"}
+      }
+    },
+    "summary_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}"#;
+
 const KNOWN: &[(&str, &str)] = &[
     ("highball.action-packet.v1", HIGHBALL_ACTION_PACKET_V1),
     ("doctrine.brief.v0", DOCTRINE_BRIEF_V0),
     ("galahad.paper-session.v1", GALAHAD_PAPER_SESSION_V1),
+    ("galahad.testnet-session.v1", GALAHAD_TESTNET_SESSION_V1),
     // Wire-observation wrapper for A2A product invocations (see
     // docs/protocol-layer.md); the schema text lives in schemas/ as the
     // source of truth, embedded at compile time.
@@ -182,6 +212,58 @@ mod tests {
         let r = json!({"schema": "highball.action-packet.v9", "decision": "AUTHORIZED"});
         let err = validate_receipt(serde_json::to_string(&r).unwrap().as_bytes()).unwrap_err();
         assert!(matches!(err, ReceiptError::UnknownRevision(_)));
+    }
+
+    fn galahad_testnet_receipt() -> Value {
+        json!({
+            "schema": "galahad.testnet-session.v1",
+            "run_id": "20260904T000000Z",
+            "symbol": "BTCUSDT",
+            "verdict": "GO",
+            "mode": "testnet",
+            "venue": "BINANCE",
+            "reconciliation": {
+                "orders_submitted": 3,
+                "orders_filled": 2,
+                "position_mismatch": false
+            },
+            "summary_sha256": format!("sha256:{}", "4".repeat(64))
+        })
+    }
+
+    #[test]
+    fn galahad_testnet_receipt_accepted() {
+        let r = galahad_testnet_receipt();
+        let (rev, _) = validate_receipt(serde_json::to_string(&r).unwrap().as_bytes()).unwrap();
+        assert_eq!(rev, "galahad.testnet-session.v1");
+    }
+
+    #[test]
+    fn galahad_testnet_receipt_rejects_drift() {
+        // "live" is not a receiptable mode; the registry fails closed.
+        let mut live = galahad_testnet_receipt();
+        live["mode"] = json!("live");
+        assert!(matches!(
+            validate_receipt(serde_json::to_string(&live).unwrap().as_bytes()),
+            Err(ReceiptError::SchemaInvalid(..))
+        ));
+        // Missing reconciliation digest fields fail closed.
+        let mut bare = galahad_testnet_receipt();
+        bare["reconciliation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("position_mismatch");
+        assert!(matches!(
+            validate_receipt(serde_json::to_string(&bare).unwrap().as_bytes()),
+            Err(ReceiptError::SchemaInvalid(..))
+        ));
+        // A paper receipt must not claim the testnet revision.
+        let mut paper = galahad_testnet_receipt();
+        paper["mode"] = json!("paper");
+        assert!(matches!(
+            validate_receipt(serde_json::to_string(&paper).unwrap().as_bytes()),
+            Err(ReceiptError::SchemaInvalid(..))
+        ));
     }
 
     #[test]

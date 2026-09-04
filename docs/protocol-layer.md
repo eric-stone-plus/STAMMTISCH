@@ -115,6 +115,35 @@ stage) is gone. The offline test agent
 (`tests/support/fake_a2a.rs`) speaks real A2A wire shapes, so the real
 adapter is exercised in the default test suite.
 
+### 4.1 CLI-product receipts share the registry
+
+The same `src/contracts.rs` registry pins the CLI-product receipt
+revisions (`highball.action-packet.v1`, `doctrine.brief.v0`, and the
+GALAHAD session receipts). Acceptance is exact there too: an unknown
+revision halts, never parses best-effort.
+
+The GALAHAD adapter emits one of two session receipts. Paper sessions
+(any stage engine whose summary reports `mode: "paper"`) keep
+`galahad.paper-session.v1`. A stage declaring `engine: "nautilus_live"`
+runs a controlled Binance **testnet** pass-through whose accepted
+sessions receipt as `galahad.testnet-session.v1`, pinning the venue and
+the reconciliation digest fields (`orders_submitted`, `orders_filled`,
+`position_mismatch`) alongside `run_id` / `symbol` / `verdict` and the
+summary digest. The pass-through is gated three ways, all required:
+
+| Observation | Kind | Outcome |
+|---|---|---|
+| stage engine not in the schema enum | usage | spec/config error at `validate` (exit 3) |
+| declared engine ≠ summary `engine` field (legacy summaries read as "paper") | product | stage `failed` (`galahad_engine_mismatch`) |
+| `engine: "nautilus_live"` declared without `GALAHAD_ENABLE_TESTNET=1` at run time | usage | refused before product contact (`galahad_testnet_disabled`) |
+| summary `mode: "testnet"` without declared `engine: "nautilus_live"` | product | stage `failed` (`galahad_testnet_undeclared`) |
+| summary mode `"live"` or any other unknown string | product | refused (`galahad_live_refused`) — mainnet is never receipted |
+| testnet summary missing venue / reconciliation fields | product | stage `failed` (`galahad_session_invalid`) |
+
+The product's testnet summary carries `engine_version:
+"nautilus_trader-1.231.0"` as evidence; the gate keys on the three
+conditions above, not on the version string.
+
 ## 5. Fail-closed taxonomy
 
 | Observation | Kind | Outcome |
