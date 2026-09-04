@@ -15,13 +15,39 @@ from tui.screens.domains import SecurityScreen, security_watchlist
 
 
 class SecurityWatchlistTest(unittest.TestCase):
-    def test_manual_watchlist_wins(self):
+    def test_manual_watchlist_anchors_and_recents_merge(self):
         cfg = SimpleNamespace(
             security_symbols=["AAPL", "600098", "600098.SS"],
             recent_symbols=["SOHU"],
             state_root="/no/such/state",
         )
-        self.assertEqual(security_watchlist(cfg), ["AAPL", "600098.SS"])
+        self.assertEqual(security_watchlist(cfg), ["AAPL", "600098.SS", "SOHU"])
+
+    def test_manual_watchlist_merges_decision_picks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            latest = os.path.join(tmp, "decisions")
+            os.makedirs(latest)
+            with open(os.path.join(latest, "latest.json"), "w") as handle:
+                json.dump({
+                    "decision_version": 1,
+                    "zones": {
+                        "A-SHARE": {"positions": [
+                            {"symbol": "002289.SZ"},
+                            {"symbol": "AAPL"},
+                            {"symbol": "688012.SS", "action": "cut"},
+                        ]},
+                        "US": {"positions": [{"symbol": "LITE"}]},
+                    }
+                }, handle)
+            cfg = SimpleNamespace(
+                security_symbols=["MSFT"],
+                recent_symbols=[],
+                state_root=tmp,
+            )
+            self.assertEqual(
+                security_watchlist(cfg),
+                ["MSFT", "002289.SZ", "AAPL", "LITE"],
+            )
 
     def test_empty_manual_uses_latest_decision(self):
         with tempfile.TemporaryDirectory() as tmp:

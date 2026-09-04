@@ -1193,10 +1193,12 @@ def _reports_root(config: Any) -> Path | None:
 
 
 def security_watchlist(config: Any, state_root: str | None = None) -> list[str]:
-    """Board names: manual watchlist, else today's decision, else recents.
+    """Board names: manual watchlist anchored, decision picks + recents merged.
 
-    ``security_symbols`` empty is a decide.py full-market-screen signal, not
-    an empty SECURITY board. Falling back keeps the TUI loadable.
+    A non-empty ``security_symbols`` anchors the board (persistent watchlist,
+    e.g. cross-market core names) while today's decision picks and recents
+    still flow in, so scans stay visible. Empty ``security_symbols`` is a
+    decide.py full-market-screen signal, not an empty SECURITY board.
     """
     from ..engine import _normalize_symbol
 
@@ -1210,9 +1212,14 @@ def security_watchlist(config: Any, state_root: str | None = None) -> list[str]:
     seen: list[str] = []
     recents = getattr(config, "recent_symbols", None)
     recents = recents if isinstance(recents, list) else []
-    source = manual if manual else _decision_symbols(
-        config, state_root
-    ) + [str(s) for s in recents]
+    if manual:
+        source = manual + _decision_symbols(
+            config, state_root
+        ) + [str(s) for s in recents]
+    else:
+        source = _decision_symbols(
+            config, state_root
+        ) + [str(s) for s in recents]
     for raw in source:
         text = str(raw).strip()
         if not text:
