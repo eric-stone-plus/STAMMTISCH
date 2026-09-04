@@ -266,7 +266,7 @@ class ConfigScreen(Screen):
                     yield Static("  Report Builder", classes="cfg-label")
                     yield Input(
                         value=self.config.get("intake_report_builder", "ai"),
-                        placeholder="ai or deterministic",
+                        placeholder="ai, deterministic or none",
                         id="cfg-intake-builder",
                         classes="cfg-input",
                     )
