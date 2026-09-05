@@ -197,7 +197,8 @@ class AIDriverTest(unittest.TestCase):
             requests.append(json.loads(request.data.decode("utf-8")))
             return _Response(next(responses))
 
-        driver = AIDriver(api_key="sk-test")
+        driver = AIDriver(api_key="sk-test",
+                          base_url="https://example.invalid/v1")
         with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
             first = driver.chat("第一问：why?")
             second = driver.chat("Second question: 继续？")

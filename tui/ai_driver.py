@@ -13,10 +13,11 @@ import urllib.request
 import urllib.error
 
 
-# Default backend: Zhipu GLM's official OpenAI-compatible entry. Any
+# Default backend: Zhipu GLM's official Anthropic Messages entry. Any
 # OpenAI-compatible endpoint works through config/env overrides. URLs
-# whose path ends in ``/anthropic`` speak Anthropic Messages instead.
-AI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+# whose path ends in ``/anthropic`` speak Anthropic Messages; everything
+# else is treated as OpenAI-compatible chat completions.
+AI_BASE_URL = "https://open.bigmodel.cn/api/anthropic"
 AI_MODEL = "glm-5.3"
 AI_MAX_TOKENS = 16384
 ANTHROPIC_VERSION = "2023-06-01"

@@ -431,7 +431,7 @@ def run(force: bool = False) -> int:
 
         payload = _parse_positions(response.content)
         positions = (payload or {}).get("positions")
-        # ── mechanical risk brake (eric: 风险厌恶, 推荐要稳) ──────────
+        # ── mechanical risk brake (risk-averse by design; picks must be stable) ──
         # The model may not add into an announcement-day cooldown or a
         # statistically significant leak-regime class. Vetoed adds are
         # downgraded to watch with the reason in the note; every veto is
@@ -480,8 +480,8 @@ def run(force: bool = False) -> int:
             "scan_rows": len(ok_rows),
             # Screen rankings behind the model's picks: the SECURITY board
             # surfaces these so the backtest work is visible even when the
-            # model only acts on a handful (eric, 2026-08-26: 我可以不买,
-            # 但你不能不推荐).
+            # model only acts on a handful (the desk may skip a pick, but
+            # the screen must still show the recommendations).
             "scan_top": [
                 {k: r.get(k) for k in
                  ("symbol", "tr", "cagr", "sharpe", "maxdd", "win", "trades")}
@@ -511,9 +511,10 @@ def run(force: bool = False) -> int:
     print(f"decide: {today} written to {latest_path}")
 
     # Recents follow the decision: only symbols today's pipeline still
-    # ranks (positions ∪ scan_top) survive, so stale board residue (eric:
-    # 广州发展怎么老在) expires at the next decide. add_recent_symbol
-    # inserts at the front — feed reversed to preserve rank order.
+    # ranks (positions ∪ scan_top) survive, so stale board residue (a
+    # symbol that no longer ranks) expires at the next decide.
+    # add_recent_symbol inserts at the front — feed reversed to preserve
+    # rank order.
     try:
         relevant: list[str] = []
         for zone_data in outcomes.values():

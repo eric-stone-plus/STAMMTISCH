@@ -83,7 +83,8 @@ def fetch_batch(symbols: list[str], timeout: float = 6.0) -> dict[str, dict[str,
                 "volume": float(fields[6]),
                 "high": float(fields[33]) if len(fields) > 33 and fields[33] else None,
                 "low": float(fields[34]) if len(fields) > 34 and fields[34] else None,
-                # field 30: A股 YYYYMMDDHHMMSS; 美股 "2026-08-25 16:00:01"
+                # field 30: A-share feeds use YYYYMMDDHHMMSS; US feeds use
+                # "YYYY-MM-DD HH:MM:SS"
                 "time": fields[30] if len(fields) > 30 else "",
                 "source": QT_SOURCE,
             }

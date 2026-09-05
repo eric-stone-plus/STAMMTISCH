@@ -81,7 +81,7 @@ class TuiSmokeTest(unittest.TestCase):
                     provider.value = "glm"
                     await pilot.pause()
                     self.assertEqual(
-                        base_input.value, "https://open.bigmodel.cn/api/paas/v4"
+                        base_input.value, "https://open.bigmodel.cn/api/anthropic"
                     )
                     self.assertEqual(model_input.value, "glm-5.3")
                     self.assertEqual(key_input.value, "")
@@ -105,7 +105,7 @@ class TuiSmokeTest(unittest.TestCase):
                     self.assertEqual(saved["ai_profile_keys"]["glm"], "glm-key")
                     self.assertEqual(saved["ai_api_key"], "glm-key")
                     self.assertEqual(
-                        saved["ai_base_url"], "https://open.bigmodel.cn/api/paas/v4"
+                        saved["ai_base_url"], "https://open.bigmodel.cn/api/anthropic"
                     )
 
     def test_confirm_screen_keyboard_and_mouse(self) -> None:

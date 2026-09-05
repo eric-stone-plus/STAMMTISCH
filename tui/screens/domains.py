@@ -92,7 +92,7 @@ FUTURES_NAMES = {
 }
 # Marine-fuel groups from the SGX adapters render on the SHIPPING board —
 # they are freight-side instruments (VLSFO/gasoil physical bunkers), not
-# futures-side holdings (eric, 2026-08-26: bunker 放 SHIPPING).
+# futures-side holdings.
 MARINE_FUEL_GROUPS = ("BUNKER",)
 
 # Category assignment for provider-backed tickers. Exchange-settled adapter
@@ -761,8 +761,8 @@ class ShippingScreen(Screen):
     """
 
     # FFA settlements (and the non-FFA groups like bunker in the same SGX
-    # feed) live here — the futures board is CCI-crowded enough (eric,
-    # 2026-08-26: moved back from the futures board).
+    # feed) live here — the futures board is CCI-crowded enough, so these
+    # groups were moved back from it.
     CATEGORIES = ("FFA", "S&P VALUATION", "MARKET", "RISK")
 
     def __init__(self, config: Any, **kwargs: Any):
@@ -1494,7 +1494,7 @@ class SecurityScreen(Screen):
 
         # Parallel fetch: the serial loop took seconds per symbol, which
         # left names/quotes blank for the better part of a minute on a
-        # full board (eric, 2026-08-26: 股票名称渲染有点慢).
+        # full board (symbol-name rendering was the slow part).
         with ThreadPoolExecutor(max_workers=min(8, total)) as pool:
             for symbol, quote, error in pool.map(_fetch_one,
                                                  enumerate(self._symbols, 1)):

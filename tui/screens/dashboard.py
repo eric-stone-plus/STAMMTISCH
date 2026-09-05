@@ -119,7 +119,7 @@ class DashboardScreen(Screen):
             with Vertical(id="dash-right"):
                 yield SystemHud(id="sys-hud")
                 # Plain container: PipelineList draws its own frame — an
-                # outer panel here nests two borders (eric, 2026-08-26).
+                # outer panel here would nest two borders.
                 with Vertical():
                     yield Static("  Plugins", classes="panel-title")
                     yield PipelineList(id="pipeline-list")

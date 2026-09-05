@@ -52,7 +52,7 @@ DEFAULT_CONFIG = {
     # "Asia/Shanghai"); empty keeps the stored UTC rendering.
     "display_timezone": "",
     "ai_api_key": "",
-    "ai_base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "ai_base_url": "https://open.bigmodel.cn/api/anthropic",
     "ai_model": "glm-5.3",
     # Per-profile API key memory for `stammtisch config use PROFILE`:
     # {profile_name: api_key}. Switching profiles restores the stored key.
