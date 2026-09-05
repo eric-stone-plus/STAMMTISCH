@@ -49,10 +49,10 @@ verify_assets() {
         printf '%s\n' "$checksum_output" >&2
         exit "$checksum_status"
       }
-      [[ "$(wc -l < SHA256SUMS | tr -d '[:space:]')" == 4 ]]
+      [[ "$(wc -l < SHA256SUMS | tr -d '[:space:]')" == 4 ]] || exit 1
       for file in "${expected[@]}"; do
         [[ "$file" == SHA256SUMS ]] && continue
-        [[ "$(awk -v name="$file" '$2 == name {count++} END {print count+0}' SHA256SUMS)" == 1 ]]
+        [[ "$(awk -v name="$file" '$2 == name {count++} END {print count+0}' SHA256SUMS)" == 1 ]] || exit 1
       done
     ) || die "SHA256SUMS does not bind each archive exactly once"
   fi
