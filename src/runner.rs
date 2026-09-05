@@ -161,7 +161,8 @@ fn pid_is_alive(pid: u32) -> bool {
     {
         // Signal 0 probes existence without delivering anything. ESRCH:
         // no such process. EINVAL: the pid cannot exist on this system.
-        // Anything else (success, EPERM) means a live process.
+        // Anything else (success, EPERM) means a live process. Callers
+        // accept only 1..=i32::MAX (lock_pid), so this cast cannot wrap.
         let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
         if rc == 0 {
             return true;
@@ -180,6 +181,17 @@ fn pid_is_alive(pid: u32) -> bool {
     }
 }
 
+/// Extract a probe-able pid from a launch-lock value. Only 1..=i32::MAX is
+/// accepted: pid_t is a signed 32-bit int, so a wider pid would wrap
+/// negative in the kill(2) probe (4294967295 would become -1, signalling
+/// every process the user owns) — such a lock is stale by definition.
+fn lock_pid(value: &Value) -> Option<u32> {
+    match value.get("pid").and_then(Value::as_u64) {
+        Some(pid) if pid > 0 && pid <= i32::MAX as u64 => Some(pid as u32),
+        _ => None,
+    }
+}
+
 fn live_holder_for(root: &StateRoot, run_id: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(LaunchLock::lock_path(root)) else {
         return false;
@@ -190,10 +202,7 @@ fn live_holder_for(root: &StateRoot, run_id: &str) -> bool {
     if value.get("run_id").and_then(Value::as_str) != Some(run_id) {
         return false;
     }
-    match value.get("pid").and_then(Value::as_u64) {
-        Some(pid) if pid > 0 && pid <= u64::from(u32::MAX) => pid_is_alive(pid as u32),
-        _ => false,
-    }
+    lock_pid(&value).is_some_and(pid_is_alive)
 }
 
 /// True when the launch-lock text names a live pid. An unparseable or
@@ -202,11 +211,8 @@ fn live_holder_for(root: &StateRoot, run_id: &str) -> bool {
 fn lock_holder_is_alive(holder_text: &str) -> bool {
     serde_json::from_str::<Value>(holder_text)
         .ok()
-        .and_then(|value| {
-            let pid = value.get("pid").and_then(Value::as_u64)?;
-            Some(pid > 0 && pid <= u64::from(u32::MAX) && pid_is_alive(pid as u32))
-        })
-        .unwrap_or(false)
+        .and_then(|value| lock_pid(&value))
+        .is_some_and(pid_is_alive)
 }
 
 /// Append a terminal event to a non-terminal run. Never relaunches a stage.
@@ -2030,6 +2036,28 @@ mod tests {
         assert_eq!(manifest["state"]["code"], "running");
         drop(lock);
         std::fs::remove_dir_all(&root.path).ok();
+    }
+
+    #[test]
+    fn lock_pid_rejects_pids_beyond_the_signed_pid_t_range() {
+        // pid_t is a signed 32-bit int: a lock pid above i32::MAX would wrap
+        // negative in the kill(2) probe (u32::MAX would become -1, probing
+        // every process the user owns), so only 1..=i32::MAX is probe-able.
+        assert_eq!(lock_pid(&json!({"pid": 1})), Some(1));
+        assert_eq!(
+            lock_pid(&json!({"pid": i32::MAX as u64})),
+            Some(i32::MAX as u32)
+        );
+        assert_eq!(lock_pid(&json!({"pid": i32::MAX as u64 + 1})), None);
+        assert_eq!(lock_pid(&json!({"pid": u32::MAX as u64})), None);
+        assert_eq!(lock_pid(&json!({"pid": u64::MAX})), None);
+        assert_eq!(lock_pid(&json!({"pid": 0})), None);
+        assert_eq!(lock_pid(&json!({"pid": -1})), None);
+        assert_eq!(lock_pid(&json!({"pid": "7"})), None);
+        assert_eq!(lock_pid(&json!({})), None);
+        // A corrupt lock carrying a wrapping pid is stale, never "live".
+        assert!(!lock_holder_is_alive(r#"{"pid": 4294967295}"#));
+        assert!(!lock_holder_is_alive(r#"{"pid": 2147483648}"#));
     }
 
     #[test]
