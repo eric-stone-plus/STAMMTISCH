@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -68,23 +67,15 @@ Each discipline carries its own evidence discipline: what it may use and what it
 
 def _get_api_key() -> str | None:
     """Resolve the AI API key from env vars or the TUI config file."""
-    # 1. Environment variables (current names first, legacy names still honored)
-    for var in [
-        "GLM_API_KEY",
-        "ZHIPU_API_KEY",
-        "QIANWEN_TP_PERSONAL_KEY",
-        "ANTHROPIC_API_KEY",
-        "XIAOMI_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "DEEPSEEK_KEY",
-        "DEEPSEEK_TOKEN",
-    ]:
-        key = os.environ.get(var)
-        if key:
-            return key
+    # 1. Environment variables, in the shared GLM-first precedence order
+    #    (AI_API_KEY_ENV_VARS in config; legacy names still honored).
+    from .config import Config, env_ai_api_key
+
+    key = env_ai_api_key()
+    if key:
+        return key
     # 2. Config file (honors the STAMMTISCH_CONFIG override)
     try:
-        from .config import Config
         return Config().ai_api_key
     except Exception:
         return None

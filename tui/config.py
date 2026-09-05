@@ -45,6 +45,32 @@ def ai_profile_for_base_url(base_url: str) -> str | None:
     return None
 
 
+# Environment variables consulted for the AI API key, in precedence order:
+# current GLM names first (the default base URL is GLM's, so a GLM key must
+# win over a key issued for a different endpoint), legacy names stay honored.
+# Config.load() and tui.ai_driver share this list so the two resolvers can
+# never disagree about which credential an endpoint receives.
+AI_API_KEY_ENV_VARS = (
+    "GLM_API_KEY",
+    "ZHIPU_API_KEY",
+    "QIANWEN_TP_PERSONAL_KEY",
+    "ANTHROPIC_API_KEY",
+    "XIAOMI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_KEY",
+    "DEEPSEEK_TOKEN",
+)
+
+
+def env_ai_api_key() -> str | None:
+    """First non-empty AI API key among AI_API_KEY_ENV_VARS, else None."""
+    for var in AI_API_KEY_ENV_VARS:
+        key = os.environ.get(var)
+        if key:
+            return key
+    return None
+
+
 DEFAULT_CONFIG = {
     # TUI chrome language: "en" | "zh" (toggled from the dashboard).
     "language": "en",
@@ -184,17 +210,9 @@ class Config:
             except (json.JSONDecodeError, UnicodeDecodeError, OSError):
                 pass  # Use defaults on corrupt config
 
-        # Environment variable overrides (never persisted to disk).
-        # Current GLM names first; legacy DeepSeek names stay honored.
-        env_key = (
-            os.environ.get("QIANWEN_TP_PERSONAL_KEY")
-            or os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("XIAOMI_API_KEY")
-            or os.environ.get("GLM_API_KEY")
-            or os.environ.get("ZHIPU_API_KEY")
-            or os.environ.get("DEEPSEEK_API_KEY")
-            or os.environ.get("DEEPSEEK_KEY")
-        )
+        # Environment variable overrides (never persisted to disk). The key
+        # precedence is the shared GLM-first order in AI_API_KEY_ENV_VARS.
+        env_key = env_ai_api_key()
         if env_key:
             self._data["ai_api_key"] = env_key
             self._from_env.add("ai_api_key")

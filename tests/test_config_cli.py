@@ -10,7 +10,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from tui.config import DEFAULT_CONFIG, Config, default_config_file
+from tui.config import AI_API_KEY_ENV_VARS, DEFAULT_CONFIG, Config, default_config_file
 from tui import config_cli
 
 
@@ -156,6 +156,31 @@ class ConfigCliTest(unittest.TestCase):
             self.assertEqual(json.load(f)["ai_api_key"], "sk-explicit")
         with open(self.cfg_path) as handle:
             self.assertNotIn("sk-from-env", handle.read())
+
+    def test_env_key_precedence_is_the_shared_glm_first_order(self) -> None:
+        """Config.load() resolves env keys GLM-first, matching the driver."""
+        self.assertEqual(
+            AI_API_KEY_ENV_VARS,
+            (
+                "GLM_API_KEY", "ZHIPU_API_KEY", "QIANWEN_TP_PERSONAL_KEY",
+                "ANTHROPIC_API_KEY", "XIAOMI_API_KEY", "DEEPSEEK_API_KEY",
+                "DEEPSEEK_KEY", "DEEPSEEK_TOKEN",
+            ),
+        )
+        # With every remaining candidate set, the earliest name wins;
+        # removing the winner promotes the next, down the whole chain.
+        for index, winner in enumerate(AI_API_KEY_ENV_VARS):
+            env = {var: f"sk-{var}" for var in AI_API_KEY_ENV_VARS[index:]}
+            with mock.patch.dict(os.environ, env, clear=False):
+                self.assertEqual(Config().ai_api_key, f"sk-{winner}")
+
+    def test_qianwen_key_no_longer_shadows_glm_key(self) -> None:
+        """Regression: a token-plan key must not be sent to GLM's endpoint."""
+        with mock.patch.dict(os.environ, {
+            "QIANWEN_TP_PERSONAL_KEY": "tp-qwen",
+            "GLM_API_KEY": "sk-glm",
+        }, clear=False):
+            self.assertEqual(Config().ai_api_key, "sk-glm")
 
     def test_update_batch_persists_once(self) -> None:
         cfg = Config()

@@ -9,12 +9,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tui.config import DEFAULT_CONFIG, Config
+from tui.config import AI_API_KEY_ENV_VARS, DEFAULT_CONFIG, Config
 from tui.ai_driver import (
     AI_MAX_TOKENS,
     AI_MODEL,
     SYSTEM_PROMPT,
     AIDriver,
+    _get_api_key,
     build_market_context,
     extract_symbols,
 )
@@ -217,6 +218,51 @@ class AIDriverTest(unittest.TestCase):
             },
             {"role": "user", "content": "Second question: 继续？"},
         ])
+
+
+class ApiKeyResolutionTest(unittest.TestCase):
+    """_get_api_key and Config.load() share one GLM-first env precedence."""
+
+    def setUp(self) -> None:
+        # Operator shells really export API keys; start from a clean slate.
+        self._saved = {k: os.environ[k] for k in AI_API_KEY_ENV_VARS if k in os.environ}
+        for key in self._saved:
+            del os.environ[key]
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env_patch = mock.patch.dict(
+            os.environ,
+            {"STAMMTISCH_CONFIG": os.path.join(self.tmp.name, "config.json")},
+            clear=False,
+        )
+        self.env_patch.start()
+
+    def tearDown(self) -> None:
+        self.env_patch.stop()
+        self.tmp.cleanup()
+        os.environ.update(self._saved)
+
+    def test_env_resolution_matches_config_load(self):
+        # A token-plan key must never shadow a GLM key: the default base
+        # URL is GLM's endpoint, and Config.load() resolves the same way.
+        with mock.patch.dict(os.environ, {
+            "QIANWEN_TP_PERSONAL_KEY": "tp-qwen",
+            "GLM_API_KEY": "sk-glm",
+        }, clear=False):
+            self.assertEqual(_get_api_key(), "sk-glm")
+            self.assertEqual(Config().ai_api_key, "sk-glm")
+
+    def test_full_precedence_chain_matches_shared_order(self):
+        # With every remaining candidate set, the earliest name wins;
+        # removing the winner promotes the next, down the whole chain.
+        for index, winner in enumerate(AI_API_KEY_ENV_VARS):
+            env = {var: f"sk-{var}" for var in AI_API_KEY_ENV_VARS[index:]}
+            with mock.patch.dict(os.environ, env, clear=False):
+                self.assertEqual(_get_api_key(), f"sk-{winner}")
+
+    def test_deepseek_token_is_honored_by_both_resolvers(self):
+        with mock.patch.dict(os.environ, {"DEEPSEEK_TOKEN": "sk-ds"}, clear=False):
+            self.assertEqual(_get_api_key(), "sk-ds")
+            self.assertEqual(Config().ai_api_key, "sk-ds")
 
 
 if __name__ == "__main__":
