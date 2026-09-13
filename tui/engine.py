@@ -98,11 +98,16 @@ class QuantEngine:
             data_proxy_url=getattr(config, "data_proxy_url", "") or None,
             egress_proxy_url=getattr(config, "egress_proxy_url", "") or None,
             egress_switch_cmd=getattr(config, "egress_switch_cmd", "") or None,
+            quantkit_path=getattr(config, "quantkit_path", "") or None,
         )
 
     def __init__(self, data_dir: str | None = None, data_proxy_url: str | None = None,
                  egress_proxy_url: str | None = None,
-                 egress_switch_cmd: str | None = None):
+                 egress_switch_cmd: str | None = None,
+                 quantkit_path: str | None = None):
+        self.quantkit_tree: str | None = None
+        if quantkit_path and str(quantkit_path).strip():
+            self._load_quantkit_tree(str(quantkit_path).strip())
         self.data_dir = Path(data_dir) if data_dir else Path.home() / ".quant_cache"
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -121,6 +126,26 @@ class QuantEngine:
         # switch command rotates THAT provider's host onto the egress
         # class and only the affected provider's fetches retry through
         # it. Other providers keep their direct route.
+
+    def _load_quantkit_tree(self, path: str) -> None:
+        """Point the lazy quantkit imports at an operator-declared tree.
+
+        Evolved quantkit forks (e.g. one carrying selection/optimizer
+        extensions) shadow the installed one: the tree goes to the front
+        of sys.path and any already-imported quantkit modules are
+        evicted so a stale import can never win. Operator-local config
+        only — the repo never ships a host path.
+        """
+        import sys
+
+        tree = Path(path).expanduser()
+        if not (tree / "quantkit").is_dir() and not (tree.name == "quantkit" and tree.is_dir()):
+            # Accept either the tree root or its quantkit/ directory.
+            raise RuntimeError(f"quantkit_path has no quantkit package: {tree}")
+        for name in [m for m in sys.modules if m == "quantkit" or m.startswith("quantkit.")]:
+            del sys.modules[name]
+        sys.path.insert(0, str(tree))
+        self.quantkit_tree = str(tree)
 
     def _egress_apply(self, proxy_url: str) -> None:
         try:
@@ -331,6 +356,69 @@ class QuantEngine:
                 avg_gross_exposure=result.stats.get("avg_gross_exposure", 0),
             )
             return {"ok": True, "summary": summary, "stats": result.stats}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def run_topk_portfolio(self, symbols: list[str], topk: int = 5,
+                           n_drop: int = 1, start: str = "2023-01-01",
+                           rebalance: str = "M", lookback: int = 60,
+                           prices: Any = None) -> dict[str, Any]:
+        """TopkDropout selection portfolio (qlib semantics).
+
+        Requires a quantkit tree that ships ``selection`` (config
+        ``quantkit_path``): each rebalance bar re-scores the universe,
+        keeps holdings still inside the topk+n_drop band (at most
+        n_drop naturally rotated out), and fills the rest by rank.
+        """
+        symbols = [_normalize_symbol(s.strip().upper()) for s in symbols]
+        try:
+            from quantkit.portfolio import fetch_price_panel, run_portfolio
+            try:
+                from quantkit.selection import score_universe, select_topk_dropout
+            except ImportError as exc:
+                return {"ok": False, "error": (
+                    "installed quantkit lacks selection.select_topk_dropout "
+                    f"({exc}) — point quantkit_path at the evolved tree")}
+            import pandas as pd
+
+            if prices is None:
+                prices = fetch_price_panel(symbols, start=start,
+                                           data_dir=str(self.data_dir))
+                if _missing_ohlcv(prices):
+                    return {"ok": False, "error": "No price data"}
+            px = prices.astype(float).sort_index().ffill()
+            weights = pd.DataFrame(0.0, index=px.index, columns=px.columns)
+            holdings: list[str] = []
+            index = px.index
+            if rebalance == "W":
+                keys = pd.Series(index, index=index).dt.isocalendar().week.astype(str) \
+                    + "-" + pd.Series(index, index=index).dt.year.astype(str)
+            else:
+                keys = pd.Series(index, index=index).dt.to_period("M").astype(str)
+            rebalance_bars = index[(keys != keys.shift(-1)).fillna(False).values]
+            for bar in rebalance_bars:
+                scores = score_universe(px.loc[:bar], mode="momentum",
+                                        mom_lookback=lookback)
+                if scores.empty:
+                    continue
+                selected, target = select_topk_dropout(scores, holdings,
+                                                       int(topk), int(n_drop))
+                for sym, weight in target.items():
+                    if sym in weights.columns:
+                        weights.loc[bar, sym] = float(weight)
+                holdings = selected
+            result = run_portfolio(px, weights, rebalance=rebalance)
+            summary = PortfolioSummary(
+                total_return=result.total_return, cagr=result.cagr,
+                sharpe=result.sharpe, max_drawdown=result.max_drawdown,
+                win_rate=result.win_rate, trades=result.trades,
+                n_assets=len(holdings),
+                avg_turnover=result.stats.get("avg_turnover", 0),
+                avg_gross_exposure=result.stats.get("avg_gross_exposure", 0),
+            )
+            return {"ok": True, "summary": summary, "stats": result.stats,
+                    "quantkit_tree": self.quantkit_tree,
+                    "final_holdings": holdings}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

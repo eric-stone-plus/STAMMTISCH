@@ -392,9 +392,11 @@ class PortfolioScreen(Screen):
         yield Input(placeholder="e.g. AAPL,MSFT,GOOG momentum", id="pf-input")
         with ScrollableContainer():
             yield Static(
-                "  Strategies: momentum, dual_ma\n\n"
+                "  Strategies: momentum, dual_ma, topk (TopkDropout selection —\n"
+                "  needs a quantkit tree with selection; format SYMS topk TOPK NDROP)\n\n"
                 "  Example: AAPL,MSFT,GOOG,AMZN momentum\n"
-                "  Example: 600519.SS,600036.SS dual_ma",
+                "  Example: 600519.SS,600036.SS dual_ma\n"
+                "  Example: AAPL,MSFT,GOOG,NVDA,AMD topk 3 1",
                 id="pf-output",
             )
             yield DataTable(id="pf-table", cursor_type="row")
@@ -428,6 +430,12 @@ class PortfolioScreen(Screen):
         lookback = self.config.default_lookback if self.config else 60
 
         def _run():
+            if strategy == "topk":
+                topk = int(parts[2]) if len(parts) > 2 else 5
+                n_drop = int(parts[3]) if len(parts) > 3 else 1
+                return self.engine.run_topk_portfolio(
+                    symbols, topk=topk, n_drop=n_drop,
+                    rebalance=rebalance, lookback=lookback)
             return self.engine.run_portfolio(symbols, strategy=strategy,
                                              rebalance=rebalance, lookback=lookback)
 

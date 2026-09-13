@@ -18,11 +18,24 @@ class FromConfigTest(unittest.TestCase):
         cfg.data_proxy_url = ""
         cfg.egress_proxy_url = "http://proxy.example:8080"
         cfg.egress_switch_cmd = "switch --for-site {host}"
+        cfg.quantkit_path = ""  # explicit: no alternative tree
         eng = QuantEngine.from_config(cfg)
         self.assertEqual(str(eng.data_dir), "/tmp/qk")
         self.assertEqual(eng._egress_proxy_url, "http://proxy.example:8080")
         self.assertEqual(eng._egress_switch_cmd, "switch --for-site {host}")
         self.assertFalse(eng._egress_active)
+        self.assertIsNone(eng.quantkit_tree)  # no quantkit_path in the fixture
+
+    def test_from_config_passes_quantkit_path(self):
+        cfg = mock.Mock()
+        cfg.data_dir = "/tmp/qk"
+        cfg.data_proxy_url = ""
+        cfg.egress_proxy_url = ""
+        cfg.egress_switch_cmd = ""
+        cfg.quantkit_path = "/tmp/evolved"
+        with mock.patch.object(QuantEngine, "_load_quantkit_tree") as load:
+            eng = QuantEngine.from_config(cfg)
+        load.assert_called_once_with("/tmp/evolved")
 
 
 class SymbolNormalizeTest(unittest.TestCase):
