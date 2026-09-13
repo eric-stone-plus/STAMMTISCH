@@ -47,14 +47,30 @@ def usdt_peg_ok() -> tuple[bool | None, float | None]:
     """True/False when the peg is measurable; None when the check itself
     fails (rate-limited shared egress) — None means trade-skip, never a
     guessed pass."""
+    cache = (Path(state_root_arg()) / "intel" / "peg-cache.json")
     try:
         payload = dfhttp.get_json(
             "https://api.coingecko.com/api/v3/simple/price"
             "?ids=tether&vs_currencies=usd", provider="coingecko")
         price = float(payload["tether"]["usd"])
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({"ts": time.time(), "price": price}),
+                         encoding="utf-8")
+        return abs(price - 1.0) <= USDT_DEV_ALERT, price
     except Exception:
+        # Rate-limited shared egress: fall back to the last cached peg for
+        # up to 6h; past that the check is genuinely stale -> skip.
+        try:
+            cached = json.loads(cache.read_text(encoding="utf-8"))
+            if time.time() - float(cached["ts"]) < 6 * 3600:
+                price = float(cached["price"])
+                return abs(price - 1.0) <= USDT_DEV_ALERT, price
+        except Exception:
+            pass
         return None, None
-    return abs(price - 1.0) <= USDT_DEV_ALERT, price
+
+def state_root_arg():
+    return config.state_root or str(Path.home() / ".local/share/stammtisch")
 
 def rsi2_last(symbol: str) -> tuple[float, float]:
     raw = dfhttp.get_json(
@@ -138,7 +154,7 @@ config = Config()
 configure_data_proxy(config.data_proxy_url)
 configure_proxy_fallback(config.egress_proxy_url)
 broker = binance_broker(config)
-state_root = config.state_root or str(Path.home() / ".local/share/stammtisch")
+state_root = state_root_arg()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
