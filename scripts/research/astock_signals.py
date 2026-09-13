@@ -92,7 +92,21 @@ def signal(config: Config, *, capital: float, topk: int = 5, n_drop: int = 1,
     card = {"asof": str(px.index[-1].date()), "mode": mode,
             "panel": f"{px.shape[1]} symbols x {px.shape[0]} bars",
             "holdings_before": current, "holdings_after": selected,
-            "sells": sells, "buys": buys, "kept": kept, "weights": {}}
+            "sells": sells, "buys": buys, "kept": kept, "weights": {},
+            "capital": capital, "topk": topk, "n_drop": n_drop,
+            "factors": {}, "spark": {}}
+    factor_cols = [c for c in (scores.columns if hasattr(scores, "columns") else [])
+                   if c not in ("asof",)]
+    for sym in selected:
+        if sym in scores.index:
+            card["factors"][sym] = {
+                col: (round(float(scores.loc[sym, col]), 4)
+                      if pd.api.types.is_number(scores.loc[sym, col])
+                      else str(scores.loc[sym, col]))
+                for col in factor_cols}
+        if sym in px.columns:
+            tail = [float(v) for v in px[sym].dropna().tail(30)]
+            card["spark"][sym] = tail
     for sym in selected:
         shares = lots(capital * float(weights.get(sym, 0)) / px[sym].iloc[-1])
         if shares:

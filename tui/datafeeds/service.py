@@ -13,6 +13,7 @@ from typing import Any
 from .cache import cached
 from .registry import tracked
 from .providers import binance, coingecko, stooq, tencent, yahoo
+from .providers import tencent as _tencent  # noqa: F401
 
 
 def quotes(symbols: list[str], *, timeout: float = 6.0) -> dict[str, dict[str, Any]]:
@@ -54,9 +55,22 @@ def daily_candles(symbol: str, *, timeout: float = 10.0) -> list[dict[str, Any]]
 
 def _daily_candles_chain(symbol: str, *, timeout: float) -> list[dict[str, Any]]:
     errors: list[str] = []
+    def _alpaca_candles():
+        from tui.config import Config as _Config
+        from ..brokers.alpaca import AlpacaBroker
+
+        broker = AlpacaBroker(_Config())
+        bars = broker.daily_bars(symbol, start="2024-01-01")
+        if not bars:
+            raise RuntimeError("no alpaca bars")
+        return [{"time": str(b["t"])[:10], "open": float(b["o"]),
+                 "high": float(b["h"]), "low": float(b["l"]),
+                 "close": float(b["c"]), "volume": float(b.get("v", 0))}
+                for b in bars]
     for name, fetch in (
         ("stooq", lambda: stooq.fetch_candles(symbol, timeout=timeout)),
         ("yahoo", lambda: yahoo.fetch_candles(symbol, timeout=timeout)),
+        ("alpaca", _alpaca_candles),
     ):
         try:
             return tracked(name, fetch)
