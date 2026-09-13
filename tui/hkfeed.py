@@ -9,12 +9,13 @@ are CN-side.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pandas as pd
-import requests
+
+from .datafeeds.http import get_json
 
 KLINE_ENDPOINT = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
 KLINE_SOURCE = "Tencent fqkline (qfq)"
@@ -26,13 +27,11 @@ def fetch_hk_daily(symbol: str, days: int = 800) -> pd.DataFrame | None:
     """Dividend-adjusted daily bars for one .HK symbol, newest last."""
     code = symbol.strip().upper().removesuffix(".HK").zfill(5)
     try:
-        resp = requests.get(
-            KLINE_ENDPOINT,
-            params={"param": f"hk{code},day,,,{days},qfq"},
-            headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-        resp.raise_for_status()
-        payload = resp.json()
-    except (requests.RequestException, json.JSONDecodeError):
+        payload = get_json(
+            KLINE_ENDPOINT + "?" + urlencode(
+                {"param": f"hk{code},day,,,{days},qfq"}),
+            timeout=20)
+    except Exception:
         return None
     if not isinstance(payload, dict) or payload.get("code") not in (0, None):
         return None

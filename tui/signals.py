@@ -13,8 +13,9 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
-import requests
+from .datafeeds.http import get_json
 
 SZSE_ENDPOINT = "http://www.szse.cn/api/report/ShowReport/data"
 SZSE_SOURCE = "SZSE announcements API"
@@ -64,14 +65,12 @@ def load_announcements(state_root: str | None, days: int = 30,
     rows: list[dict[str, Any]] = []
     for page in range(1, max_pages + 1):
         try:
-            resp = requests.get(
-                SZSE_ENDPOINT,
-                params={"SHOWTYPE": "JSON", "CATALOGID": "1845", "TABKEY": "tab1",
-                        "PAGENO": str(page), "PAGESIZE": "50"},
-                headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException:
+            data = get_json(
+                SZSE_ENDPOINT + "?" + urlencode(
+                    {"SHOWTYPE": "JSON", "CATALOGID": "1845", "TABKEY": "tab1",
+                     "PAGENO": str(page), "PAGESIZE": "50"}),
+                timeout=15)
+        except Exception:
             break
         batch = data[0].get("data", []) if isinstance(data, list) and data else []
         if not batch:
