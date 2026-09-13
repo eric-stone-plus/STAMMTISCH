@@ -73,18 +73,58 @@ managed compatible environment.
 
 ## TUI
 
-Dashboard keys: `A` Ask, `E` edit config, `C` crawlers panel, `L`
+Dashboard keys: `A` Ask, `E` edit config, `C` crawlers panel, `F`
+feeds panel (provider health for the data chains), `L`
 language (English/简体中文), click selects one run,
 `Shift+click` selects a range, `Ctrl+A` selects all, `Delete` removes the
 selection, `Shift+D` delete all listed pipeline runs, `Q` quit; `Enter`
 inspects the cursor row. The registry shows session name and time in
 separate columns.
+`Ctrl+P` opens the command palette anywhere: screen navigation, the
+quant workbenches, and offline multi-market symbol lookup that jumps
+straight to the in-terminal candle chart.
 The Plugins sidebar (alphabetical) lists pipeline workbenches plus the
 CRYPTO (Polymarket tape) and ENERGY (EIA watchlist) modules. The quant and
 daily-report functions live inside the SECURITY (equity board by market
-zone) and FUTURES workbenches, not on the dashboard.
+zone) and FUTURES workbenches, not on the dashboard; SECURITY adds
+`V` in-terminal candle chart, `K` browser chart, and `W`/`X` to add or
+remove anchored watchlist symbols.
 The Quick Start sidebar is mouse-clickable.
 See [`tui/README.md`](tui/README.md).
+
+### Free-data feed layer
+
+`tui/datafeeds/` is the provider seam for keyless market data, in the
+spirit of the open-source terminal projects (OpenBB's provider routing,
+OpenTerminal's fallback chains): one small module per source
+(`providers/tencent.py`, `yahoo.py`, `stooq.py`, `coingecko.py`,
+`binance.py`), `registry.py` for ordered fallback with per-provider
+health stats (rendered in the `F` feeds panel), and `cache.py` for TTL
+with stale-while-revalidate plus last-known disk snapshots under the
+state root. Provenance is explicit: every quote and candle carries the
+provider it came from, boards stamp their serving sources, and a
+fallback is never silent. Live board polls also append a time-&-sales
+journal to `<state_root>/intel/quotes/YYYY-MM-DD.jsonl`.
+
+### Sandbox broker execution
+
+`tui/brokers/` executes orders against pinned sandbox endpoints only:
+Alpaca paper (`paper-api.alpaca.markets`) and Binance testnet (spot
+`testnet.binance.vision` or USDⓈ-M futures `testnet.binancefuture.com`,
+selected by config `binance_testnet_kind`). Mainnet endpoints are
+refused in code unconditionally — the same structural rule as the
+GALAHAD `nautilus_live` testnet gate. On top of that, order placement
+and cancellation pass the `trading_mode: "paper"` gate in the operator
+config; with the gate closed the BROKERS screen (dashboard key `T`, or
+`ctrl+p` → Brokers) renders read-only account state and refuses every
+mutation before any wire traffic. Credentials resolve from the
+environment (`ALPACA_PAPER_API_KEY`/`SECRET`,
+`BINANCE_TESTNET_API_KEY`/`SECRET`) or from operator-declared .env
+files (`alpaca_env_file` / `binance_env_file` config keys); they are
+never logged or shipped. Orders validate the exchange's
+PRICE_FILTER / LOT_SIZE / MIN_NOTIONAL rules locally and refuse
+off-filter orders with a precise message instead of a rejected round
+trip.
 
 ## Architecture
 

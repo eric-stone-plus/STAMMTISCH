@@ -141,10 +141,12 @@ products and out of scope.
 
 The SECURITY row (the shipped example pipeline's workbench) opens an equity
 watchlist board grouped by market zone — A-SHARE / HK / US / OTHER by
-exchange suffix — with `←`/`→` switching, a recent-bars detail pane, and
-`K` opening the browser K-line for the selected row. Symbols come from
+exchange suffix — with `←`/`→` switching, a recent-bars detail pane,
+`V` opening the in-terminal candle chart for the selected row, and `K`
+opening the browser K-line. Symbols come from
 `security_symbols` (Yahoo-style tickers through the quantkit path, e.g.
-`601088.SS 1088.HK BTU`). When that list is empty (the full-market daily
+`601088.SS 1088.HK BTU`) — editable in place with `W`/`X` (add/remove).
+When that list is empty (the full-market daily
 screen mode), the board shows non-cut names from the latest persisted daily
 decision and then recent symbols. The quant and daily-report hotkeys
 (`A`/`B`/`D`/`H`/`E`/`F`/`P`/`S`/`T`) live on this screen.
@@ -217,13 +219,32 @@ history. Nonzero exits, malformed JSON, and schema mismatches fail closed
 | `A`     | ASK                             |
 | `Enter` | Inspect selected run            |
 | `E`     | Edit config                     |
+| `F`     | Feeds panel (provider health)   |
+| `T`     | Brokers panel (sandbox trading) |
 | `Esc`   | Go back                         |
 | `Q`     | Quit                            |
+
+`Ctrl+P` opens the command palette on any screen: navigation, the quant
+workbenches, and offline multi-market symbol lookup that jumps to the
+in-terminal candle chart.
 
 The quant and daily-report keys (`B` backtest, `D` daily-data intake,
 `H` report history, `F` fetch market data, `K` K-line timeseries,
 `P` portfolio, `S` sentiment tape, `T` technical indicators) live inside
 the SECURITY workbench; `B`/`F`/`T`/`P`/`K` are also on the FUTURES board.
+SECURITY adds `V` (in-terminal candle chart — quantkit-verified bars when
+available, free feeds labeled as such otherwise), `W`/`X` (add/remove the
+highlighted symbol from the anchored watchlist), and the browser `K`.
+
+## Brokers panel (sandbox trading)
+
+The `T` row opens the BROKERS screen: Alpaca paper and Binance testnet
+accounts, positions, and open orders, with `B`/`S` limit orders and `C`
+cancel. Mutations are gated twice — the endpoints are pinned to the
+sandbox hosts in code (mainnet refused), and `trading_mode: "paper"`
+must be set in the operator config. With the gate closed the panel is
+read-only. See the README's "Sandbox broker execution" section for
+credential and filter rules.
 
 The Quick Start sidebar is minimal (Ask, Edit config). Inspect is the run
 table; gates and validate stay inside those flows.
