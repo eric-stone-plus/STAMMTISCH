@@ -128,6 +128,22 @@ PRICE_FILTER / LOT_SIZE / MIN_NOTIONAL rules locally and refuse
 off-filter orders with a precise message instead of a rejected round
 trip.
 
+### Crypto engine bridge and TopkDropout selection
+
+The COINS screen's `[B]` action drives the operator's crypto_backtest
+engine (P1a: signal/execution separation with SL/TP/trailing risk
+controls, parameter grids, sortino/calmar/exposure) over a versioned
+subprocess contract — config `crypto_backtest_cmd` receives `--symbol
+--timeframe --start --strategy --json` appended and must print one
+`crypto.backtest.v1` JSON object; every transport or contract failure
+is rendered verbatim, never guessed around. The same engine subprocess
+imports the quantkit tree named by `quantkit_path`, whose ccxt fetcher
+honors proxy environment variables. Portfolio runs gain a `topk`
+strategy (qlib TopkDropout semantics: holdings inside the topk+n_drop
+band are kept, at most n_drop rotate out per rebalance) whenever the
+quantkit tree ships `selection.select_topk_dropout` — capability is
+probed at call time and the gap is reported with the exact remedy.
+
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) (normative spec),
