@@ -50,7 +50,7 @@ def refresh_loop() -> None:
         time.sleep(REFRESH_SECONDS)
 
 
-def spark_svg(values: list[float], width: int = 120, height: int = 28) -> str:
+def spark_svg(values: list[float], width: int = 110, height: int = 26) -> str:
     if len(values) < 2:
         return ""
     lo, hi = min(values), max(values)
@@ -59,85 +59,116 @@ def spark_svg(values: list[float], width: int = 120, height: int = 28) -> str:
     pts = " ".join(
         f"{i * step:.1f},{height - (v - lo) / span * (height - 4) - 2:.1f}"
         for i, v in enumerate(values))
-    color = "#66bb6a" if values[-1] >= values[0] else "#ef5350"
+    color = "#e8e8e8" if values[-1] >= values[0] else "#6e6e6e"
     return (f"<svg width='{width}' height='{height}' viewBox='0 0 {width} {height}'>"
-            f"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.5'/>"
+            f"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.2'/>"
             f"</svg>")
 
 
 def render(card: dict) -> str:
     if "error" in card and "weights" not in card:
-        return (f"<!doctype html><meta charset=utf-8><body style='background:#06080a;"
-                f"color:#eee;font-family:monospace'><h2>{card['error']}</h2>")
+        return (f"<!doctype html><meta charset=utf-8><body style='background:#000;"
+                f"color:#e8e8e8;font-family:Georgia,serif'><h2>{card['error']}</h2>")
 
     def money(value: float) -> str:
         return f"{value:,.2f}"
 
-    def buy_rows(weights: dict, factors: dict, sparks: dict) -> str:
-        out = ""
-        for sym, lot in weights.items():
-            factor = factors.get(sym, {})
-            chips = "".join(
-                f"<span class='chip'>{k} {v}</span>" for k, v in factor.items())
-            trend = spark_svg(sparks.get(sym, []))
-            out += (f"<div class='card'><div class='cardhead'>"
-                    f"<span class='sym'>{sym}</span>"
-                    f"<span class='shares'>{lot['shares']} 股</span>"
-                    f"<span class='price'>≈ {money(lot['ref_price'])}</span>"
-                    f"<span class='w'>{lot['target_weight']:.1%}</span>"
-                    f"<span class='amt'>≈ {money(lot['shares'] * lot['ref_price'])}</span>"
-                    f"</div>{trend}<div class='chips'>{chips}</div></div>")
-        return out or "<div class='empty'>—</div>"
+    weights = card.get("weights", {})
+    factors = card.get("factors", {})
+    sparks = card.get("spark", {})
+    ranked = card.get("ranked", [])
+    deployed = sum(lot["shares"] * lot["ref_price"] for lot in weights.values())
 
-    def simple_rows(symbols: list[str], verb: str, empty: str) -> str:
-        if not symbols:
-            return f"<div class='empty'>{empty}</div>"
-        return "".join(
-            f"<div class='card simple'><span class='sym'>{s}</span>"
-            f"<span class='shares'>{verb}</span></div>" for s in symbols)
+    buy_cards = ""
+    for sym, lot in weights.items():
+        factor = factors.get(sym, {})
+        rows = "".join(
+            f"<div class='frow'><span>{k}</span><span>"
+            f"{('+' if isinstance(v, (int, float)) and v >= 0 else '')}"
+            f"{v if isinstance(v, (int, float)) and abs(v) < 10 else v}</span></div>"
+            for k, v in factor.items())
+        buy_cards += (
+            f"<div class='name'><div class='sym'>{sym}</div>"
+            f"<div class='tag'>BUY · {lot['target_weight']:.0%}</div></div>"
+            f"<div class='num'>{lot['shares']:,} 股</div>"
+            f"<div class='num'>{money(lot['ref_price'])}</div>"
+            f"<div class='num'>{money(lot['shares'] * lot['ref_price'])}</div>"
+            f"<div class='spark'>{spark_svg(sparks.get(sym, []))}</div>"
+            f"<div class='factors'>{rows}</div>")
 
-    buys = buy_rows(card.get("weights", {}), card.get("factors", {}),
-                    card.get("spark", {}))
-    sells = simple_rows(card.get("sells", []), "全部卖出", "无")
-    kept = simple_rows(card.get("kept", []), "继续持有", "无")
-    deployed = sum(lot["shares"] * lot["ref_price"]
-                   for lot in card.get("weights", {}).values())
+    sell_rows = "".join(
+        f"<div class='name'><div class='sym'>{s}</div>"
+        f"<div class='tag'>EXIT</div></div>" for s in card.get("sells", [])) or         "<div class='none'>—</div>"
+    keep_rows = "".join(
+        f"<div class='name'><div class='sym'>{s}</div>"
+        f"<div class='tag'>HOLD</div></div>" for s in card.get("kept", [])) or         "<div class='none'>—</div>"
+    board = "".join(
+        f"<div class='brow'><span class='rk'>{i + 1:02d}</span>"
+        f"<span class='rsym'>{r['symbol']}</span>"
+        f"<span class='rsc'>{r['score']:+.3f}</span>"
+        f"<span class='rpc'>{money(r['close'])}</span>"
+        f"<span class='rbadge'>{'IN PORTFOLIO' if r['symbol'] in card.get('holdings_after', []) else ''}</span></div>"
+        for i, r in enumerate(ranked))
+
     return f"""<!doctype html><html lang=zh><head><meta charset=utf-8>
 <meta http-equiv=refresh content="{REFRESH_SECONDS // 2}">
 <title>A股 TopkDropout 信号卡</title><style>
-* {{ box-sizing: border-box; margin: 0; }}
-body {{ background: #06080a; color: #c8ccd0; font-family: 'SF Mono', Consolas, monospace; padding: 18px 22px; }}
-header {{ display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #1d2a33; padding-bottom: 10px; margin-bottom: 14px; }}
-h1 {{ font-size: 17px; color: #fff; letter-spacing: 1px; }}
-.meta {{ color: #5a6a75; font-size: 12px; text-align: right; line-height: 1.5; }}
-.tiles {{ display: flex; gap: 10px; margin-bottom: 16px; }}
-.tile {{ background: #0c1216; border: 1px solid #1d2a33; border-radius: 4px; padding: 8px 14px; min-width: 110px; }}
-.tile .k {{ color: #5a6a75; font-size: 11px; }} .tile .v {{ color: #fff; font-size: 16px; margin-top: 3px; }}
-h2 {{ font-size: 13px; color: #7d8b96; letter-spacing: 2px; margin: 16px 0 8px; }}
-h2.buy {{ color: #66bb6a; }} h2.sell {{ color: #ef5350; }} h2.keep {{ color: #4fc3f7; }}
-.card {{ background: #0c1216; border: 1px solid #1d2a33; border-left: 3px solid #66bb6a; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }}
-.card.simple {{ border-left-color: #4fc3f7; justify-content: space-between; }}
-.sym {{ color: #fff; font-size: 15px; font-weight: bold; min-width: 110px; }}
-.shares {{ color: #ffd54f; min-width: 80px; }} .price {{ color: #a8b4bc; }}
-.w {{ color: #4fc3f7; }} .amt {{ color: #8899a6; }}
-.chips {{ display: flex; gap: 6px; flex-wrap: wrap; }}
-.chip {{ background: #101a20; border: 1px solid #1d2a33; border-radius: 3px; color: #7d8b96; font-size: 11px; padding: 2px 7px; }}
-.empty {{ color: #3d4a52; padding: 6px 0; }}
-footer {{ margin-top: 20px; color: #3d4a52; font-size: 11px; line-height: 1.7; border-top: 1px solid #1d2a33; padding-top: 10px; }}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ background: #000; color: #e8e8e8; font-family: 'Helvetica Neue', 'PingFang SC', sans-serif;
+        padding: 34px 48px; -webkit-font-smoothing: antialiased; }}
+.mono {{ font-variant-numeric: tabular-nums; }}
+header {{ border-bottom: 1px solid #262626; padding-bottom: 18px; margin-bottom: 6px; }}
+.eyebrow {{ font-size: 10px; letter-spacing: 4px; color: #7a7a7a; text-transform: uppercase; }}
+h1 {{ font-size: 26px; font-weight: 400; color: #fff; margin: 6px 0 2px; }}
+.sub {{ color: #7a7a7a; font-size: 12px; }}
+.strip {{ display: flex; gap: 0; border: 1px solid #262626; border-left: none; margin: 22px 0 30px; }}
+.cell {{ flex: 1; padding: 14px 20px; border-left: 1px solid #262626; }}
+.cell:first-child {{ border-left: none; }}
+.cell .k {{ font-size: 10px; letter-spacing: 2.5px; color: #7a7a7a; text-transform: uppercase; }}
+.cell .v {{ font-size: 22px; font-weight: 300; color: #fff; margin-top: 6px; font-variant-numeric: tabular-nums; }}
+h2 {{ font-size: 11px; letter-spacing: 4px; color: #8a8a8a; text-transform: uppercase;
+      font-weight: 400; margin: 34px 0 14px; border-bottom: 1px solid #1a1a1a; padding-bottom: 8px; }}
+.ledger {{ display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 130px; gap: 0 18px; }}
+.ledger .head, .ledger > .row {{ display: contents; }}
+.row {{ border-bottom: 1px solid #141414; padding: 12px 0; align-items: center; }}
+.sym {{ font-size: 17px; color: #fff; font-weight: 500; }}
+.tag {{ font-size: 10px; letter-spacing: 2px; color: #7a7a7a; margin-top: 3px; }}
+.num {{ text-align: right; font-variant-numeric: tabular-nums; font-size: 15px; color: #e8e8e8; }}
+.spark {{ text-align: right; }}
+.factors {{ grid-column: 1 / -1; display: flex; gap: 26px; padding-top: 10px; }}
+.frow {{ display: flex; gap: 8px; font-size: 11px; color: #7a7a7a; font-variant-numeric: tabular-nums; }}
+.frow span:first-child {{ color: #555555; }}
+.none {{ color: #4a4a4a; padding: 10px 0; font-style: italic; }}
+.board {{ font-variant-numeric: tabular-nums; }}
+.brow {{ display: flex; gap: 24px; padding: 7px 0; border-bottom: 1px solid #101010; font-size: 13px; }}
+.rk {{ color: #555; width: 26px; }} .rsym {{ color: #e8e8e8; width: 110px; }}
+.rsc {{ color: #b8b8b8; width: 90px; }} .rpc {{ color: #8a8a8a; width: 90px; }}
+.rbadge {{ color: #d0d0d0; font-size: 10px; letter-spacing: 2px; }}
+footer {{ margin-top: 44px; color: #4a4a4a; font-size: 11px; line-height: 1.8;
+          border-top: 1px solid #1a1a1a; padding-top: 14px; }}
+footer b {{ color: #7a7a7a; font-weight: 400; }}
 </style></head><body>
-<header><h1>A股 TopkDropout 信号卡 · 均值回归打分</h1>
-<div class=meta>面板 {card.get('panel')}<br>topk {card.get('topk')} / n_drop {card.get('n_drop')} · 生成 {card.get('generated_at')}</div></header>
-<div class=tiles>
-<div class=tile><div class=k>部署资金</div><div class=v>{money(deployed)}</div></div>
-<div class=tile><div class=k>目标持仓</div><div class=v>{len(card.get('holdings_after', []))}</div></div>
-<div class=tile><div class=k>本期换入</div><div class=v>{len(card.get('buys', []))}</div></div>
-<div class=tile><div class=k>本期换出</div><div class=v>{len(card.get('sells', []))}</div></div>
+<header><div class=eyebrow>STAMMTISCH — A-SHARE SELECTION · TOPKDROPOUT({card.get('topk')},{card.get('n_drop')})</div>
+<h1>信号卡 · 均值回归打分</h1>
+<div class=sub>面板 {card.get('panel')} · 数据截至 {card.get('asof')} · 生成于 {card.get('generated_at')}（每 30 分钟重算）</div></header>
+<div class=strip>
+<div class=cell><div class=k>部署资金</div><div class=v>{money(deployed)}</div></div>
+<div class=cell><div class=k>基数本金</div><div class=v>{money(float(card.get('capital') or 0))}</div></div>
+<div class=cell><div class=k>目标持仓</div><div class=v>{len(card.get('holdings_after', []))} / {card.get('topk')}</div></div>
+<div class=cell><div class=k>本期换入 / 换出</div><div class=v>{len(card.get('buys', []))} / {len(card.get('sells', []))}</div></div>
 </div>
-<h2 class=buy>BUY — 手动买入（100 股整手）</h2>{buys}
-<h2 class=sell>SELL — 手动卖出</h2>{sells}
-<h2 class=keep>HOLD — 继续持有（带内保留）</h2>{kept}
-<footer>仅参考信号，非投资建议 · 数据为日频收盘（免费源，可能有延迟）· 手动下单后在 LEDGER 登记实际成交<br>
-持仓带规则：现持仓排名仍在 topk+n_drop 带内则保留，每月最多自然换出 n_drop 只 · 卡片存档 intel/astock/</footer>
+<h2>BUY — 建仓指令（100 股整手）</h2>
+<div class=ledger>
+<div class=head><div class=row><div class=sym style="color:#7a7a7a;font-size:10px;letter-spacing:2px">SYMBOL</div><div class=num style="color:#7a7a7a;font-size:10px;letter-spacing:2px">股数</div><div class=num style="color:#7a7a7a;font-size:10px;letter-spacing:2px">参考价</div><div class=num style="color:#7a7a7a;font-size:10px;letter-spacing:2px">金额</div><div style="color:#7a7a7a;font-size:10px;letter-spacing:2px">30D</div></div></div>
+{buy_cards}
+</div>
+<h2>SELL — 清仓指令</h2>{sell_rows}
+<h2>HOLD — 带内保留</h2>{keep_rows}
+<h2>UNIVERSE LEADERBOARD — 全面板评分前 12</h2>
+<div class=board>{board}</div>
+<footer><b>纪律</b> 现持仓排名在 topk+n_drop 带内保留 · 每月最多自然换出 {card.get('n_drop')} 只 ·
+卡片存档 intel/astock/ · 成交后于 LEDGER 登记实际成交<br>
+<b>声明</b> 仅参考信号，非投资建议 · 日频收盘免费源可能有延迟 · 过往表现不代表未来</footer>
 </body></html>"""
 
 

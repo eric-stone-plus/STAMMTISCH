@@ -89,8 +89,12 @@ def signal(config: Config, *, capital: float, topk: int = 5, n_drop: int = 1,
     kept = [s for s in selected if s in current]
     sells = [s for s in current if s not in selected]
     buys = [s for s in selected if s not in current]
+    ranked = scores.sort_values("score", ascending=False).head(12)
     card = {"asof": str(px.index[-1].date()), "mode": mode,
             "panel": f"{px.shape[1]} symbols x {px.shape[0]} bars",
+            "ranked": [{"symbol": sym, "score": round(float(row["score"]), 4),
+                        "close": round(float(row.get("close", 0) or 0), 2)}
+                       for sym, row in ranked.iterrows()],
             "holdings_before": current, "holdings_after": selected,
             "sells": sells, "buys": buys, "kept": kept, "weights": {},
             "capital": capital, "topk": topk, "n_drop": n_drop,
@@ -119,7 +123,7 @@ def signal(config: Config, *, capital: float, topk: int = 5, n_drop: int = 1,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="A-share daily TopkDropout signal card")
-    parser.add_argument("--capital", type=float, default=100000)
+    parser.add_argument("--capital", type=float, default=1000000)
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument("--n-drop", type=int, default=1)
     parser.add_argument("--mode", default="mean_reversion",
