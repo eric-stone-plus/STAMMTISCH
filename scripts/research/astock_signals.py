@@ -101,7 +101,7 @@ def signal(config: Config, *, capital: float, topk: int = 5, n_drop: int = 1,
             "factors": {}, "spark": {}}
     factor_cols = [c for c in (scores.columns if hasattr(scores, "columns") else [])
                    if c not in ("asof",)]
-    for sym in selected:
+    for sym in ranked.index:
         if sym in scores.index:
             card["factors"][sym] = {
                 col: (round(float(scores.loc[sym, col]), 4)
