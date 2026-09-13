@@ -113,41 +113,35 @@ class TopkPortfolioTest(unittest.TestCase):
             pkg.mkdir()
             (pkg / "__init__.py").write_text("")
             (pkg / "selection.py").write_text(
-                "import numpy as np
-import pandas as pd\n"
+                "import pandas as pd\n"
                 "def score_universe(prices, *, mode='momentum', asof=None,\n"
                 "                   mom_lookback=60, **kw):\n"
-                "    last = prices.index[-1]\n"
-                "    rows = [{'symbol': c, 'score': float(prices[c].iloc[-1])}\n"
+                "    rows = [{'symbol': c,\n"
+                "             'score': float(prices[c].iloc[-1])}\n"
                 "            for c in prices.columns]\n"
                 "    return pd.DataFrame(rows).set_index('symbol')\n"
                 "def select_topk_dropout(scores, holdings, topk, n_drop, **kw):\n"
-                "    ranked = list(scores.sort_values('score', ascending=False).index)\n"
+                "    ranked = list(scores.sort_values('score',\n"
+                "                                   ascending=False).index)\n"
                 "    sel = ranked[:topk]\n"
-                "    return sel, pd.Series(1.0 / len(sel), index=sel)\n")
+                "    w = pd.Series(1.0 / len(sel), index=sel)\n"
+                "    return sel, w\n")
             (pkg / "portfolio.py").write_text(
-                "import numpy as np
-import pandas as pd\n"
+                "import pandas as pd\n"
                 "from types import SimpleNamespace\n"
                 "def fetch_price_panel(symbols, *, start=None, data_dir=None, **kw):\n"
-                "    import numpy as np
-import pandas as pd\n"
                 "    idx = pd.date_range('2024-01-01', periods=30, freq='D')\n"
-                "    return pd.DataFrame({s: [i + 1] * 30 for i, s in enumerate(symbols)},\n"
-                "                        index=idx)\n"
+                "    return pd.DataFrame({s: [i + 1] * 30\n"
+                "                         for i, s in enumerate(symbols)}, index=idx)\n"
                 "def run_portfolio(prices, weights, **kw):\n"
                 "    stats = {'avg_turnover': 0.1, 'avg_gross_exposure': 0.9}\n"
                 "    return SimpleNamespace(total_return=0.12, cagr=0.1,\n"
                 "        sharpe=0.9, max_drawdown=-0.05, win_rate=0.6, trades=4,\n"
                 "        stats=stats)\n")
 
-            # A prior real-quantkit import must not shadow the stub tree.
-            sys.modules.pop("quantkit", None)
-            for name in [m for m in list(sys.modules) if m.startswith("quantkit.")]:
-                sys.modules.pop(name, None)
-            # Teardown: the stub tree must not shadow the real quantkit
-            # for the rest of the suite (sys.path + module cache).
             def _unstub():
+                import sys
+
                 while tmp in sys.path:
                     sys.path.remove(tmp)
                 for name in [m for m in list(sys.modules)
