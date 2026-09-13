@@ -113,7 +113,8 @@ class TopkPortfolioTest(unittest.TestCase):
             pkg.mkdir()
             (pkg / "__init__.py").write_text("")
             (pkg / "selection.py").write_text(
-                "import pandas as pd\n"
+                "import numpy as np
+import pandas as pd\n"
                 "def score_universe(prices, *, mode='momentum', asof=None,\n"
                 "                   mom_lookback=60, **kw):\n"
                 "    last = prices.index[-1]\n"
@@ -125,10 +126,12 @@ class TopkPortfolioTest(unittest.TestCase):
                 "    sel = ranked[:topk]\n"
                 "    return sel, pd.Series(1.0 / len(sel), index=sel)\n")
             (pkg / "portfolio.py").write_text(
-                "import pandas as pd\n"
+                "import numpy as np
+import pandas as pd\n"
                 "from types import SimpleNamespace\n"
                 "def fetch_price_panel(symbols, *, start=None, data_dir=None, **kw):\n"
-                "    import pandas as pd\n"
+                "    import numpy as np
+import pandas as pd\n"
                 "    idx = pd.date_range('2024-01-01', periods=30, freq='D')\n"
                 "    return pd.DataFrame({s: [i + 1] * 30 for i, s in enumerate(symbols)},\n"
                 "                        index=idx)\n"
@@ -219,3 +222,31 @@ class TimingStatusTest(unittest.TestCase):
         rows = {row["symbol"]: row for row in out["rows"]}
         self.assertEqual(rows["SPY"]["state"], "HOLD")    # rising series
         self.assertEqual(rows["QQQ"]["state"], "CASH")    # falling series
+
+
+class BatchScreenerTest(unittest.TestCase):
+    def test_crypto_screen_offline_and_persist(self):
+        from tui import batch_screener as bs
+
+        cfg = _config("paper")
+        cfg.data_proxy_url = ""
+        cfg.egress_proxy_url = ""
+        ticker = [{"symbol": "BTCUSDT", "quoteVolume": "50"},
+                  {"symbol": "ETHUSDT", "quoteVolume": "40"},
+                  {"symbol": "LSKUSDT", "quoteVolume": "3"}]
+        kline = [[0] * 6] * 150
+        closes = np.concatenate([np.full(20, 100.0), np.full(10, 90.0),
+                                 np.linspace(90, 95, 60), np.linspace(95, 90, 60)])
+        klines = [[0, 0, 0, 0, float(c), 0] for c in closes]
+        with mock.patch.object(bs.dfhttp, "get_json",
+                               side_effect=lambda url, **kw: (
+                                   ticker if "ticker" in url else klines)), \
+             mock.patch.object(bs, "configure_data_proxy"), \
+             mock.patch.object(bs, "configure_proxy_fallback"):
+            out = bs.crypto_screen(cfg, min_volume=2, limit=10, workers=2)
+        self.assertEqual(out["universe"], 3)
+        self.assertIn("0.05%", out["fee_tiers"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = bs.persist(tmp, "crypto", out)
+            self.assertTrue(path.is_file())
+            self.assertIn("evaluated", json.loads(path.read_text()))

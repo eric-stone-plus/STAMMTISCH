@@ -47,6 +47,7 @@ class CryptoBoardScreen(Screen):
         Binding("r", "refresh", "Refresh"),
         Binding("v", "chart", "Chart"),
         Binding("b", "backtest", "Backtest"),
+        Binding("s", "screener", "Screener"),
         Binding("question_mark", "show_help", "Keys"),
     ]
     CSS = """
@@ -146,6 +147,31 @@ class CryptoBoardScreen(Screen):
             return
         self.app.push_screen(TerminalChartScreen(
             self.engine, self.config, str(row.get("symbol"))))
+
+    # ── batch screener (hundreds of pairs) ──────────────────────────
+    def action_screener(self) -> None:
+        from .. import batch_screener
+
+        self._set_status("  screener running (hundreds of pairs, ~2-5 min)…")
+
+        def _work() -> dict[str, Any]:
+            return batch_screener.crypto_screen(self.config)
+
+        def _deliver(result: Any) -> None:
+            if isinstance(result, dict) and not result.get("ok", True):
+                self._set_status(f"  screener FAILED — {result.get('error')}")
+                return
+            root = getattr(self.config, "state_root", None)
+            path = batch_screener.persist(root, "crypto", result) if root else None
+            tiers = result.get("fee_tiers") or {}
+            summary = " · ".join(
+                f"{fee}:{tier['median_net']:+.3%}" for fee, tier in tiers.items())
+            self._set_status(
+                f"  screener: {result.get('evaluated')}/{result.get('universe')} pairs"
+                f"  net/trade median {summary}"
+                + (f"  · saved {path.name}" if path else ""))
+
+        _run_async(self, _work, _deliver, dedup_key="coins-screener")
 
     # ── crypto_backtest engine bridge (P1a) ─────────────────────────
     def action_backtest(self) -> None:
