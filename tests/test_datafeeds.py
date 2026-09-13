@@ -466,3 +466,16 @@ class ProxyFallbackTest(unittest.TestCase):
             with self.assertRaises(urllib.error.URLError):
                 dfhttp.get_text("http://example.invalid/", provider="yahoo")
             build.assert_called_once()
+
+
+class YahooSymbolMappingTest(unittest.TestCase):
+    def test_us_class_share_gets_dash(self):
+        self.assertEqual(yahoo.to_yahoo_symbol("BRK.B"), "BRK-B")
+
+    def test_numeric_prefixed_codes_keep_the_dot(self):
+        # Yahoo itself quotes CN/HK/JP tickers in dot form.
+        self.assertEqual(yahoo.to_yahoo_symbol("600519.SS"), "600519.SS")
+        self.assertEqual(yahoo.to_yahoo_symbol("0700.HK"), "0700.HK")
+        self.assertEqual(yahoo.to_yahoo_symbol("7203.T"), "7203.T")
+        self.assertEqual(yahoo.to_yahoo_symbol("BTC-USD"), "BTC-USD")
+        self.assertEqual(yahoo.to_yahoo_symbol("aapl"), "AAPL")

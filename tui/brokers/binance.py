@@ -32,8 +32,6 @@ FUTURES_MAINNET_BASE = "https://fapi.binance.com"
 
 _RECV_WINDOW_MS = 10_000
 _TIME_CACHE_TTL = 60.0
-_time_offset: float | None = None
-_time_checked_at = 0.0
 
 
 class _SignedClient:
@@ -48,6 +46,10 @@ class _SignedClient:
         self._credentials = credentials
         self._provider = provider
         self._filters: dict[str, dict[str, float]] = {}
+        # Per-instance server-clock offset: spot and futures testnet are
+        # different hosts and must not share one skew estimate.
+        self._time_offset: float | None = None
+        self._time_checked_at = 0.0
 
     # ── wire helpers ─────────────────────────────────────────────────
     def _sign(self, query: str) -> str:
@@ -55,14 +57,13 @@ class _SignedClient:
                         query.encode("utf-8"), hashlib.sha256).hexdigest()
 
     def _server_time_ms(self) -> float:
-        global _time_offset, _time_checked_at
         now = time.monotonic()
-        if _time_offset is None or now - _time_checked_at > _TIME_CACHE_TTL:
+        if self._time_offset is None or now - self._time_checked_at > _TIME_CACHE_TTL:
             payload = self._get(self.TIME_PATH)
             server_ms = float(payload["serverTime"])
-            _time_offset = server_ms - time.time() * 1000.0
-            _time_checked_at = now
-        return time.time() * 1000.0 + (_time_offset or 0.0)
+            self._time_offset = server_ms - time.time() * 1000.0
+            self._time_checked_at = now
+        return time.time() * 1000.0 + (self._time_offset or 0.0)
 
     def _get(self, path: str, params: dict[str, Any] | None = None,
              signed: bool = False) -> Any:

@@ -106,8 +106,15 @@ class QuantEngine:
                  egress_switch_cmd: str | None = None,
                  quantkit_path: str | None = None):
         self.quantkit_tree: str | None = None
+        self.quantkit_error: str | None = None
         if quantkit_path and str(quantkit_path).strip():
-            self._load_quantkit_tree(str(quantkit_path).strip())
+            try:
+                self._load_quantkit_tree(str(quantkit_path).strip())
+            except RuntimeError as exc:
+                # A mistyped operator path must not kill the workstation:
+                # degrade to the installed quantkit and surface the error
+                # in the dashboard status hints instead.
+                self.quantkit_error = str(exc)
         self.data_dir = Path(data_dir) if data_dir else Path.home() / ".quant_cache"
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -150,7 +157,10 @@ class QuantEngine:
     def _egress_apply(self, proxy_url: str) -> None:
         try:
             import yfinance as yf
-            yf.set_config(proxy={"http": proxy_url, "https": proxy_url})
+            try:
+                yf.config.network.proxy = proxy_url  # yfinance >= 0.2.5x
+            except AttributeError:
+                yf.set_config(proxy={"http": proxy_url, "https": proxy_url})
             self._egress_active = True
         except Exception:
             pass  # older yfinance without set_config: fetch stays direct
@@ -393,6 +403,8 @@ class QuantEngine:
             if rebalance == "W":
                 keys = pd.Series(index, index=index).dt.isocalendar().week.astype(str) \
                     + "-" + pd.Series(index, index=index).dt.year.astype(str)
+            elif rebalance == "Q":
+                keys = pd.Series(index, index=index).dt.to_period("Q").astype(str)
             else:
                 keys = pd.Series(index, index=index).dt.to_period("M").astype(str)
             rebalance_bars = index[(keys != keys.shift(-1)).fillna(False).values]

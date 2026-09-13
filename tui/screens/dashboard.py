@@ -453,6 +453,9 @@ class DashboardScreen(Screen):
 
         status = self.query_one("#dash-status", Static)
         hints = []
+        engine_error = getattr(self.engine, "quantkit_error", None)
+        if engine_error:
+            hints.append(f"quantkit_path ignored: {engine_error}")
         if not self.engine.available:
             hints.append("quantkit not installed — quant commands disabled "
                          "(pip install -e <quantkit>)")

@@ -162,11 +162,34 @@ class TopkPortfolioTest(unittest.TestCase):
             # highest, then MSFT — topk 2 takes exactly those.
             self.assertEqual(result["final_holdings"], ["GOOG", "MSFT"])
 
-    def test_bad_tree_refuses_at_construction(self):
+    def test_bad_tree_degrades_with_recorded_error(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(RuntimeError):
-                QuantEngine(data_dir="/tmp/qk-x", quantkit_path=tmp)
+            engine = QuantEngine(data_dir="/tmp/qk-x", quantkit_path=tmp)
+            self.assertIsNone(engine.quantkit_tree)
+            self.assertIn("no quantkit package", engine.quantkit_error or "")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuantkitPathDegradationTest(unittest.TestCase):
+    def test_bad_path_degrades_instead_of_crashing_boot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = QuantEngine(data_dir="/tmp/qk-x",
+                                 quantkit_path=str(Path(tmp) / "nowhere"))
+            self.assertIsNone(engine.quantkit_tree)
+            self.assertIn("no quantkit package", engine.quantkit_error or "")
+            # The workstation keeps working on the installed quantkit.
+            self.assertIsInstance(engine.available, bool)
+
+    def test_from_config_survives_bad_path(self):
+        cfg = SimpleNamespace()
+        cfg.data_dir = "/tmp/qk-x"
+        cfg.data_proxy_url = ""
+        cfg.egress_proxy_url = ""
+        cfg.egress_switch_cmd = ""
+        cfg.quantkit_path = "/nonexistent/tree"
+        engine = QuantEngine.from_config(cfg)
+        self.assertIsNone(engine.quantkit_tree)
+        self.assertIsNotNone(engine.quantkit_error)

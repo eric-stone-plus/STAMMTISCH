@@ -17,8 +17,19 @@ SOURCE = "Yahoo Finance (chart API)"
 
 
 def to_yahoo_symbol(symbol: str) -> str:
-    """Board symbol -> Yahoo ticker (BRK.B style dots become dashes)."""
-    return symbol.strip().upper().replace(".", "-")
+    """Board symbol -> Yahoo ticker.
+
+    US class-share dots become dashes (BRK.B -> BRK-B); numeric-prefixed
+    codes keep the dot because Yahoo itself quotes 600519.SS / 0700.HK /
+    7203.T in dot form.
+    """
+    text = symbol.strip().upper()
+    if "." not in text:
+        return text
+    prefix, suffix = text.rsplit(".", 1)
+    if prefix.isalpha() and suffix.isalpha():
+        return prefix + "-" + suffix
+    return text
 
 
 def parse_chart_quote(symbol: str, payload: Any) -> dict[str, Any]:

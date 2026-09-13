@@ -200,7 +200,9 @@ class CryptoBoardScreen(Screen):
             if error:
                 self._set_status(f"  engine FAILED — {error[:150]}")
                 return
-            assert payload is not None
+            if payload is None:  # defensive: never rely on asserts
+                self._set_status("  engine returned no payload")
+                return
             for row in payload.get("results") or []:
                 table.add_row(
                     str(row.get("strategy") or "?"),
