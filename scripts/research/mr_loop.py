@@ -135,6 +135,17 @@ def cycle(state_root: str) -> dict:
                                        f"{round(last * 1.002, 2):.2f}")
         record["action"] = f"ENTRY {out.get('status')}"
         record["orderId"] = out.get("orderId")
+        # Exchange-native disaster stop (5% below entry) — survives death.
+        try:
+            from tui.tradesafety import attach_stop
+
+            stop_out = attach_stop(broker, PAIR, qty, last, 0.05)
+            record["stopAlgoId"] = stop_out.get("algoId")
+        except Exception as exc:
+            # No stop on the wire -> flat immediately, never naked.
+            broker.place_limit_order(PAIR, "sell", f"{qty:.2f}",
+                                     f"{round(last * 0.99, 2):.2f}")
+            record["action"] = f"ENTRY ROLLED BACK (stop failed: {exc})"
         (Path(state_root) / "intel" / "mr-entry.json").write_text(json.dumps(
             {"ts": time.time(), "qty": f"{qty:.2f}", "entry_ref": last,
              "orderId": out.get("orderId")}))

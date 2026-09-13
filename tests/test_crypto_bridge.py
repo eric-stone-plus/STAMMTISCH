@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 import numpy as np
@@ -245,3 +246,66 @@ class BatchScreenerTest(unittest.TestCase):
             path = bs.persist(tmp, "crypto", out)
             self.assertTrue(path.is_file())
             self.assertIn("evaluated", json.loads(path.read_text()))
+
+
+class TradeSafetyTest(unittest.TestCase):
+    def _bars(self, wick: bool):
+        base = [{"open": 100 + i, "high": 105 + i, "low": 99 + i,
+                 "close": 102 + i} for i in range(20)]
+        if wick:
+            base[-1] = {"open": 120, "high": 121, "low": 60,
+                        "close": 119}  # 60-point lower wick on ~5 ATR
+        return base
+
+    def test_wick_guard_blocks_spike_bar(self):
+        from tui.tradesafety import wick_ok
+
+        ok, why = wick_ok(self._bars(wick=False))
+        self.assertTrue(ok)
+        ok, why = wick_ok(self._bars(wick=True))
+        self.assertFalse(ok)
+        self.assertIn("stop-hunt", why)
+
+    def test_martingale_caps(self):
+        from tui.tradesafety import martingale_qty
+
+        self.assertEqual(martingale_qty(0, 1.0, 0.0, 10000, 100), 1.0)
+        self.assertAlmostEqual(martingale_qty(1, 1.0, 0.05, 10000, 100), 1.5)
+        self.assertEqual(martingale_qty(3, 1.0, 0.0, 10000, 100), 0.0)  # max steps
+        # Total-exposure cap breach -> zero, never a bigger size.
+        self.assertEqual(martingale_qty(1, 1.0, 0.14, 10000, 100), 0.0)
+
+    def test_kill_switch_reads_journal(self):
+        from tui.tradesafety import daily_loss_ok
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mr-loop.jsonl"
+            now = time.strftime("%Y-%m-%dT%H:%M:%S")
+            path.write_text("\n".join(json.dumps(r) for r in [
+                {"ts": now, "kind": "exit", "pnl": -150.0},
+                {"ts": now, "kind": "exit", "pnl": -40.0},
+            ]))
+            ok, realized = daily_loss_ok(path, 10000, 0.02)  # cap -200
+            self.assertTrue(ok)
+            self.assertAlmostEqual(realized, -190.0)
+            path.write_text("\n".join(json.dumps(r) for r in [
+                {"ts": now, "kind": "exit", "pnl": -150.0},
+                {"ts": now, "kind": "exit", "pnl": -60.0},
+                {"ts": now, "kind": "exit", "pnl": -10.0},
+            ]))
+            ok, realized = daily_loss_ok(path, 10000, 0.02)
+            self.assertFalse(ok)  # -220 breaches the -200 cap
+
+    def test_stop_market_spec(self):
+        from tui.tradesafety import stop_market_spec
+
+        spec = stop_market_spec("ETHUSDT", 0.05, 2500.0, 0.05)
+        self.assertEqual(spec["side"], "SELL")
+        self.assertEqual(spec["algoType"], "CONDITIONAL")
+        self.assertEqual(spec["triggerprice"], 2375.0)
+        self.assertEqual(spec["quantity"], 0.05)
+        self.assertEqual(spec["workingType"], "MARK_PRICE")  # wick-resistant
+
+
+if "time" not in dir():
+    import time
