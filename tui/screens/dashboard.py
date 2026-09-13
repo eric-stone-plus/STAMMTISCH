@@ -66,6 +66,7 @@ GENERAL_ITEMS: list[tuple[str, str, str]] = [
     ("screen.edit_config", "E", "quick.config"),
     ("screen.open_crawlers", "C", "quick.crawlers"),
     ("screen.open_feeds", "F", "quick.feeds"),
+    ("screen.open_broker", "T", "quick.brokers"),
 ]
 class DashboardScreen(Screen):
     """Full dashboard with panels."""
@@ -75,6 +76,7 @@ class DashboardScreen(Screen):
         Binding("c", "open_crawlers", "Crawlers", show=False),
         Binding("e", "edit_config", "Edit"),
         Binding("f", "open_feeds", "Feeds", show=False),
+        Binding("t", "open_broker", "Brokers", show=False),
         Binding("delete", "delete_selected", "Delete"),
         Binding("shift+d", "delete_all", "Delete all"),
         Binding("ctrl+a", "check_all", "Select all", show=False, priority=True),
@@ -301,6 +303,11 @@ class DashboardScreen(Screen):
 
     def action_open_feeds(self) -> None:
         self.app.push_screen(FeedHealthScreen(self.config))
+
+    def action_open_broker(self) -> None:
+        from .broker import BrokerScreen
+
+        self.app.push_screen(BrokerScreen(self.config))
 
     def _display_tz(self) -> str:
         try:

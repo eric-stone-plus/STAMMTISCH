@@ -44,6 +44,7 @@ class WorkstationCommands(Provider):
             ("Edit config", "Workstation configuration", dashboard.action_edit_config),
             ("Crawlers panel", "Crawl stack operations", dashboard.action_open_crawlers),
             ("Feeds health", "Provider health for the data chains", dashboard.action_open_feeds),
+            ("Brokers", "Sandbox execution panel (paper/testnet)", dashboard.action_open_broker),
             ("Data fetch", "Fetch OHLCV for a symbol", dashboard.action_fetch_data),
             ("Backtest", "Run a strategy backtest",
              lambda: app.push_screen(BacktestScreen(engine, config))),

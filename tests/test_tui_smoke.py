@@ -2790,6 +2790,7 @@ class TuiSmokeTest(unittest.TestCase):
                             "[E] EDIT CONFIG",
                             "[C] CRAWLERS",
                             "[F] FEEDS",
+                            "[T] BROKERS",
                         ],
                     )
 

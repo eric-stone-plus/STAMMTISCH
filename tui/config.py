@@ -163,6 +163,20 @@ DEFAULT_CONFIG = {
     # JSON object on stdout (see tui/racing.py). Empty = disabled; the
     # RACING plugin then falls back to the directory browser.
     "racing_cmd": "",
+    # Broker execution gate. Empty = trading disabled (the BROKER screen
+    # renders read-only notices). "paper" enables order placement against
+    # the pinned sandbox endpoints only — Alpaca paper + Binance spot
+    # testnet. Mainnet endpoints are refused in code unconditionally.
+    "trading_mode": "",
+    # Which Binance testnet the credentials belong to: "spot"
+    # (testnet.binance.vision) or "futures" (testnet.binancefuture.com,
+    # the USDⓈ-M sandbox the GALAHAD futures keys are issued for).
+    "binance_testnet_kind": "spot",
+    # Operator-local .env files holding the sandbox broker credentials
+    # (ALPACA_PAPER_API_KEY/SECRET, BINANCE_TESTNET_API_KEY/SECRET).
+    # Empty = environment variables only. Never shipped with defaults.
+    "alpaca_env_file": "",
+    "binance_env_file": "",
     # Crawler panel (operator-local, host-agnostic by default): the panel
     # is inert until these point at this workstation's crawling runtime.
     "crawler_url": "http://127.0.0.1:3002/",
