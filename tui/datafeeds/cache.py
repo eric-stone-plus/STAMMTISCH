@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -63,7 +64,9 @@ def _disk_write(key: str, value: Any) -> None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
+        # Unique temp name per write: two workers refreshing the same key
+        # must never interleave on one temp file.
+        tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps({"ts": time.time(), "key": key,
                                    "value": value}, default=str),
                        encoding="utf-8")
