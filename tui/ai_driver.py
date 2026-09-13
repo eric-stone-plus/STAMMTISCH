@@ -81,6 +81,56 @@ def _get_api_key() -> str | None:
         return None
 
 
+# Per-profile credential environments for the fallback chain. A profile
+# joins the chain only when it carries a key of its own (config key
+# memory first, then these variables) — an endpoint without credentials
+# can never serve a turn, so it never silently widens the chain.
+_PROFILE_ENV_VARS = {
+    "glm": ("GLM_API_KEY", "ZHIPU_API_KEY"),
+    "mimo": ("XIAOMI_API_KEY",),
+    "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_KEY", "DEEPSEEK_TOKEN"),
+    "qwen": ("QIANWEN_TP_PERSONAL_KEY",),
+}
+
+
+def fallback_profiles_from_config(
+    config: Any, active_base_url: str | None = None
+) -> list[tuple[str, str, str]]:
+    """Ordered (key, base_url, model) fallbacks from other configured profiles."""
+    import os
+
+    from .config import AI_PROFILES
+
+    active = (active_base_url or "").rstrip("/")
+    profiles: list[tuple[str, str, str]] = []
+    keys = None
+    if config is not None and hasattr(config, "get"):
+        stored = config.get("ai_profile_keys")
+        keys = stored if isinstance(stored, dict) else None
+    for _name, (_label, base_url, model) in AI_PROFILES.items():
+        if base_url.rstrip("/") == active:
+            continue
+        key = (keys or {}).get(_name) or None
+        if not key:
+            for env in _PROFILE_ENV_VARS.get(_name, ()):
+                key = os.environ.get(env)
+                if key:
+                    break
+        if key:
+            profiles.append((str(key), base_url, model))
+    return profiles
+
+
+def _retryable_error(error: str) -> bool:
+    """Transport-level failures worth another profile: network, 429, 5xx."""
+    text = (error or "").lower()
+    return ("network error" in text
+            or "http 429" in text
+            or "http 5" in text
+            or "timed out" in text
+            or "stream error" in text)
+
+
 def is_anthropic_endpoint(base_url: str) -> bool:
     """True when the URL is an Anthropic Messages gateway (``.../anthropic``)."""
     path = urlparse((base_url or "").rstrip("/")).path.rstrip("/").lower()
@@ -266,6 +316,10 @@ class AIDriver:
         self.history: list[ChatMessage] = [
             ChatMessage("system", SYSTEM_PROMPT),
         ]
+        # Ordered provider chain for retryable transport failures; the
+        # active endpoint is always tried first. Refreshed from config by
+        # the caller (app startup, dashboard resume).
+        self.fallback_profiles: list[tuple[str, str, str]] = []
         # chat() runs on worker threads; concurrent chats must not interleave
         # history appends (and the UI thread may hot-swap api_key/model).
         self._lock = threading.Lock()
@@ -277,8 +331,14 @@ class AIDriver:
     def available(self) -> bool:
         return self.api_key is not None
 
-    def _post(self, payload: dict, base_url: str, key: str):
+    def refresh_fallbacks(self, config: Any) -> None:
+        """Rebuild the fallback chain from the (possibly edited) config."""
+        self.fallback_profiles = fallback_profiles_from_config(
+            config, active_base_url=self.base_url)
+
+    def _post(self, payload: dict, base_url: str, key: str, on_token=None):
         anthropic = is_anthropic_endpoint(base_url)
+        streaming = on_token is not None
         if anthropic:
             url = f"{base_url.rstrip('/')}/v1/messages"
             headers = {
@@ -303,48 +363,245 @@ class AIDriver:
         try:
             # A tool-verification turn legitimately thinks for minutes on
             # a full table; 60s cut real decision passes mid-generation.
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                data = json.loads(resp.read())
-            if anthropic and isinstance(data, dict):
-                data = _anthropic_response_to_openai(data)
-            return data, None
+            resp = urllib.request.urlopen(req, timeout=180)
         except urllib.error.HTTPError as e:
-            body = e.read().decode(errors="replace")[:500]
-            return None, f"HTTP {e.code}: {body}"
+            error_body = e.read().decode(errors="replace")[:500]
+            return None, f"HTTP {e.code}: {error_body}"
         except urllib.error.URLError as e:
             return None, f"Network error: {e.reason}"
         except Exception as e:
             return None, str(e)
+        with resp:
+            if not streaming:
+                data = json.loads(resp.read())
+                if anthropic and isinstance(data, dict):
+                    data = _anthropic_response_to_openai(data)
+                return data, None
+            return self._consume_stream(resp, anthropic, on_token)
+
+    def _consume_stream(self, resp, anthropic: bool, on_token):
+        """Assemble one SSE stream into the OpenAI chat shape.
+
+        Content deltas stream to ``on_token`` as they arrive; tool-call
+        deltas accumulate into the assembled message so the normal tool
+        loop runs unchanged. A stream that ends without a completion is
+        a hard error — a partially shown answer is never committed as a
+        finished turn.
+        """
+        try:
+            if anthropic:
+                return self._consume_anthropic_stream(resp, on_token)
+            return self._consume_openai_stream(resp, on_token)
+        except (ValueError, OSError) as e:
+            return None, f"Stream error: {e}"
+
+    def _consume_openai_stream(self, resp, on_token):
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
+        finish_reason: str | None = None
+        usage: dict[str, Any] = {}
+        model = ""
+        while True:
+            raw = resp.readline()
+            if not raw:
+                break
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data_text = line[len("data:"):].strip()
+            if data_text == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("model"):
+                model = chunk["model"]
+            if isinstance(chunk.get("usage"), dict) and chunk["usage"]:
+                usage = chunk["usage"]
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0] if isinstance(choices[0], dict) else {}
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+            delta = choice.get("delta") or {}
+            if isinstance(delta.get("reasoning_content"), str) and delta["reasoning_content"]:
+                reasoning_parts.append(delta["reasoning_content"])
+            if isinstance(delta.get("content"), str) and delta["content"]:
+                content_parts.append(delta["content"])
+                try:
+                    on_token(delta["content"])
+                except Exception:
+                    pass  # progress must never break a turn
+            for call in delta.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                try:
+                    index = int(call.get("index") or 0)
+                except (TypeError, ValueError):
+                    continue
+                slot = tool_calls.setdefault(
+                    index, {"id": "", "type": "function",
+                            "function": {"name": "", "arguments": ""}})
+                if call.get("id"):
+                    slot["id"] = call["id"]
+                function = call.get("function") or {}
+                if function.get("name") and not slot["function"]["name"]:
+                    slot["function"]["name"] = function["name"]
+                if isinstance(function.get("arguments"), str):
+                    slot["function"]["arguments"] += function["arguments"]
+        if finish_reason is None:
+            return None, "Stream error: connection ended before completion"
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(content_parts),
+        }
+        if reasoning_parts:
+            message["reasoning_content"] = "".join(reasoning_parts)
+        if tool_calls:
+            message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+        return ({
+            "model": model,
+            "choices": [{"message": message, "finish_reason": finish_reason}],
+            "usage": usage,
+        }, None)
+
+    def _consume_anthropic_stream(self, resp, on_token):
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_uses: list[dict[str, Any]] = []
+        current_tool: dict[str, Any] | None = None
+        stop_reason: str | None = None
+        usage: dict[str, Any] = {}
+        model = ""
+        while True:
+            raw = resp.readline()
+            if not raw:
+                break
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data_text = line[len("data:"):].strip()
+            if data_text == "[DONE]":
+                break
+            try:
+                event = json.loads(data_text)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            etype = event.get("type")
+            if etype == "message_start":
+                message = event.get("message") or {}
+                model = message.get("model") or model
+                if isinstance(message.get("usage"), dict):
+                    usage = message["usage"]
+            elif etype == "content_block_start":
+                block = event.get("content_block") or {}
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    current_tool = {"id": block.get("id") or "",
+                                    "name": block.get("name") or "",
+                                    "arguments": ""}
+            elif etype == "content_block_delta":
+                delta = event.get("delta") or {}
+                dtype = delta.get("type")
+                if dtype == "text_delta" and delta.get("text"):
+                    text_parts.append(delta["text"])
+                    try:
+                        on_token(delta["text"])
+                    except Exception:
+                        pass
+                elif dtype == "thinking_delta" and delta.get("thinking"):
+                    thinking_parts.append(delta["thinking"])
+                elif dtype == "input_json_delta" and current_tool is not None:
+                    current_tool["arguments"] += delta.get("partial_json") or ""
+            elif etype == "content_block_stop":
+                if current_tool is not None:
+                    tool_uses.append(current_tool)
+                    current_tool = None
+            elif etype == "message_delta":
+                delta = event.get("delta") or {}
+                if delta.get("stop_reason"):
+                    stop_reason = delta["stop_reason"]
+                if isinstance(event.get("usage"), dict):
+                    usage.update(event["usage"])
+            elif etype == "message_stop":
+                break
+        if stop_reason is None and not text_parts and not tool_uses:
+            return None, "Stream error: connection ended before completion"
+        content: list[dict[str, Any]] = []
+        text = "".join(text_parts)
+        if text:
+            content.append({"type": "text", "text": text})
+        for tool in tool_uses:
+            try:
+                parsed = json.loads(tool["arguments"] or "{}")
+            except json.JSONDecodeError:
+                parsed = {"_raw": tool["arguments"]}
+            content.append({
+                "type": "tool_use",
+                "id": tool["id"],
+                "name": tool["name"],
+                "input": parsed if isinstance(parsed, dict) else {"value": parsed},
+            })
+        data = {
+            "model": model,
+            "content": content,
+            "stop_reason": stop_reason or "end_turn",
+            "usage": usage,
+        }
+        openai_shape = _anthropic_response_to_openai(data)
+        if thinking_parts:
+            openai_shape["choices"][0]["message"]["reasoning_content"] = (
+                "".join(thinking_parts))
+        return openai_shape, None
 
     def chat(
         self,
         user_message: str,
         context: str | None = None,
         on_event=None,
+        on_token=None,
     ) -> ChatResponse:
         """Send a message and get a complete response (tool-call aware).
 
         ``on_event(text)`` fires once per tool call from the worker thread
         so long verification turns are visibly alive; it must never block
         and must marshal to the UI thread itself.
+        ``on_token(delta)`` streams answer text as it arrives (SSE);
+        when given, the request runs in streaming mode with a
+        non-streaming retry on the same endpoint if the transport
+        rejects it.
         """
         with self._chat_lock:
-            return self._chat_serialized(user_message, context, on_event)
+            return self._chat_serialized(user_message, context, on_event, on_token)
 
     def _chat_serialized(
         self,
         user_message: str,
         context: str | None = None,
         on_event=None,
+        on_token=None,
     ) -> ChatResponse:
         """Run one transactional user turn while ``_chat_lock`` is held."""
         with self._lock:
             if not self.api_key:
                 return ChatResponse(content="", error="AI API key not set")
-            key = self.api_key
-            model = self.model
-            base_url = self.base_url
             messages = [message.wire() for message in self.history]
+        # Provider chain: the configured endpoint first, then other
+        # configured profiles with resolvable credentials. A retryable
+        # transport failure (network, 429, 5xx) advances to the next
+        # profile and the degradation lands in tool_events — a fallback
+        # is never silent.
+        attempts: list[tuple[str, str, str]] = [
+            (self.api_key, self.base_url, self.model)
+        ] + [item for item in self.fallback_profiles
+             if item[1] != self.base_url]
+        attempt_index = 0
 
         # Inject context if provided (e.g., pipeline data, gate results)
         if context:
@@ -367,20 +624,44 @@ class AIDriver:
         # Six rounds: a decision pass over a scanned table legitimately
         # needs several tool batches (batch scan + spot checks) before its
         # final answer; four dropped real decisions mid-verification.
-        for _round in range(6):
+        rounds = 0
+        while rounds < 6:
+            key, base_url, model = attempts[attempt_index]
             payload = {
                 "model": model,
                 "messages": messages,
                 "temperature": 0.3,
                 "max_tokens": AI_MAX_TOKENS,
-                "stream": False,
+                "stream": on_token is not None,
             }
             if tool_wire:
                 payload["tools"] = tool_wire
 
-            data, error = self._post(payload, base_url, key)
+            if on_token is None:
+                data, error = self._post(payload, base_url, key)
+            else:
+                data, error = self._post(payload, base_url, key,
+                                         on_token=on_token)
+            if error is not None and on_token is not None:
+                # The streaming transport failed; retry the same endpoint
+                # once in non-streaming mode — some gateways reject the
+                # stream parameter outright.
+                data, error = self._post({**payload, "stream": False},
+                                         base_url, key)
             if error is not None:
+                if _retryable_error(error) and attempt_index + 1 < len(attempts):
+                    attempt_index += 1
+                    notice = (f"provider fallback: {model} → "
+                              f"{attempts[attempt_index][2]} ({error})")
+                    tool_events.append(notice)
+                    if on_event is not None:
+                        try:
+                            on_event(notice)
+                        except Exception:
+                            pass
+                    continue  # same round, next profile
                 return ChatResponse(content="", error=error, tool_events=tool_events)
+            rounds += 1
 
             try:
                 choice = data["choices"][0]

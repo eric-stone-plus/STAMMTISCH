@@ -22,6 +22,7 @@ from ..analysis import _run_async
 from ..widgets import (
     status_badge, SystemHud,
 )
+from textual.widgets import Sparkline
 
 import logging
 
@@ -31,6 +32,7 @@ from .chat import ChatScreen
 from .config_screen import ConfigScreen
 from .daily_intake import DailyIntakeScreen, _history_store
 from .domains import DomainBrowserScreen, FuturesScreen, SecurityScreen, ShippingScreen
+from .feeds import FeedHealthScreen
 from .modals import ConfirmScreen
 from .runs import PipelineRunScreen, PipelineViewScreen, RunInspectorScreen, ValidateScreen
 from .sessions import _intake_session_parts, run_session_parts
@@ -63,6 +65,7 @@ GENERAL_ITEMS: list[tuple[str, str, str]] = [
     ("screen.open_chat", "A", "quick.ask"),
     ("screen.edit_config", "E", "quick.config"),
     ("screen.open_crawlers", "C", "quick.crawlers"),
+    ("screen.open_feeds", "F", "quick.feeds"),
 ]
 class DashboardScreen(Screen):
     """Full dashboard with panels."""
@@ -71,6 +74,7 @@ class DashboardScreen(Screen):
         Binding("a", "open_chat", "Ask"),
         Binding("c", "open_crawlers", "Crawlers", show=False),
         Binding("e", "edit_config", "Edit"),
+        Binding("f", "open_feeds", "Feeds", show=False),
         Binding("delete", "delete_selected", "Delete"),
         Binding("shift+d", "delete_all", "Delete all"),
         Binding("ctrl+a", "check_all", "Select all", show=False, priority=True),
@@ -142,6 +146,8 @@ class DashboardScreen(Screen):
                 with Vertical(classes="panel"):
                     yield Static("  Market Glance", classes="panel-title")
                     yield Static("  …", id="dash-glance", markup=False)
+                    yield Sparkline(min_color="#404040", max_color="#4fc3f7",
+                                    id="glance-spark")
 
     def _glance_tick(self) -> None:
         """Sidebar market glance: index snapshot + tape stance, sourced."""
@@ -176,14 +182,31 @@ class DashboardScreen(Screen):
                 return
             lines = []
             labels = {"000001.SS": "SH COMP", "HSI": "HSI", "QQQ": "QQX(US)"}
+            quotes = result.get("quotes") or {}
+            history = getattr(self, "_glance_history", None)
+            if history is None:
+                history = self._glance_history = {}
             for sym, label in labels.items():
-                q = (result.get("quotes") or {}).get(sym)
+                q = quotes.get(sym)
                 if not q:
                     continue
                 chg = ((q["last"] / q["prev_close"] - 1) * 100
                        if q.get("prev_close") else 0.0)
                 lines.append(
                     f"  {label:<8} {q['last']:>10,.0f}  {chg:+5.2f}%")
+                series = history.setdefault(sym, [])
+                series.append(float(q["last"]))
+                del series[:-48]
+            # Session trend sparkline: the first index with enough points.
+            trend = next(
+                (history[s] for s in labels if len(history.get(s, [])) >= 2),
+                [],
+            )
+            if trend:
+                try:
+                    self.query_one("#glance-spark", Sparkline).data = trend
+                except Exception:
+                    pass
             cci = result.get("cci")
             if cci and cci.get("last") is not None:
                 lines.append(f"  {'CCI':<8} {cci['last']:>10,.0f}"
@@ -192,7 +215,13 @@ class DashboardScreen(Screen):
                 lines.append(f"  tape {market.upper():<4} {stance.get('stance')}"
                              f" {stance.get('score'):+.2f}")
             if lines:
-                lines.append("  src: qt.gtimg.cn · ccidx · fin-daily")
+                # Provenance stays explicit: name the sources that served
+                # this glance, not where it usually comes from.
+                srcs = sorted({
+                    str(q.get("source", "")).split()[0]
+                    for q in quotes.values() if q.get("source")
+                })
+                lines.append("  src: " + " · ".join(srcs + ["ccidx", "fin-daily"]))
             try:
                 self.query_one("#dash-glance", Static).update(
                     "\n".join(lines) or "  (no data)")
@@ -269,6 +298,9 @@ class DashboardScreen(Screen):
         from ..crawlers import CrawlerPanelScreen
 
         self.app.push_screen(CrawlerPanelScreen(self.config))
+
+    def action_open_feeds(self) -> None:
+        self.app.push_screen(FeedHealthScreen(self.config))
 
     def _display_tz(self) -> str:
         try:
@@ -902,6 +934,7 @@ class DashboardScreen(Screen):
         self.ai.api_key = self.config.ai_api_key
         self.ai.base_url = self.config.ai_base_url
         self.ai.model = self.config.ai_model
+        self.ai.refresh_fallbacks(self.config)
         if self.config.state_root and not getattr(
             self.app, "state_root_override", None
         ):

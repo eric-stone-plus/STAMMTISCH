@@ -13,6 +13,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "quick.ask": {"en": "ASK GALAHAD", "zh": "问 GALAHAD"},
     "quick.config": {"en": "EDIT CONFIG", "zh": "编辑配置"},
     "quick.crawlers": {"en": "CRAWLERS", "zh": "爬虫面板"},
+    "quick.feeds": {"en": "FEEDS", "zh": "数据源"},
     "quick.language": {"en": "LANGUAGE", "zh": "语言"},
     "lang.name": {"en": "English", "zh": "简体中文"},
     "help.hint": {"en": "[?] HELP", "zh": "[?] 帮助"},

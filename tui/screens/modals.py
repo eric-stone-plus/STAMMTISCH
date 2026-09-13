@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 
 import logging
@@ -106,6 +106,44 @@ class ConfirmScreen(Screen):
         self.app.pop_screen()
         if confirmed:
             self.on_confirm()
+
+
+class SymbolInputScreen(Screen):
+    """Single-input modal for symbol entry (watchlist add, etc.)."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+    CSS = (
+        "SymbolInputScreen { align: center middle; background: rgba(0,0,0,0.9); } "
+        "#symbol-box { width: 56; height: auto; background: #000000; "
+        "border: heavy #ffffff; padding: 1 2; } "
+        "#symbol-title { color: #ffffff; text-style: bold; margin-bottom: 1; } "
+        "#symbol-input { border: solid #4fc3f7; }"
+    )
+
+    def __init__(self, title: str, on_submit, **kwargs: Any):
+        super().__init__(**kwargs)
+        self._title = title
+        self._on_submit = on_submit
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="symbol-box"):
+            yield Static(self._title, id="symbol-title")
+            yield Input(placeholder="e.g. AAPL, 600519.SS, 0700.HK",
+                        id="symbol-input")
+
+    def on_mount(self) -> None:
+        self.query_one("#symbol-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        value = event.value.strip()
+        self.app.pop_screen()
+        if value and self._on_submit is not None:
+            self._on_submit(value)
+
+    def action_cancel(self) -> None:
+        self.app.pop_screen()
+
+
 class KeyHelpScreen(Screen):
     """One screen's keybinding reference.
 

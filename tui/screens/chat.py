@@ -274,6 +274,13 @@ class ChatScreen(Screen):
         # log and new answers look like the conversation stalled.
         self._scroller().scroll_end(animate=False)
 
+    def _stream_preview(self) -> str:
+        """Tail of the streaming answer, shown under the spinner."""
+        buf = getattr(self, "_stream_buf", "")
+        if not buf:
+            return ""
+        return "\n  ┆ " + buf[-240:].replace("\n", "\n  ┆ ")
+
     def _pending_events_tail(self, limit: int = 4) -> str:
         """Live tool-call stream under the spinner; deep-verification turns
         run minutes and a bare timer reads as hung."""
@@ -292,9 +299,14 @@ class ChatScreen(Screen):
         if self._active_request is None:
             return
         self._spin_frame += 1
-        elapsed = int(time.monotonic() - self._pending_started)
-        self._pending = _thinking_line(elapsed, self._spin_frame) + self._pending_events_tail()
+        self._pending = self._pending_text()
         self._refresh_log()
+
+    def _pending_text(self) -> str:
+        elapsed = int(time.monotonic() - self._pending_started)
+        return (_thinking_line(elapsed, self._spin_frame)
+                + self._pending_events_tail()
+                + self._stream_preview())
 
     def _stop_thinking(self, request_token: object | None = None) -> None:
         if (
@@ -363,6 +375,7 @@ class ChatScreen(Screen):
         self._chat_log = render_ask_session(self._session)
         self._pending_started = time.monotonic()
         self._spin_frame = 0
+        self._stream_buf = ""
         self._pending = _thinking_line(0, 0)
         self._think_timer = self.set_interval(_THINK_TICK, self._tick_thinking)
         self._persist()
@@ -379,9 +392,24 @@ class ChatScreen(Screen):
             except Exception:
                 pass
 
+        def _on_token(delta: str) -> None:
+            def _ui() -> None:
+                if not self.is_mounted or self._active_request is not request_token:
+                    return
+                # Keep only the tail: the full text lands in the session
+                # when the turn completes; the preview stays bounded.
+                self._stream_buf = (getattr(self, "_stream_buf", "") + delta)[-400:]
+                self._pending = self._pending_text()
+                self._refresh_log()
+            try:
+                self.app.call_from_thread(_ui)
+            except Exception:
+                pass
+
         def _query():
             try:
-                r = self.ai.chat(query, context=context, on_event=_on_tool_event)
+                r = self.ai.chat(query, context=context,
+                                 on_event=_on_tool_event, on_token=_on_token)
             except Exception as e:
                 r = ChatResponse(content="", error=str(e))
             result = r.content if r.ok else f"Error: {r.error}"

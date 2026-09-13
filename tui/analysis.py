@@ -9,12 +9,31 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.screen import Screen
-from textual.widgets import Footer, Input, Static
+from textual.widgets import DataTable, Footer, Input, Sparkline, Static
 
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _series_values(series: Any, cap: int = 400) -> list[float]:
+    """Flatten a pandas Series/list into floats, downsampled to ``cap``.
+
+    The equity/returns series quantkit returns can be thousands of
+    points; the terminal sparkline renders a handful of columns, so
+    subsample instead of shipping every point across the UI thread.
+    """
+    if series is None:
+        return []
+    try:
+        values = [float(value) for value in series]
+    except (TypeError, ValueError):
+        return []
+    if len(values) <= cap:
+        return values
+    step = len(values) / cap
+    return [values[int(index * step)] for index in range(cap)]
 
 
 def _run_async(screen: Any, target: Callable, callback: Callable,
@@ -93,13 +112,18 @@ def _run_async(screen: Any, target: Callable, callback: Callable,
 
 
 class DataFetchScreen(Screen):
-    BINDINGS = [Binding("escape", "back", "Back")]
+    BINDINGS = [
+        Binding("escape", "back", "Back"),
+        Binding("v", "view_chart", "Chart"),
+    ]
     CSS = "DataFetchScreen { layout: vertical; }"
 
     def __init__(self, engine: Any, config: Any = None, **kwargs: Any):
         super().__init__(**kwargs)
         self.engine = engine
         self.config = config
+        self._last_symbol: str | None = None
+        self._last_df: Any = None
 
     def compose(self) -> ComposeResult:
         recent = ""
@@ -107,7 +131,7 @@ class DataFetchScreen(Screen):
             symbols = self.config.recent_symbols[:5]
             if symbols:
                 recent = f"  Recent: {', '.join(symbols)}"
-        yield Static(f"  Data Fetch  |  Enter symbol (e.g. AAPL, 600519.SS, BTC-USD)  |  Esc back{recent}", classes="header-bar")
+        yield Static(f"  Data Fetch  |  Enter symbol (e.g. AAPL, 600519.SS, BTC-USD)  |  [V] Chart  |  Esc back{recent}", classes="header-bar")
         yield Input(placeholder="Symbol (e.g. AAPL)...", id="df-input")
         with ScrollableContainer():
             yield Static("  Enter a symbol to fetch data.", id="df-output")
@@ -118,6 +142,21 @@ class DataFetchScreen(Screen):
 
     def action_back(self) -> None:
         self.app.pop_screen()
+
+    def action_view_chart(self) -> None:
+        from .charts import TerminalChartScreen, df_to_candles
+
+        if self._last_df is None or not self._last_symbol:
+            self.notify("Fetch a symbol first — [V] charts the fetched frame.",
+                        severity="warning")
+            return
+        candles = df_to_candles(self._last_df)
+        if not candles:
+            self.notify("The fetched frame has no OHLC columns to chart.",
+                        severity="warning")
+            return
+        self.app.push_screen(TerminalChartScreen(
+            self.engine, self.config, self._last_symbol, candles=candles))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         symbol = event.value.strip().upper()
@@ -135,8 +174,10 @@ class DataFetchScreen(Screen):
 
         def _on_result(result):
             if result["ok"]:
+                self._last_symbol = symbol
+                self._last_df = result.get("df")
                 out.update(
-                    f"  [{symbol}]\n"
+                    f"  [{symbol}]  —  [V] chart\n"
                     f"  Rows:       {result['rows']}\n"
                     f"  Columns:    {', '.join(result['columns'])}\n"
                     f"  First:      {result['first_date']}\n"
@@ -186,10 +227,14 @@ class BacktestScreen(Screen):
                 "  Example: 600519.SS rsi_mr",
                 id="bt-output",
             )
+            yield DataTable(id="bt-table", cursor_type="row")
+            yield Sparkline(min_color="#404040", max_color="#66bb6a",
+                            id="bt-equity")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#bt-input", Input).focus()
+        self.query_one("#bt-table", DataTable).add_columns("METRIC", "VALUE")
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -223,19 +268,25 @@ class BacktestScreen(Screen):
                                             cost_tier=cost_tier)
 
         def _on_result(result):
+            table = self.query_one("#bt-table", DataTable)
+            spark = self.query_one("#bt-equity", Sparkline)
+            table.clear()
+            spark.data = []
             if result["ok"]:
                 s = result["summary"]
-                out.update(
-                    f"  [{symbol} / {strategy}]\n\n"
-                    f"  Total Return:   {s.total_return:>10.2%}\n"
-                    f"  CAGR:           {s.cagr:>10.2%}\n"
-                    f"  Sharpe:         {s.sharpe:>10.2f}\n"
-                    f"  Max Drawdown:   {s.max_drawdown:>10.2%}\n"
-                    f"  Win Rate:       {s.win_rate:>10.2%}\n"
-                    f"  Trades:         {s.trades:>10d}\n"
-                    f"  Final Equity:   {s.final_equity:>10.4f}\n"
-                    f"  Cost (bps):     {s.cost_bps:>10.1f}"
-                )
+                out.update(f"  [{symbol} / {strategy}]  —  equity curve below")
+                for metric, value in (
+                    ("Total Return", f"{s.total_return:.2%}"),
+                    ("CAGR", f"{s.cagr:.2%}"),
+                    ("Sharpe", f"{s.sharpe:.2f}"),
+                    ("Max Drawdown", f"{s.max_drawdown:.2%}"),
+                    ("Win Rate", f"{s.win_rate:.2%}"),
+                    ("Trades", f"{s.trades:d}"),
+                    ("Final Equity", f"{s.final_equity:.4f}"),
+                    ("Cost (bps)", f"{s.cost_bps:.1f}"),
+                ):
+                    table.add_row(metric, value)
+                spark.data = _series_values(s.equity_series)
             else:
                 out.update(f"  [ERROR] {result['error']}")
 
@@ -266,10 +317,13 @@ class IndicatorsScreen(Screen):
         yield Input(placeholder="Symbol (e.g. AAPL)...", id="ind-input")
         with ScrollableContainer():
             yield Static("  Enter a symbol to compute indicators.", id="ind-output")
+            yield DataTable(id="ind-table", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#ind-input", Input).focus()
+        self.query_one("#ind-table", DataTable).add_columns(
+            "INDICATOR", "VALUE", "SIGNAL")
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -290,26 +344,29 @@ class IndicatorsScreen(Screen):
             return self.engine.compute_indicators(symbol)
 
         def _on_result(result):
+            table = self.query_one("#ind-table", DataTable)
+            table.clear()
             if result["ok"]:
                 s = result["summary"]
                 price = result["last_price"]
                 rsi_label = "OVERSOLD" if s.rsi < 30 else ("OVERBOUGHT" if s.rsi > 70 else "NEUTRAL")
                 macd_label = "BULLISH" if s.macd_hist > 0 else "BEARISH"
-                out.update(
-                    f"  [{symbol}]  Price: {price:.2f}\n\n"
-                    f"  RSI(14):        {s.rsi:>10.2f}  {rsi_label}\n"
-                    f"  MACD:           {s.macd:>10.4f}\n"
-                    f"  MACD Signal:    {s.macd_signal:>10.4f}\n"
-                    f"  MACD Hist:      {s.macd_hist:>10.4f}  {macd_label}\n\n"
-                    f"  BB Upper:       {s.bb_upper:>10.2f}\n"
-                    f"  BB Mid:         {s.bb_mid:>10.2f}\n"
-                    f"  BB Lower:       {s.bb_lower:>10.2f}\n\n"
-                    f"  SMA(20):        {s.sma_20:>10.2f}  {'ABOVE' if price > s.sma_20 else 'BELOW'}\n"
-                    f"  SMA(50):        {s.sma_50:>10.2f}  {'ABOVE' if price > s.sma_50 else 'BELOW'}\n"
-                    f"  SMA(200):       {s.sma_200:>10.2f}  {'ABOVE' if price > s.sma_200 else 'BELOW'}\n"
-                    f"  ATR(14):        {s.atr_14:>10.2f}\n"
-                    f"  Vol(20):        {s.vol_20:>10.4f}"
-                )
+                out.update(f"  [{symbol}]  Price: {price:.2f}")
+                table.add_row("RSI(14)", f"{s.rsi:.2f}", rsi_label)
+                table.add_row("MACD", f"{s.macd:.4f}", "")
+                table.add_row("MACD Signal", f"{s.macd_signal:.4f}", "")
+                table.add_row("MACD Hist", f"{s.macd_hist:.4f}", macd_label)
+                table.add_row("BB Upper", f"{s.bb_upper:.2f}", "")
+                table.add_row("BB Mid", f"{s.bb_mid:.2f}", "")
+                table.add_row("BB Lower", f"{s.bb_lower:.2f}", "")
+                table.add_row("SMA(20)", f"{s.sma_20:.2f}",
+                              "ABOVE" if price > s.sma_20 else "BELOW")
+                table.add_row("SMA(50)", f"{s.sma_50:.2f}",
+                              "ABOVE" if price > s.sma_50 else "BELOW")
+                table.add_row("SMA(200)", f"{s.sma_200:.2f}",
+                              "ABOVE" if price > s.sma_200 else "BELOW")
+                table.add_row("ATR(14)", f"{s.atr_14:.2f}", "")
+                table.add_row("Vol(20)", f"{s.vol_20:.4f}", "")
             else:
                 out.update(f"  [ERROR] {result['error']}")
 
@@ -340,10 +397,12 @@ class PortfolioScreen(Screen):
                 "  Example: 600519.SS,600036.SS dual_ma",
                 id="pf-output",
             )
+            yield DataTable(id="pf-table", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#pf-input", Input).focus()
+        self.query_one("#pf-table", DataTable).add_columns("METRIC", "VALUE")
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -373,20 +432,23 @@ class PortfolioScreen(Screen):
                                              rebalance=rebalance, lookback=lookback)
 
         def _on_result(result):
+            table = self.query_one("#pf-table", DataTable)
+            table.clear()
             if result["ok"]:
                 s = result["summary"]
-                out.update(
-                    f"  [{', '.join(symbols)} / {strategy}]\n\n"
-                    f"  Total Return:   {s.total_return:>10.2%}\n"
-                    f"  CAGR:           {s.cagr:>10.2%}\n"
-                    f"  Sharpe:         {s.sharpe:>10.2f}\n"
-                    f"  Max Drawdown:   {s.max_drawdown:>10.2%}\n"
-                    f"  Win Rate:       {s.win_rate:>10.2%}\n"
-                    f"  Trades:         {s.trades:>10d}\n"
-                    f"  N Assets:       {s.n_assets:>10d}\n"
-                    f"  Avg Turnover:   {s.avg_turnover:>10.4f}\n"
-                    f"  Avg Exposure:   {s.avg_gross_exposure:>10.4f}"
-                )
+                out.update(f"  [{', '.join(symbols)} / {strategy}]")
+                for metric, value in (
+                    ("Total Return", f"{s.total_return:.2%}"),
+                    ("CAGR", f"{s.cagr:.2%}"),
+                    ("Sharpe", f"{s.sharpe:.2f}"),
+                    ("Max Drawdown", f"{s.max_drawdown:.2%}"),
+                    ("Win Rate", f"{s.win_rate:.2%}"),
+                    ("Trades", f"{s.trades:d}"),
+                    ("N Assets", f"{s.n_assets:d}"),
+                    ("Avg Turnover", f"{s.avg_turnover:.4f}"),
+                    ("Avg Exposure", f"{s.avg_gross_exposure:.4f}"),
+                ):
+                    table.add_row(metric, value)
             else:
                 out.update(f"  [ERROR] {result['error']}")
 
@@ -412,10 +474,13 @@ class GatesScreen(Screen):
         yield Input(placeholder="Symbol (e.g. AAPL)...", id="gate-input")
         with ScrollableContainer():
             yield Static("  Enter a symbol. Runs a backtest first, then evaluates all six gates.", id="gate-output")
+            yield DataTable(id="gate-table", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#gate-input", Input).focus()
+        self.query_one("#gate-table", DataTable).add_columns(
+            "GATE", "STATUS", "VALUE", "THRESHOLD", "DETAIL")
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -447,23 +512,22 @@ class GatesScreen(Screen):
             return self.engine.evaluate_gates(metrics)
 
         def _on_result(result):
+            table = self.query_one("#gate-table", DataTable)
+            table.clear()
             if result["ok"]:
                 report = result["report"]
-                lines = [
-                    f"  [{symbol}]  Gates: {report.n_passed}/{report.n_total} passed",
-                    f"  All Passed: {'YES' if report.all_passed else 'NO'}",
-                    "",
-                ]
+                out.update(
+                    f"  [{symbol}]  Gates: {report.n_passed}/{report.n_total} passed"
+                    f"  —  All Passed: {'YES' if report.all_passed else 'NO'}"
+                )
                 for g in report.gates:
-                    sym = "[PASS]" if g["passed"] else "[FAIL]"
-                    lines.append(f"  {sym} {g['gate_id']}")
-                    if g.get("value") is not None:
-                        lines.append(f"        Value: {g['value']}")
-                    if g.get("threshold") is not None:
-                        lines.append(f"        Threshold: {g['threshold']}")
-                    if g.get("detail"):
-                        lines.append(f"        {g['detail']}")
-                out.update("\n".join(lines))
+                    table.add_row(
+                        str(g["gate_id"]),
+                        "PASS" if g["passed"] else "FAIL",
+                        "—" if g.get("value") is None else str(g["value"]),
+                        "—" if g.get("threshold") is None else str(g["threshold"]),
+                        str(g.get("detail") or ""),
+                    )
             else:
                 out.update(f"  [ERROR] {result['error']}")
 

@@ -1240,6 +1240,32 @@ def security_zone(symbol: str) -> str:
     if "." not in text:
         return "US"
     return "OTHER"
+
+
+def _watchlist_add(config: Any, value: str) -> tuple[str | None, str, bool]:
+    """Resolve + anchor one symbol. Returns (symbol, message, duplicate)."""
+    from ..engine import _normalize_symbol
+
+    symbol = _normalize_symbol(str(value or "").strip().upper())
+    if not symbol:
+        return None, "Enter a symbol.", False
+    current = list(getattr(config, "security_symbols", None) or [])
+    if symbol in current:
+        return symbol, f"{symbol} is already on the anchored watchlist.", True
+    current.append(symbol)
+    config.set("security_symbols", current)
+    return symbol, f"Added {symbol} to the anchored watchlist.", False
+
+
+def _watchlist_remove(config: Any, symbol: str) -> tuple[bool, str]:
+    """Un-anchor one symbol. Returns (removed, message)."""
+    current = list(getattr(config, "security_symbols", None) or [])
+    if symbol not in current:
+        return False, (f"{symbol} is not an anchored symbol — decision picks "
+                       "and recents flow in automatically.")
+    current.remove(symbol)
+    config.set("security_symbols", current)
+    return True, f"Removed {symbol} from the anchored watchlist."
 class SecurityScreen(Screen):
     """Equity watchlist board with market-zone switching (←/→).
 
@@ -1254,7 +1280,10 @@ class SecurityScreen(Screen):
         Binding("escape", "back", "Back"),
         Binding("r", "refresh", "Refresh"),
         Binding("k", "chart", "K-line"),
+        Binding("v", "terminal_chart", "Chart"),
         Binding("g", "strategy_scan", "Strategy scan"),
+        Binding("w", "watch_add", "Add"),
+        Binding("x", "watch_remove", "Remove"),
         Binding("question_mark", "show_help", "Keys"),
         # Priority: the board table would otherwise consume the arrows as
         # horizontal scrolling whenever its rows overflow the terminal.
@@ -1290,8 +1319,8 @@ class SecurityScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "  SECURITY  |  [←→] Zone  [R] Refresh  [K] K-line  "
-            "[G] Strategy scan  [?] Keys  [Esc] Back",
+            "  SECURITY  |  [←→] Zone  [R] Refresh  [V] Chart  [K] K-line  "
+            "[W] Add  [X] Del  [G] Scan  [?] Keys  [Esc] Back",
             classes="header-bar",
         )
         yield Static("", id="sec-cats")
@@ -1373,6 +1402,16 @@ class SecurityScreen(Screen):
         if not quotes:
             return
         self._live.update(quotes)
+        # Time & sales telemetry under the state root: best-effort appends
+        # that must never disturb the board render path.
+        try:
+            from ..datafeeds import journal
+
+            root = getattr(self.driver, "state_root", None)
+            if root:
+                journal.append(root, quotes)
+        except Exception:
+            pass
         new_names = {s: q["name"] for s, q in quotes.items() if q.get("name")}
         if new_names:
             self._names.update(new_names)
@@ -1406,8 +1445,13 @@ class SecurityScreen(Screen):
                 if live.get("volume") is not None:
                     board.update_cell(row_key, "VOL", f"{live['volume']:.0f}")
             phase = "盘中" if result.get("phase") == "open" else "闭市"
+            sources = sorted({
+                str(q.get("source") or "").split()[0]
+                for q in quotes.values() if q.get("source")
+            })
+            source_label = " · ".join(sources) if sources else livefeed.QT_SOURCE
             self._set_fetch_status(
-                f"行情截至 {result.get('at')} ({phase}) · {livefeed.QT_SOURCE}")
+                f"行情截至 {result.get('at')} ({phase}) · {source_label}")
         except Exception:
             pass
 
@@ -1765,6 +1809,47 @@ class SecurityScreen(Screen):
             return
         _open_browser_chart(self, self.config, item["code"])
 
+    def action_terminal_chart(self) -> None:
+        item = self._current_item()
+        if item is None:
+            self.notify("No security row selected.", severity="warning")
+            return
+        from ..charts import TerminalChartScreen
+
+        self.app.push_screen(
+            TerminalChartScreen(self.engine, self.config, item["code"]))
+
+    def action_watch_add(self) -> None:
+        from .modals import SymbolInputScreen
+
+        self.app.push_screen(SymbolInputScreen(
+            "Add to the anchored SECURITY watchlist", self._watch_add_symbol))
+
+    def _watch_add_symbol(self, value: str) -> None:
+        symbol, message, _duplicate = _watchlist_add(self.config, value)
+        if symbol is None:
+            self.notify(message, severity="warning")
+            return
+        self._symbols = self._resolve_symbols()
+        self.action_refresh()
+        self.notify(message)
+
+    def action_watch_remove(self) -> None:
+        item = self._current_item()
+        if item is None:
+            self.notify("No security row selected.", severity="warning")
+            return
+        self._watch_remove_symbol(str(item.get("code") or ""))
+
+    def _watch_remove_symbol(self, symbol: str) -> None:
+        removed, message = _watchlist_remove(self.config, symbol)
+        if not removed:
+            self.notify(message, severity="warning")
+            return
+        self._symbols = self._resolve_symbols()
+        self.action_refresh()
+        self.notify(message)
+
     # ── workbench hotkeys proxied to the dashboard ─────────────────
 
     def action_back(self) -> None:
@@ -1795,7 +1880,9 @@ class SecurityScreen(Screen):
             ("← →", "switch market zone (A-SHARE / HK / US / OTHER)"),
             ("r", "refresh quotes"),
             ("g", "strategy scan: run the default strategy across this zone"),
+            ("v", "in-terminal candle chart for the highlighted row"),
             ("k", "browser K-line chart for the highlighted row"),
+            ("w / x", "add / remove the highlighted symbol from the anchored watchlist"),
             ("b / f / t / p", "quant screens: backtest / fetch / indicators / portfolio"),
             ("s", "sentiment board (daily report)"),
             ("a", "ask GALAHAD"),

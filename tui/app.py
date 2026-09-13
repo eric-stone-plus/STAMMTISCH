@@ -6,8 +6,10 @@ from typing import Any
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.system_commands import SystemCommandsProvider
 from textual.widgets import Footer
 
+from .command_palette import WorkstationCommands
 from .config import Config
 from .driver import StammtischDriver
 from .ai_driver import AIDriver
@@ -18,6 +20,7 @@ from .theme import THEME_CSS
 class StammtischTUI(App):
     TITLE = "STAMMTISCH QUANT WORKSTATION"
     CSS = THEME_CSS
+    COMMANDS = {SystemCommandsProvider, WorkstationCommands}
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("question_mark", "show_help", "Help"),
@@ -49,6 +52,9 @@ class StammtischTUI(App):
             model=self.config.ai_model,
             tools=default_tools(self.engine),
         )
+        # Other configured provider profiles with their own keys join the
+        # transport-failure chain; refreshed again on config resume.
+        self.ai.refresh_fallbacks(self.config)
         # Populated only after IntakeDriver has verified the complete artifact
         # graph. Downstream sentiment may reuse this exact report in-process;
         # it must not rediscover an unverified JSON file by filename.
@@ -59,6 +65,17 @@ class StammtischTUI(App):
     def on_mount(self) -> None:
         from .screens import DashboardScreen
         self.driver.prepare()
+        # Feed-layer disk snapshots (last-known values for outages) live
+        # under the state root, like the other intel sidecars.
+        if self.driver.state_root:
+            from pathlib import Path
+            from .datafeeds.cache import configure_disk_cache
+            configure_disk_cache(Path(self.driver.state_root) / "intel" / "feedcache")
+        # Keyless global feeds ride the explicitly configured data proxy;
+        # the CN-side Tencent endpoint stays direct. Ambient proxy
+        # variables are never consulted (pinned-egress rule).
+        from .datafeeds.http import configure_data_proxy
+        configure_data_proxy(self.config.data_proxy_url)
         self.push_screen(DashboardScreen(self.driver, self.ai, self.engine, self.config))
         # Resident auto-capture: GALAHAD judges from a digest whether a
         # daily-data capture is due; deterministic gates run first.
