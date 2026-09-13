@@ -1518,20 +1518,30 @@ class TuiSmokeTest(unittest.TestCase):
                     # plugins share one alphabetical list (CRYPTO left
                     # the launcher deliberately).
                     self.assertEqual(
-                        labels[:3], ["ENERGY", "FUTURES", "SECURITY"]
+                        labels[:4], ["COINS", "ENERGY", "FUTURES", "SECURITY"]
                     )
                     self.assertNotIn("FULLSTACK", labels)
                     self.assertIn("SECURITY", labels)
                     # The list draws a top border, so option row N sits
-                    # at y=N+1 relative to the widget region; ENERGY is
-                    # the first row.
+                    # at y=N+1 relative to the widget region; COINS is
+                    # the first row now, ENERGY the second — clicking a
+                    # row must open that row, not the row below it.
+                    from tui.screens.crypto_board import CryptoBoardScreen
+
                     await pilot.click("#pipeline-list", offset=(3, 1))
                     for _ in range(20):
                         await pilot.pause()
                         if not isinstance(app.screen, DashboardScreen):
                             break
-                    # Clicking the ENERGY row must open ENERGY, not the
-                    # row below it.
+                    self.assertIsInstance(app.screen, CryptoBoardScreen)
+                    await pilot.press("escape")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, DashboardScreen)
+                    await pilot.click("#pipeline-list", offset=(3, 2))
+                    for _ in range(20):
+                        await pilot.pause()
+                        if not isinstance(app.screen, DashboardScreen):
+                            break
                     self.assertIsInstance(app.screen, EnergyScreen)
                     await pilot.press("escape")
                     await pilot.pause()

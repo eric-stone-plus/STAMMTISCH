@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pandas as pd
+from textual.app import App
 from textual.widgets import DataTable, Static
 
 from tui.charts import TerminalChartScreen, df_to_candles, render_candles
@@ -234,3 +235,49 @@ class WatchlistRuleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CryptoBoardScreenTest(unittest.TestCase):
+    def test_spark_chars_shape(self):
+        from tui.screens.crypto_board import spark_chars
+
+        self.assertEqual(spark_chars([]), "")
+        self.assertEqual(spark_chars([5, 5]), "▄▄")
+        out = spark_chars([1, 2, 3, 4, 5])
+        self.assertEqual(len(out), 5)
+        self.assertEqual(out[0], "▁")
+        self.assertEqual(out[-1], "█")
+
+    def test_board_renders_with_mocked_chain(self):
+        asyncio.run(self._scenario())
+
+    async def _scenario(self) -> None:
+        from textual.widgets import DataTable, Static
+
+        from tui.screens.crypto_board import CryptoBoardScreen
+
+        board = {"rows": [
+            {"symbol": "BTC", "name": "Bitcoin", "last": 60000.0,
+             "chg_24h": 1.5, "market_cap": 1.2e12, "volume": 3e10,
+             "spark": [1, 2, 3, 4, 5], "source": "coingecko"},
+            {"symbol": "ETH", "name": "Ethereum", "last": 3000.0,
+             "chg_24h": -2.0, "market_cap": 4e11, "volume": 1.5e10,
+             "spark": [], "source": "coingecko"},
+        ], "btc_dominance": 55.0}
+        with mock.patch("tui.datafeeds.service.crypto_board",
+                        return_value=board):
+            host_screen = CryptoBoardScreen(engine=None, config=None)
+
+            class Host(App):
+                pass
+
+            async with Host().run_test() as pilot:
+                host = pilot.app
+                host.push_screen(host_screen)
+                await pilot.pause()
+                await pilot.pause()
+                table = host_screen.query_one("#coins-table", DataTable)
+                self.assertEqual(table.row_count, 2)
+                status = host_screen.query_one("#coins-status", Static)
+                self.assertIn("BTC dominance 55.0%", str(status.render()))
+                self.assertIn("coingecko", str(status.render()))

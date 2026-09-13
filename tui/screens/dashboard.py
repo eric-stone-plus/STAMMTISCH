@@ -480,6 +480,7 @@ class DashboardScreen(Screen):
             if p.stem.lower() != "fullstack"
         ]
         entries += [("ENERGY", "domain:ENERGY")]
+        entries += [("COINS", "domain:COINS")]
         entries += [
             (plugin["label"], f"domain:{plugin['label']}")
             for plugin in (self.config.plugins if self.config else [])
@@ -596,6 +597,11 @@ class DashboardScreen(Screen):
             return
         if option_id == "domain:ENERGY":
             self.action_open_energy()
+            return
+        if option_id == "domain:COINS":
+            from .crypto_board import CryptoBoardScreen
+
+            self.app.push_screen(CryptoBoardScreen(self.engine, self.config))
             return
         if option_id.startswith("domain:"):
             label = option_id[len("domain:"):]
