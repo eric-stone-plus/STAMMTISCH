@@ -37,7 +37,7 @@ def _rsi(close: pd.Series, period: int = 2) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
-    return 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    return (100 - 100 / (1 + gain / loss.replace(0, pd.NA))).fillna(100.0)
 
 
 def crypto_screen(config: Config, *, min_volume: float = 2_000_000,
