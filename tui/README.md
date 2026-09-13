@@ -242,7 +242,10 @@ highlighted symbol from the anchored watchlist), and the browser `K`.
 `COINS` in the plugins sidebar opens the crypto board over the
 datafeeds chains (CoinGecko markets with the Binance public feed as
 fallback): prices, 24h change, 7-day text sparklines, and a `V` jump
-into the in-terminal candle chart. The dashboard `P` key opens the
+into the in-terminal candle chart. The `B` key
+drives the operator's crypto_backtest engine over a `crypto.backtest.v1`
+JSON subprocess contract (config `crypto_backtest_cmd`), rendering
+per-strategy return/drawdown/sharpe/sortino/calmar/exposure rows. The dashboard `P` key opens the
 trade ledger: fills logged against the sandbox brokers fold into
 signed-FIFO positions with realized P&L, persisted under
 `<state_root>/intel/portfolio/ledger.json`.

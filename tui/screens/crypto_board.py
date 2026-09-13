@@ -46,12 +46,15 @@ class CryptoBoardScreen(Screen):
         Binding("escape", "back", "Back"),
         Binding("r", "refresh", "Refresh"),
         Binding("v", "chart", "Chart"),
+        Binding("b", "backtest", "Backtest"),
         Binding("question_mark", "show_help", "Keys"),
     ]
     CSS = """
     CryptoBoardScreen { layout: vertical; }
     #coins-status { height: 1; padding: 0 1; color: #808080; }
     #coins-wrap { height: 1fr; border: solid #505050; background: #000000; }
+    #coins-bt-wrap { height: 14; border: solid #505050; background: #000000; display: none; }
+    .coins-label { dock: top; height: 1; padding: 0 1; background: #303030; text-style: bold; color: #ffffff; }
     """
 
     def __init__(self, engine: Any, config: Any, **kwargs: Any):
@@ -69,11 +72,18 @@ class CryptoBoardScreen(Screen):
         yield Static("  loading…", id="coins-status")
         with Vertical(id="coins-wrap"):
             yield DataTable(id="coins-table", cursor_type="row")
+        with Vertical(id="coins-bt-wrap"):
+            yield Static("  crypto_backtest engine (operator command)",
+                         classes="coins-label")
+            yield DataTable(id="coins-bt", cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#coins-table", DataTable)
         table.add_columns("COIN", "NAME", "PRICE", "24H%", "7D", "MCAP", "VOL", "SRC")
+        self.query_one("#coins-bt", DataTable).add_columns(
+            "STRATEGY", "RET%", "MAXDD%", "SHARPE", "SORTINO", "CALMAR",
+            "EXPO%", "WIN%", "TRADES", "PF")
         self.action_refresh()
 
     def action_refresh(self) -> None:
@@ -136,6 +146,89 @@ class CryptoBoardScreen(Screen):
             return
         self.app.push_screen(TerminalChartScreen(
             self.engine, self.config, str(row.get("symbol"))))
+
+    # ── crypto_backtest engine bridge (P1a) ─────────────────────────
+    def action_backtest(self) -> None:
+        from .. import cryptobacktest
+
+        try:
+            cryptobacktest.build_args(self.config, symbol="BTC/USDT",
+                                      timeframe="1d", start="2024-01-01")
+        except Exception as exc:
+            self.notify(str(exc), severity="warning")
+            return
+        from .modals import SymbolInputScreen
+
+        self.app.push_screen(SymbolInputScreen(
+            "Engine backtest — SYMBOL TIMEFRAME STRATEGY [START] "
+            "(e.g. BTC/USDT 1d all 2024-01-01)",
+            self._run_engine_backtest))
+
+    def _run_engine_backtest(self, value: str) -> None:
+        from .. import cryptobacktest
+
+        parts = str(value).split()
+        if not 2 <= len(parts) <= 4:
+            self.notify("Format: SYMBOL TIMEFRAME STRATEGY [START]",
+                        severity="error")
+            return
+        symbol, timeframe = parts[0], parts[1]
+        strategy = parts[2] if len(parts) > 2 else "all"
+        start = parts[3] if len(parts) > 3 else "2024-01-01"
+
+        def _work() -> Any:
+            return cryptobacktest.run(self.config, symbol=symbol,
+                                      timeframe=timeframe, start=start,
+                                      strategy=strategy)
+
+        def _deliver(result: Any) -> None:
+            if isinstance(result, dict) and not result.get("ok", True):
+                self._apply_backtest(None, str(result.get("error") or "failed"))
+                return
+            self._apply_backtest(result, None)
+
+        self._set_status(f"  engine running: {symbol} {timeframe} {strategy}…")
+        _run_async(self, _work, _deliver, dedup_key="coins-backtest")
+
+    def _apply_backtest(self, payload: dict[str, Any] | None,
+                        error: str | None) -> None:
+        try:
+            wrap = self.query_one("#coins-bt-wrap")
+            wrap.styles.display = "block" if payload else "none"
+            table = self.query_one("#coins-bt", DataTable)
+            table.clear()
+            if error:
+                self._set_status(f"  engine FAILED — {error[:150]}")
+                return
+            assert payload is not None
+            for row in payload.get("results") or []:
+                table.add_row(
+                    str(row.get("strategy") or "?"),
+                    f"{float(row.get('total_return_pct') or 0):+.2f}%",
+                    f"{float(row.get('max_drawdown_pct') or 0):.2f}%",
+                    f"{float(row.get('sharpe_ratio') or 0):.2f}",
+                    f"{float(row.get('sortino_ratio') or 0):.2f}",
+                    f"{float(row.get('calmar_ratio') or 0):.2f}",
+                    f"{float(row.get('exposure_pct') or 0):.1f}%",
+                    f"{float(row.get('win_rate') or 0):.1f}%",
+                    f"{int(row.get('total_trades') or 0)}",
+                    f"{float(row.get('profit_factor') or 0):.2f}",
+                )
+            cfg = (payload.get("config") or {})
+            self._set_status(
+                f"  engine: crypto.backtest.v1 · {cfg.get('symbol')} "
+                f"{cfg.get('timeframe')} {cfg.get('start_date')}→"
+                f"{cfg.get('end_date') or 'latest'} · "
+                f"SL {cfg.get('stop_loss_pct')}/TP {cfg.get('take_profit_pct')}"
+                f"/trail {cfg.get('trailing_stop_pct')}")
+        except Exception:
+            pass
+
+    def _set_status(self, text: str) -> None:
+        try:
+            self.query_one("#coins-status", Static).update(text)
+        except Exception:
+            pass
 
     def action_show_help(self) -> None:
         from .modals import KeyHelpScreen

@@ -168,6 +168,17 @@ DEFAULT_CONFIG = {
     # the pinned sandbox endpoints only — Alpaca paper + Binance spot
     # testnet. Mainnet endpoints are refused in code unconditionally.
     "trading_mode": "",
+    # Crypto engine bridge (P1a): tokenized command of the operator's
+    # crypto_backtest tool. Invoked without a shell; receives --symbol
+    # --timeframe --start --strategy --json appended and must print one
+    # crypto.backtest.v1 JSON object on stdout. Empty = the COINS [B]
+    # backtest action stays disabled.
+    "crypto_backtest_cmd": "",
+    # Optional path to an alternative quantkit tree (e.g. an evolved
+    # fork carrying selection/optimizer extensions). Prepended to
+    # sys.path before the lazy quantkit imports; empty = the installed
+    # quantkit. Operator-local, never shipped with defaults.
+    "quantkit_path": "",
     # Which Binance testnet the credentials belong to: "spot"
     # (testnet.binance.vision) or "futures" (testnet.binancefuture.com,
     # the USDⓈ-M sandbox the GALAHAD futures keys are issued for).
@@ -352,6 +363,14 @@ class Config:
     @property
     def data_proxy_url(self) -> str:
         return str(self._data.get("data_proxy_url", "") or "")
+
+    @property
+    def quantkit_path(self) -> str:
+        return str(self._data.get("quantkit_path", "") or "")
+
+    @property
+    def crypto_backtest_cmd(self) -> str:
+        return str(self._data.get("crypto_backtest_cmd", "") or "")
 
     @property
     def egress_proxy_url(self) -> str:
