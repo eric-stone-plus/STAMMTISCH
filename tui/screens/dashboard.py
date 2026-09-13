@@ -77,6 +77,7 @@ class DashboardScreen(Screen):
         Binding("e", "edit_config", "Edit"),
         Binding("f", "open_feeds", "Feeds", show=False),
         Binding("t", "open_broker", "Brokers", show=False),
+        Binding("p", "open_ledger", "Ledger", show=False),
         Binding("delete", "delete_selected", "Delete"),
         Binding("shift+d", "delete_all", "Delete all"),
         Binding("ctrl+a", "check_all", "Select all", show=False, priority=True),
@@ -308,6 +309,11 @@ class DashboardScreen(Screen):
         from .broker import BrokerScreen
 
         self.app.push_screen(BrokerScreen(self.config))
+
+    def action_open_ledger(self) -> None:
+        from .ledger import LedgerScreen
+
+        self.app.push_screen(LedgerScreen(self.driver, self.config))
 
     def _display_tz(self) -> str:
         try:

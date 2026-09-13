@@ -84,7 +84,9 @@ separate columns.
 quant workbenches, and offline multi-market symbol lookup that jumps
 straight to the in-terminal candle chart.
 The Plugins sidebar (alphabetical) lists pipeline workbenches plus the
-CRYPTO (Polymarket tape) and ENERGY (EIA watchlist) modules. The quant and
+CRYPTO (Polymarket tape), COINS (crypto board over the datafeeds
+chains), and ENERGY (EIA watchlist) modules; the `P` key opens the
+trade ledger (FIFO positions from logged sandbox fills). The quant and
 daily-report functions live inside the SECURITY (equity board by market
 zone) and FUTURES workbenches, not on the dashboard; SECURITY adds
 `V` in-terminal candle chart, `K` browser chart, and `W`/`X` to add or

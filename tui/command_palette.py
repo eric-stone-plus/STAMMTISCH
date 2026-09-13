@@ -45,6 +45,7 @@ class WorkstationCommands(Provider):
             ("Crawlers panel", "Crawl stack operations", dashboard.action_open_crawlers),
             ("Feeds health", "Provider health for the data chains", dashboard.action_open_feeds),
             ("Brokers", "Sandbox execution panel (paper/testnet)", dashboard.action_open_broker),
+            ("Trade ledger", "FIFO positions from logged fills", dashboard.action_open_ledger),
             ("Data fetch", "Fetch OHLCV for a symbol", dashboard.action_fetch_data),
             ("Backtest", "Run a strategy backtest",
              lambda: app.push_screen(BacktestScreen(engine, config))),

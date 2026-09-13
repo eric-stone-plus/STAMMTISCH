@@ -221,6 +221,7 @@ history. Nonzero exits, malformed JSON, and schema mismatches fail closed
 | `E`     | Edit config                     |
 | `F`     | Feeds panel (provider health)   |
 | `T`     | Brokers panel (sandbox trading) |
+| `P`     | Trade ledger (FIFO positions)   |
 | `Esc`   | Go back                         |
 | `Q`     | Quit                            |
 
@@ -235,6 +236,16 @@ the SECURITY workbench; `B`/`F`/`T`/`P`/`K` are also on the FUTURES board.
 SECURITY adds `V` (in-terminal candle chart — quantkit-verified bars when
 available, free feeds labeled as such otherwise), `W`/`X` (add/remove the
 highlighted symbol from the anchored watchlist), and the browser `K`.
+
+## COINS and LEDGER
+
+`COINS` in the plugins sidebar opens the crypto board over the
+datafeeds chains (CoinGecko markets with the Binance public feed as
+fallback): prices, 24h change, 7-day text sparklines, and a `V` jump
+into the in-terminal candle chart. The dashboard `P` key opens the
+trade ledger: fills logged against the sandbox brokers fold into
+signed-FIFO positions with realized P&L, persisted under
+`<state_root>/intel/portfolio/ledger.json`.
 
 ## Brokers panel (sandbox trading)
 
