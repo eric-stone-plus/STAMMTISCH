@@ -30,7 +30,7 @@ from tui.datafeeds.http import (  # noqa: E402
 
 PAIR = "ETHUSDT"
 ENTRY_RSI = 10.0
-EXIT_RSI = 60.0
+EXIT_RSI = 70.0
 MAX_HOLD_HOURS = 24
 SIZE_FRACTION = 0.05
 USDT_DEV_ALERT = 0.001
@@ -43,11 +43,17 @@ def journal(state_root: str, record: dict) -> None:
             {"ts": datetime.now().astimezone().isoformat(timespec="seconds"),
              **record}, ensure_ascii=False) + "\n")
 
-def usdt_peg_ok() -> tuple[bool, float]:
-    payload = dfhttp.get_json(
-        "https://api.coingecko.com/api/v3/simple/price"
-        "?ids=tether&vs_currencies=usd", provider="coingecko")
-    price = float(payload["tether"]["usd"])
+def usdt_peg_ok() -> tuple[bool | None, float | None]:
+    """True/False when the peg is measurable; None when the check itself
+    fails (rate-limited shared egress) — None means trade-skip, never a
+    guessed pass."""
+    try:
+        payload = dfhttp.get_json(
+            "https://api.coingecko.com/api/v3/simple/price"
+            "?ids=tether&vs_currencies=usd", provider="coingecko")
+        price = float(payload["tether"]["usd"])
+    except Exception:
+        return None, None
     return abs(price - 1.0) <= USDT_DEV_ALERT, price
 
 def rsi2_last(symbol: str) -> tuple[float, float]:
@@ -73,6 +79,9 @@ def cycle(state_root: str) -> dict:
     record: dict = {"mode": trading_mode(config)}
     peg_ok, peg_price = usdt_peg_ok()
     record["usdt"] = peg_price
+    if peg_ok is None:
+        record["action"] = "SKIPPED: peg check unavailable (fail-closed)"
+        return record
     if not peg_ok:
         record["action"] = "SKIPPED: USDT peg beyond alert band"
         return record
@@ -117,6 +126,14 @@ def cycle(state_root: str) -> dict:
         record["action"] = "WAIT"
     return record
 
+def safe_cycle(state_root: str) -> dict:
+    """A transport failure (429, timeout) journals and waits — never kills
+    the loop, never trades on unverified state."""
+    try:
+        return cycle(state_root)
+    except Exception as exc:
+        return {"action": f"ERROR (skip cycle): {type(exc).__name__}: {exc}"[:220]}
+
 config = Config()
 configure_data_proxy(config.data_proxy_url)
 configure_proxy_fallback(config.egress_proxy_url)
@@ -131,11 +148,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.loop:
         while True:
-            record = cycle(state_root)
+            record = safe_cycle(state_root)
             journal(state_root, record)
             print(json.dumps(record, ensure_ascii=False), flush=True)
             time.sleep(args.interval)
     else:
-        record = cycle(state_root)
+        record = safe_cycle(state_root)
         journal(state_root, record)
         print(json.dumps(record, ensure_ascii=False))
