@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import numpy as np
 from types import SimpleNamespace
 from unittest import mock
 
