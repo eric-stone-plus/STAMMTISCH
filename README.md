@@ -328,4 +328,4 @@ ledger (`stammtisch.cost-ledger.v0`).
 
 ## License
 
-Apache-2.0 (see [`LICENSE`](LICENSE)).
+GPL-3.0-or-later (see [`LICENSE`](LICENSE)).
