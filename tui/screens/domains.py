@@ -1284,6 +1284,7 @@ class SecurityScreen(Screen):
         Binding("g", "strategy_scan", "Strategy scan"),
         Binding("w", "watch_add", "Add"),
         Binding("x", "watch_remove", "Remove"),
+        Binding("m", "market_timing", "Timing"),
         Binding("question_mark", "show_help", "Keys"),
         # Priority: the board table would otherwise consume the arrows as
         # horizontal scrolling whenever its rows overflow the terminal.
@@ -1808,6 +1809,33 @@ class SecurityScreen(Screen):
             self.notify("No security row selected.", severity="warning")
             return
         _open_browser_chart(self, self.config, item["code"])
+
+    def action_market_timing(self) -> None:
+        from .modals import KeyHelpScreen
+        from ..timing import DEFAULT_SYMBOLS, status
+
+        def _work() -> dict:
+            return status(self.config, DEFAULT_SYMBOLS)
+
+        def _render(result: dict) -> None:
+            rows = result.get("rows") or []
+            lines = ["  MARKET TIMING — dual-MA(50/200) regime  ",
+                     "  rule: HOLD while close >= MA200, else CASH", ""]
+            for row in rows:
+                arrow = "▲ HOLD" if row["state"] == "HOLD" else "▽ CASH"
+                lines.append(
+                    f"  {row['symbol']:<5} last {row['last']:>10,.2f}  "
+                    f"MA50 {row['ma50']:>10,.2f}  MA200 {row['ma200']:>10,.2f}  "
+                    f"[{arrow}]  {row['dist_200']:+.1%} vs MA200  ({row['asof']})")
+            self.app.push_screen(KeyHelpScreen(
+                "MARKET TIMING", [("state", line.strip()) for line in lines[2:]]))
+
+        self._run_timing(_work, _render)
+
+    def _run_timing(self, work, render) -> None:
+        from ..analysis import _run_async
+
+        _run_async(self, work, render, dedup_key="timing")
 
     def action_terminal_chart(self) -> None:
         item = self._current_item()

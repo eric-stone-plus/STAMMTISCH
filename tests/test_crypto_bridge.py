@@ -193,3 +193,29 @@ class QuantkitPathDegradationTest(unittest.TestCase):
         engine = QuantEngine.from_config(cfg)
         self.assertIsNone(engine.quantkit_tree)
         self.assertIsNotNone(engine.quantkit_error)
+
+
+class TimingStatusTest(unittest.TestCase):
+    def test_hold_and_cash_states_offline(self):
+        from tui.timing import status
+
+        def fake_bars(prices):
+            import datetime
+
+            start = datetime.datetime(2025, 1, 1)
+            return [{"t": (start + datetime.timedelta(days=i)).isoformat() + "Z",
+                     "c": price} for i, price in enumerate(prices)]
+
+        cfg = _config("paper")
+        cfg.data_proxy_url = ""
+        cfg.egress_proxy_url = ""
+        broker = mock.Mock()
+        broker.daily_bars.side_effect = lambda symbol: fake_bars(
+            list(range(100, 320)) if symbol == "SPY" else list(range(320, 100, -1)))
+        with mock.patch("tui.timing.AlpacaBroker", return_value=broker), \
+             mock.patch("tui.timing.configure_data_proxy"), \
+             mock.patch("tui.timing.configure_proxy_fallback"):
+            out = status(cfg, ("SPY", "QQQ"))
+        rows = {row["symbol"]: row for row in out["rows"]}
+        self.assertEqual(rows["SPY"]["state"], "HOLD")    # rising series
+        self.assertEqual(rows["QQQ"]["state"], "CASH")    # falling series

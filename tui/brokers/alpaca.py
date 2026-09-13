@@ -107,3 +107,26 @@ class AlpacaBroker:
     def cancel_order(self, order_id: str) -> None:
         ensure_trading_allowed(self._config, "alpaca order cancellation")
         self._json("DELETE", f"/v2/orders/{order_id}")
+
+    def daily_bars(self, symbol: str, start: str = "2019-01-01") -> "Any":
+        """Free IEX daily bars via the data API (read-only, paginated)."""
+        from urllib.parse import urlencode
+
+        from ..datafeeds.http import get_json
+
+        bars: list[dict] = []
+        page = None
+        while True:
+            params = {"timeframe": "1Day", "start": start, "limit": 10000}
+            if page:
+                params["page_token"] = page
+            # The data API lives on its own host (same keys, read-only).
+            payload = get_json(
+                "https://data.alpaca.markets/v2/stocks/"
+                f"{symbol.strip().upper()}/bars?{urlencode(params)}",
+                headers=self._headers(), provider="alpaca")
+            bars += payload.get("bars") or []
+            page = payload.get("next_page_token")
+            if not page:
+                break
+        return bars
