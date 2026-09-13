@@ -71,11 +71,13 @@ class StammtischTUI(App):
             from pathlib import Path
             from .datafeeds.cache import configure_disk_cache
             configure_disk_cache(Path(self.driver.state_root) / "intel" / "feedcache")
-        # Keyless global feeds ride the explicitly configured data proxy;
-        # the CN-side Tencent endpoint stays direct. Ambient proxy
-        # variables are never consulted (pinned-egress rule).
-        from .datafeeds.http import configure_data_proxy
+        # Keyless global feeds ride the explicitly configured data proxy,
+        # falling back to the egress proxy only when the data proxy
+        # refuses connections (a dead primary must not blank the boards).
+        # Ambient proxy variables are never consulted (pinned-egress rule).
+        from .datafeeds.http import configure_data_proxy, configure_proxy_fallback
         configure_data_proxy(self.config.data_proxy_url)
+        configure_proxy_fallback(self.config.egress_proxy_url)
         self.push_screen(DashboardScreen(self.driver, self.ai, self.engine, self.config))
         # Resident auto-capture: GALAHAD judges from a digest whether a
         # daily-data capture is due; deterministic gates run first.

@@ -27,6 +27,11 @@ USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 # provider without its own entry (tencent is pinned direct at configure
 # time by the TUI).
 _PROXY: dict[str, str | None] = {"_DEFAULT": None}
+# Secondary proxy for connection-level failures only: when the primary
+# data proxy process is down (connection refused/reset), keyless global
+# feeds retry through it instead of dying. HTTP-level errors (the server
+# answered) never trigger the fallback.
+_PROXY_FALLBACK: str | None = None
 _LOCK = threading.Lock()
 
 
@@ -42,6 +47,13 @@ def configure_data_proxy(proxy_url: str | None) -> None:
         _PROXY["tencent"] = None
 
 
+def configure_proxy_fallback(proxy_url: str | None) -> None:
+    """Secondary proxy used only when the primary refuses connections."""
+    global _PROXY_FALLBACK
+    with _LOCK:
+        _PROXY_FALLBACK = (proxy_url or "").strip() or None
+
+
 def proxy_for(provider: str) -> str | None:
     with _LOCK:
         if provider in _PROXY:
@@ -49,13 +61,26 @@ def proxy_for(provider: str) -> str | None:
         return _PROXY.get("_DEFAULT")
 
 
+def _opener(proxy: str):
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+
+
 def _open(request: urllib.request.Request, timeout: float, provider: str):
     proxy = proxy_for(provider)
-    if proxy:
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-        return opener.open(request, timeout=timeout)
-    return urllib.request.urlopen(request, timeout=timeout)
+    if not proxy:
+        return urllib.request.urlopen(request, timeout=timeout)
+    try:
+        return _opener(proxy).open(request, timeout=timeout)
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if not isinstance(reason, OSError):
+            raise  # HTTP-level or DNS answer: not a dead-proxy signal
+        with _LOCK:
+            fallback = _PROXY_FALLBACK
+        if not fallback or fallback == proxy:
+            raise
+        return _opener(fallback).open(request, timeout=timeout)
 
 
 def get_text(url: str, *, timeout: float = DEFAULT_TIMEOUT,

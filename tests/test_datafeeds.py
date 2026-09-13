@@ -399,3 +399,70 @@ class LivefeedDelegationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProxyFallbackTest(unittest.TestCase):
+    def setUp(self):
+        from tui.datafeeds import http as dfhttp
+        dfhttp.configure_data_proxy(None)
+        dfhttp.configure_proxy_fallback(None)
+
+    def tearDown(self):
+        from tui.datafeeds import http as dfhttp
+        dfhttp.configure_data_proxy(None)
+        dfhttp.configure_proxy_fallback(None)
+
+    def test_dead_primary_retries_via_fallback(self):
+        import urllib.error
+        from tui.datafeeds import http as dfhttp
+
+        dfhttp.configure_data_proxy("http://127.0.0.1:9")   # dead port
+        dfhttp.configure_proxy_fallback("http://127.0.0.1:10")  # fake-live
+        calls = []
+
+        def fake_opener(proxy):
+            calls.append(proxy)
+            opener = mock.Mock()
+            if proxy.endswith(":9"):
+                opener.open.side_effect = urllib.error.URLError(
+                    ConnectionRefusedError("refused"))
+            else:
+                resp = mock.MagicMock()
+                resp.__enter__.return_value.read.return_value = b"ok"
+                opener.open.return_value = resp
+            return opener
+
+        with mock.patch.object(dfhttp, "_opener", side_effect=fake_opener):
+            text = dfhttp.get_text("http://example.invalid/", provider="yahoo")
+        self.assertEqual(text, "ok")
+        self.assertEqual(calls, ["http://127.0.0.1:9", "http://127.0.0.1:10"])
+
+    def test_http_error_does_not_fall_back(self):
+        import urllib.error
+        from tui.datafeeds import http as dfhttp
+
+        dfhttp.configure_data_proxy("http://127.0.0.1:9")
+        dfhttp.configure_proxy_fallback("http://127.0.0.1:10")
+
+        def fake_opener(proxy):
+            opener = mock.Mock()
+            opener.open.side_effect = urllib.error.HTTPError(
+                "url", 403, "forbidden", None, None)
+            return opener
+
+        with mock.patch.object(dfhttp, "_opener", side_effect=fake_opener):
+            with self.assertRaises(urllib.error.HTTPError):
+                dfhttp.get_text("http://example.invalid/", provider="yahoo")
+
+    def test_no_fallback_configured_raises_primary_error(self):
+        import urllib.error
+        from tui.datafeeds import http as dfhttp
+
+        dfhttp.configure_data_proxy("http://127.0.0.1:9")
+        dfhttp.configure_proxy_fallback(None)
+        with mock.patch.object(dfhttp, "_opener") as build:
+            build.return_value.open.side_effect = urllib.error.URLError(
+                ConnectionRefusedError("refused"))
+            with self.assertRaises(urllib.error.URLError):
+                dfhttp.get_text("http://example.invalid/", provider="yahoo")
+            build.assert_called_once()
