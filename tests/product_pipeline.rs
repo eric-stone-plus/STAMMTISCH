@@ -14,6 +14,36 @@ use support::fake_a2a::{FakeA2a, Script};
 const BIN: &str = env!("CARGO_BIN_EXE_stammtisch-core");
 const REPO: &str = env!("CARGO_MANIFEST_DIR");
 
+/// RAII scratch dir under `std::env::temp_dir()`, removed on drop.
+///
+/// Before this guard existed every `cargo test` leaked its fixture homes:
+/// `launch_once` created `stammtisch-three-{tag}-{uuid}` and never removed it,
+/// accumulating ~45 dirs per run (246 measured under /tmp after a handful of
+/// runs). Cleanup is best-effort so it can never mask a test failure.
+struct TmpDir(PathBuf);
+
+impl TmpDir {
+    fn new(pattern: &str) -> Self {
+        let path = std::env::temp_dir()
+            .join(format!("{pattern}-{}", stammtisch::ids::uuid_v7().unwrap()));
+        std::fs::create_dir_all(&path).unwrap();
+        TmpDir(path)
+    }
+}
+
+impl Drop for TmpDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for TmpDir {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
 fn highball_root() -> PathBuf {
     Path::new(REPO).join("../HIGHBALL")
 }
@@ -191,11 +221,8 @@ fn carrier_artifact(id: &str, name: &str, data: Value) -> Value {
 /// digest-pinned run_id: the run directory (result/manifest/brief) plus a
 /// pinned fake `quinte` binary whose `inspect` echoes the recorded run
 /// state. Returns (state root, pinned binary).
-fn quinte_state_fixture() -> (PathBuf, PathBuf) {
-    let state = std::env::temp_dir().join(format!(
-        "stammtisch-three-quinte-state-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
+fn quinte_state_fixture() -> (TmpDir, TmpDir) {
+    let state = TmpDir::new("stammtisch-three-quinte-state");
     let run_dir = state.join("runs").join(QUINTE_RUN_ID);
     std::fs::create_dir_all(run_dir.join("input")).unwrap();
     std::fs::write(
@@ -208,11 +235,7 @@ fn quinte_state_fixture() -> (PathBuf, PathBuf) {
     let result_sha = stammtisch::canon::sha256_prefixed(&result_bytes);
     std::fs::write(run_dir.join("result.json"), &result_bytes).unwrap();
     // The pinned fake `quinte`: `inspect` echoes the recorded run state.
-    let bin_dir = std::env::temp_dir().join(format!(
-        "stammtisch-three-quinte-bin-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
-    std::fs::create_dir_all(&bin_dir).unwrap();
+    let bin_dir = TmpDir::new("stammtisch-three-quinte-bin");
     let bin = bin_dir.join("quinte");
     let envelope_path = bin_dir.join("envelope.json");
     std::fs::write(
@@ -263,7 +286,7 @@ fn quinte_state_fixture() -> (PathBuf, PathBuf) {
         stammtisch::canon::canonical_bytes(&envelope),
     )
     .unwrap();
-    (state, bin)
+    (state, bin_dir)
 }
 
 struct Out {
@@ -306,12 +329,12 @@ fn cp_dir(src: &Path, dst: &Path) {
     }
 }
 
-fn launch_once(tag: &str, ambient_workdir: &Path, server: &FakeA2a) -> (String, PathBuf, Out, Out) {
-    let home = std::env::temp_dir().join(format!(
-        "stammtisch-three-{tag}-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
-    std::fs::create_dir_all(&home).unwrap();
+fn launch_once(
+    tag: &str,
+    ambient_workdir: &Path,
+    server: &FakeA2a,
+) -> (TmpDir, String, PathBuf, Out, Out) {
+    let home = TmpDir::new(&format!("stammtisch-three-{tag}"));
     let pack = home.join("pack");
     cp_dir(&Path::new(REPO).join("doctrine/examples/galahad"), &pack);
     let spec = json!({
@@ -419,7 +442,7 @@ fn launch_once(tag: &str, ambient_workdir: &Path, server: &FakeA2a) -> (String, 
     assert_eq!(packet["route_request"], route_request());
     assert_ne!(packet["route_request"]["question"], "ambient poison");
 
-    (run_id, bundle, run, verify)
+    (home, run_id, bundle, run, verify)
 }
 
 fn find_artifact(home: &Path, run_id: &str, name: &str) -> PathBuf {
@@ -442,10 +465,7 @@ fn three_stage_run_export_verify_twice() {
         eprintln!("skip three_stage_run_export_verify_twice: HIGHBALL CLI not in the sibling tree");
         return;
     }
-    let ambient = std::env::temp_dir().join(format!(
-        "stammtisch-three-ambient-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
+    let ambient = TmpDir::new("stammtisch-three-ambient");
     std::fs::create_dir_all(ambient.join("final")).unwrap();
     std::fs::write(
         ambient.join("route-request.json"),
@@ -457,10 +477,11 @@ fn three_stage_run_export_verify_twice() {
         r#"{"trace_version":"ambient poison"}"#,
     )
     .unwrap();
-    let (quinte_state, quinte_bin) = quinte_state_fixture();
+    let (quinte_state, quinte_bin_dir) = quinte_state_fixture();
+    let quinte_bin = quinte_bin_dir.join("quinte");
     // Inherited by the stammtisch-core subprocess; the deliver stage pins
     // the QUINTE state root and the exact binary behind QUINTE_RUN_ID.
-    std::env::set_var("QUINTE_HOME", &quinte_state);
+    std::env::set_var("QUINTE_HOME", &*quinte_state);
     std::env::set_var("HIGHBALL_QUINTE_BIN", &quinte_bin);
     let server = FakeA2a::start(Script {
         poll_states: vec!["TASK_STATE_COMPLETED".into()],
@@ -471,8 +492,8 @@ fn three_stage_run_export_verify_twice() {
         ],
         ..Default::default()
     });
-    let (_id1, _b1, run1, verify1) = launch_once("1", &ambient, &server);
-    let (_id2, _b2, run2, verify2) = launch_once("2", &ambient, &server);
+    let (_home1, _id1, _b1, run1, verify1) = launch_once("1", &ambient, &server);
+    let (_home2, _id2, _b2, run2, verify2) = launch_once("2", &ambient, &server);
     assert_eq!(
         run1.json()["data"]["terminal"],
         run2.json()["data"]["terminal"]
