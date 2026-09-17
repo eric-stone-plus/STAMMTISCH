@@ -2,6 +2,8 @@
 //! the digest-pinned QUINTE run product are the only inputs to the real CLI.
 //! Ambient workdir files are not evidence.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -51,13 +53,10 @@ fn carrier_values() -> (Value, Value) {
     (request, trace)
 }
 
-fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "stammtisch-prod-{tag}-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn tmp(tag: &str) -> support::TmpDir {
+    // RAII: drop 时清理（旧实现每跑一批测试泄漏一批 stammtisch 目录）
+    let _ = tag; // 前缀统一为 stammtisch-prod，tag 进目录名由 uuid 唯一化替代
+    support::TmpDir::new("stammtisch-prod")
 }
 
 fn stage_spec(workdir: Option<&Path>) -> Stage {
@@ -102,7 +101,7 @@ fn store_input(run_dir: &Path, value: &Value) -> String {
     digest
 }
 
-fn empty_pack() -> (PathBuf, stammtisch::doctrine::DoctrinePack) {
+fn empty_pack() -> (PathBuf, stammtisch::doctrine::DoctrinePack, support::TmpDir) {
     let dir = tmp("pack");
     std::fs::create_dir_all(dir.join("briefs")).unwrap();
     std::fs::write(
@@ -117,7 +116,7 @@ fn empty_pack() -> (PathBuf, stammtisch::doctrine::DoctrinePack) {
     )
     .unwrap();
     let pack = stammtisch::doctrine::load_dir(&dir).unwrap();
-    (dir, pack)
+    (dir.to_path_buf(), pack, dir)
 }
 
 /// HIGHBALL digests the brief over its contract field list in field order
@@ -142,7 +141,10 @@ fn canonical_fields_bytes(value: &Value, fields: &[&str]) -> Vec<u8> {
 /// directory (`result.json` / `manifest.json` / `input/brief.json`) plus a
 /// pinned fake `quinte` binary whose `inspect` echoes the recorded run
 /// state. Returns (state root, pinned binary, review.result summary value).
-fn quinte_run_fixture(request: &Value, trace: &Value) -> (PathBuf, PathBuf, Value) {
+fn quinte_run_fixture(
+    request: &Value,
+    trace: &Value,
+) -> (PathBuf, PathBuf, Value, support::TmpDir, support::TmpDir) {
     let binding = trace["action_binding_sha256"].as_str().unwrap();
     let state = tmp("quinte-state");
     let run_id = stammtisch::ids::uuid_v7().unwrap();
@@ -299,7 +301,9 @@ fn quinte_run_fixture(request: &Value, trace: &Value) -> (PathBuf, PathBuf, Valu
         stammtisch::canon::canonical_bytes(&envelope),
     )
     .unwrap();
-    (state, bin, result)
+    // path copies travel out; both RAII owners must follow or the pinned
+    // quinte binary is deleted while the caller still executes it
+    (state.to_path_buf(), bin, result, state, bin_dir)
 }
 
 #[test]
@@ -334,13 +338,14 @@ fn highball_packet_uses_declared_carriers_and_ignores_ambient_workdir() {
         r#"{"trace_version":"malicious"}"#,
     )
     .unwrap();
-    let (_pack_dir, pack) = empty_pack();
+    let (_pack_dir, pack, _guard) = empty_pack();
     let run_dir = tmp("hb-run");
     std::fs::create_dir_all(run_dir.join("artifacts")).unwrap();
 
     let stage = stage_spec(Some(&ambient));
     let (request, trace) = carrier_values();
-    let (quinte_state, quinte_bin, review) = quinte_run_fixture(&request, &trace);
+    let (quinte_state, quinte_bin, review, _guard_state, _guard_bin) =
+        quinte_run_fixture(&request, &trace);
     std::env::set_var("QUINTE_HOME", &quinte_state);
     std::env::set_var("HIGHBALL_QUINTE_BIN", &quinte_bin);
     let inputs = std::collections::BTreeMap::from([
@@ -400,7 +405,7 @@ fn highball_input_digest_drift_fails_closed() {
         return;
     }
     std::env::set_var("HIGHBALL_HOME", highball_root());
-    let (_pack_dir, pack) = empty_pack();
+    let (_pack_dir, pack, _guard) = empty_pack();
     let run_dir = tmp("hb-drift");
     std::fs::create_dir_all(run_dir.join("artifacts")).unwrap();
     let stage = stage_spec(None);

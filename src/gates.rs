@@ -704,10 +704,7 @@ mod tests {
 
     #[test]
     fn schema_check_eval() {
-        let dir = std::env::temp_dir().join(format!(
-            "stammtisch-gates-{}",
-            crate::ids::uuid_v7().unwrap()
-        ));
+        let dir = crate::testutil::scratch("stammtisch-gates");
         std::fs::create_dir_all(dir.join("schemas")).unwrap();
         std::fs::write(
             dir.join("schemas").join("r.schema.json"),

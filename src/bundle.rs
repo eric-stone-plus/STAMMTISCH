@@ -1029,11 +1029,7 @@ mod tests {
         // violate the bundle schema (e.g. a numeric `path`). The schema
         // pass only accumulates failures, so the later receipt/gate
         // walks must treat non-string paths as failures, never panic.
-        let dir = std::env::temp_dir().join(format!(
-            "stammtisch-bundle-{}",
-            crate::ids::uuid_v7().unwrap()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testutil::scratch("stammtisch-bundle-{}");
         let manifest = serde_json::json!({
             "manifest_version": "3.0",
             "run_id": "00000000-0000-7000-8000-000000000001",
@@ -1132,11 +1128,7 @@ mod tests {
 
     #[test]
     fn verify_signature_fails_closed_when_minisign_absent() {
-        let dir = std::env::temp_dir().join(format!(
-            "stammtisch-signature-{}",
-            crate::ids::uuid_v7().unwrap()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testutil::scratch("stammtisch-signature-{}");
         let sig = dir.join("MANIFEST.json.minisig");
         std::fs::write(&sig, b"signature").unwrap();
         let empty_path = dir.join("empty-path");
@@ -1170,11 +1162,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn verify_signature_invokes_minisign_with_expected_args() {
-        let dir = std::env::temp_dir().join(format!(
-            "stammtisch-signature-{}",
-            crate::ids::uuid_v7().unwrap()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testutil::scratch("stammtisch-signature-{}");
         let manifest = dir.join("MANIFEST.json");
         std::fs::write(&manifest, b"{}").unwrap();
         let sig = dir.join("MANIFEST.json.minisig");
@@ -1229,11 +1217,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn verify_signature_rejects_when_minisign_verification_fails() {
-        let dir = std::env::temp_dir().join(format!(
-            "stammtisch-signature-{}",
-            crate::ids::uuid_v7().unwrap()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::testutil::scratch("stammtisch-signature-{}");
         let manifest = dir.join("MANIFEST.json");
         std::fs::write(&manifest, b"{}").unwrap();
         let sig = dir.join("MANIFEST.json.minisig");

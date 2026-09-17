@@ -1,5 +1,7 @@
 //! GALAHAD product adapter: real `galahad-futures` paper entry, not DoctrineFake.
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -29,13 +31,10 @@ fn which_python3() -> bool {
         .unwrap_or(false)
 }
 
-fn tmp(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "stammtisch-galahad-{tag}-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn tmp(tag: &str) -> support::TmpDir {
+    // RAII: drop 时清理（旧实现每跑一批测试泄漏一批 stammtisch 目录）
+    let _ = tag; // 前缀统一为 stammtisch-galahad，tag 进目录名由 uuid 唯一化替代
+    support::TmpDir::new("stammtisch-galahad")
 }
 
 fn stage_spec(workdir: &Path) -> Stage {
@@ -59,7 +58,7 @@ fn stage_spec(workdir: &Path) -> Stage {
         .unwrap()
 }
 
-fn empty_pack() -> (PathBuf, stammtisch::doctrine::DoctrinePack) {
+fn empty_pack() -> (PathBuf, stammtisch::doctrine::DoctrinePack, support::TmpDir) {
     let dir = tmp("pack");
     std::fs::create_dir_all(dir.join("briefs")).unwrap();
     std::fs::write(
@@ -74,7 +73,9 @@ fn empty_pack() -> (PathBuf, stammtisch::doctrine::DoctrinePack) {
     )
     .unwrap();
     let pack = stammtisch::doctrine::load_dir(&dir).unwrap();
-    (dir, pack)
+    // guard must outlive the caller: dir copies are handed out, the RAII
+    // owner travels with them
+    (dir.to_path_buf(), pack, dir)
 }
 
 #[test]
@@ -102,7 +103,7 @@ fn galahad_paper_fixture_collects_identity_and_targets() {
     if galahad_python().is_file() {
         std::env::set_var("GALAHAD_PYTHON", galahad_python());
     }
-    let (_pack_dir, pack) = empty_pack();
+    let (_pack_dir, pack, _guard) = empty_pack();
     let run_dir = tmp("run");
     std::fs::create_dir_all(run_dir.join("artifacts")).unwrap();
     let stage = stage_spec(&galahad_futures());

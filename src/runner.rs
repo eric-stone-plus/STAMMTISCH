@@ -1901,8 +1901,7 @@ mod tests {
 
     #[test]
     fn cancel_remote_tasks_collects_task_ids_and_reports_failures() {
-        let dir = std::env::temp_dir()
-            .join(format!("stammtisch-cancel-{}", ids::uuid_v7().unwrap()));
+        let dir = crate::testutil::scratch("stammtisch-cancel");
         std::fs::create_dir_all(dir.join("receipts")).unwrap();
         // pipeline.json with one a2a stage
         std::fs::write(
@@ -1979,9 +1978,9 @@ mod tests {
 
     #[test]
     fn parent_loss_seals_the_registered_active_run() {
+        let _scratch = crate::testutil::scratch("stammtisch-parent");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-parent-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_id = ids::uuid_v7().unwrap();
@@ -2000,9 +1999,9 @@ mod tests {
 
     #[test]
     fn cancel_abandoned_seals_dead_holder_as_cancelled() {
+        let _scratch = crate::testutil::scratch("stammtisch-abandon");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-abandon-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_id = ids::uuid_v7().unwrap();
@@ -2020,9 +2019,9 @@ mod tests {
 
     #[test]
     fn cancel_abandoned_skips_live_lock_holder() {
+        let _scratch = crate::testutil::scratch("stammtisch-live");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-live-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_id = ids::uuid_v7().unwrap();
@@ -2062,9 +2061,9 @@ mod tests {
 
     #[test]
     fn seal_run_is_idempotent_on_terminal() {
+        let _scratch = crate::testutil::scratch("stammtisch-seal");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-seal-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_id = ids::uuid_v7().unwrap();
@@ -2087,9 +2086,9 @@ mod tests {
 
     #[test]
     fn seal_run_refuses_an_illegal_transition_before_appending() {
+        let _scratch = crate::testutil::scratch("stammtisch-seal-premature");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-seal-premature-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_id = ids::uuid_v7().unwrap();
@@ -2124,9 +2123,9 @@ mod tests {
 
     #[test]
     fn run_writer_refuses_appends_once_the_watchdog_claimed_the_run() {
+        let _scratch = crate::testutil::scratch("stammtisch-claim");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-claim-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_id = ids::uuid_v7().unwrap();
@@ -2185,9 +2184,9 @@ mod tests {
 
     #[test]
     fn project_fold_basic() {
+        let _scratch = crate::testutil::scratch("stammtisch-runner");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-runner-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_dir = root.run_dir("019b4e5a-2c3d-7e8f-9a0b-1c2d3e4f5a6b");
@@ -2223,9 +2222,9 @@ mod tests {
 
     #[test]
     fn project_rejects_unknown_event_type() {
+        let _scratch = crate::testutil::scratch("stammtisch-runner");
         let root = StateRoot {
-            path: std::env::temp_dir()
-                .join(format!("stammtisch-runner-{}", ids::uuid_v7().unwrap())),
+            path: _scratch.to_path_buf(),
         };
         root.init().unwrap();
         let run_dir = root.run_dir("r1");
@@ -2273,8 +2272,7 @@ mod tests {
 
     #[test]
     fn stage_inputs_are_exact_and_fail_closed() {
-        let run_dir =
-            std::env::temp_dir().join(format!("stammtisch-input-bind-{}", ids::uuid_v7().unwrap()));
+        let run_dir = crate::testutil::scratch("stammtisch-input-bind");
         std::fs::create_dir_all(run_dir.join("artifacts")).unwrap();
         let wanted_bytes = br#"{"wanted":true}"#;
         let extra_bytes = br#"{"secret":true}"#;

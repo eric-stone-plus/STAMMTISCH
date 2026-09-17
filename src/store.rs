@@ -323,19 +323,18 @@ impl Drop for LaunchLock {
 mod tests {
     use super::*;
 
-    fn tmp_root() -> StateRoot {
-        let p = std::env::temp_dir().join(format!(
-            "stammtisch-store-{}",
-            crate::ids::uuid_v7().unwrap()
-        ));
-        let root = StateRoot { path: p };
+    fn tmp_root() -> (StateRoot, crate::testutil::TmpDir) {
+        let scratch = crate::testutil::scratch("stammtisch-store");
+        let root = StateRoot {
+            path: scratch.to_path_buf(),
+        };
         root.init().unwrap();
-        root
+        (root, scratch)
     }
 
     #[test]
     fn atomic_write_roundtrip_and_replace() {
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let f = root.path.join("runs").join("x.json");
         atomic_write(&f, b"one").unwrap();
         assert_eq!(fs::read(&f).unwrap(), b"one");
@@ -353,7 +352,7 @@ mod tests {
 
     #[test]
     fn atomic_write_fsyncs_parent_dir_on_the_real_helper() {
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let parent = root.path.join("runs");
         let f = parent.join("durable.json");
         atomic_write(&f, b"payload").unwrap();
@@ -374,7 +373,7 @@ mod tests {
 
     #[test]
     fn append_line_fsync_roundtrip_single_write_lines() {
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let run_dir = root.path.join("runs").join("r0");
         fs::create_dir_all(&run_dir).unwrap();
         let path = run_dir.join("events.jsonl");
@@ -389,7 +388,7 @@ mod tests {
 
     #[test]
     fn launch_lock_is_exclusive() {
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let a = LaunchLock::acquire(&root, "run-a").unwrap();
         let err = LaunchLock::acquire(&root, "run-b").unwrap_err();
         assert_eq!(err.code, "launch_lock_held");
@@ -400,7 +399,7 @@ mod tests {
 
     #[test]
     fn event_log_strict_read() {
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let run_dir = root.path.join("runs").join("r1");
         fs::create_dir_all(&run_dir).unwrap();
         let mut w = EventWriter::new(&run_dir, "r1");
@@ -422,7 +421,7 @@ mod tests {
         // The schema layer now enforces the load-bearing payload
         // contracts (artifact/receipt digests, gate record digests)
         // that the fold used to catch alone.
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let run_dir = root.path.join("runs").join("r9");
         fs::create_dir_all(&run_dir).unwrap();
         let mut w = EventWriter::new(&run_dir, "r9");
@@ -451,7 +450,7 @@ mod tests {
 
     #[test]
     fn sequence_gap_detected() {
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let run_dir = root.path.join("runs").join("r2");
         fs::create_dir_all(&run_dir).unwrap();
         let line = crate::canon::canonical(&serde_json::json!({
@@ -466,7 +465,7 @@ mod tests {
 
     #[test]
     fn mixed_run_ids_are_rejected() {
-        let root = tmp_root();
+        let (root, _scratch) = tmp_root();
         let run_dir = root.path.join("runs").join("r3");
         fs::create_dir_all(&run_dir).unwrap();
         let mut writer = EventWriter::new(&run_dir, "r3");

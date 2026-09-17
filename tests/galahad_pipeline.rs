@@ -1,6 +1,8 @@
 //! GALAHAD analyst/trader stage: `stammtisch-core run` → `export` → `verify`.
 //! DoctrineFake is not on this path.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -62,11 +64,7 @@ fn cp_dir(src: &Path, dst: &Path) {
 }
 
 fn launch_once(tag: &str) -> Out {
-    let home = std::env::temp_dir().join(format!(
-        "stammtisch-galahad-pipe-{tag}-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
-    std::fs::create_dir_all(&home).unwrap();
+    let home = support::TmpDir::new("stammtisch-galahad-pipe");
     let pack = home.join("pack");
     cp_dir(&Path::new(REPO).join("doctrine/examples/galahad"), &pack);
     let spec = json!({
@@ -158,10 +156,7 @@ fn galahad_run_export_verify_twice() {
 
 #[test]
 fn fake_doctrine_does_not_invoke_galahad() {
-    let home = std::env::temp_dir().join(format!(
-        "stammtisch-doctrine-fake-{}",
-        stammtisch::ids::uuid_v7().unwrap()
-    ));
+    let home = support::TmpDir::new("stammtisch-doctrine-fake");
     std::fs::create_dir_all(&home).unwrap();
     let pack = home.join("pack");
     cp_dir(&Path::new(REPO).join("doctrine/examples/galahad"), &pack);
