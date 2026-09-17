@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 CHART_MATH = REPO / "tui" / "static" / "chart_math.js"
 WEB_CHART = REPO / "tui" / "web_chart.html"
 

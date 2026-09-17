@@ -19,7 +19,7 @@ from pathlib import Path
 from tui.intake_job import IntakeSupervisor, empty_session, save_session, session_path
 from tui.subproc import main, run_bounded, stop_owned
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _proc_running(pid: int) -> bool:

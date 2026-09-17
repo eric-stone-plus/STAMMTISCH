@@ -37,7 +37,7 @@ def _galahad_root() -> Path:
     configured = (os.environ.get("STAMMTISCH_GALAHAD_ROOT") or "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    return (Path(__file__).resolve().parents[2] / "GALAHAD").resolve()
+    return (Path(__file__).resolve().parents[3] / "GALAHAD").resolve()
 
 
 def _load_consensus_module(root: Path) -> ModuleType:

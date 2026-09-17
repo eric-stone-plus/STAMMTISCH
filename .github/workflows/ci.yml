@@ -30,4 +30,4 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-tui.txt numpy pandas pytest
-          python -m pytest tests/ -q
+          python -m pytest tui/tests/ -q

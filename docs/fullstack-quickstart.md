@@ -71,7 +71,7 @@ cargo build --release            # highball + build-action-packet
 # 4. GALAHAD (analysis identity + evidence tooling) — optional but recommended
 git clone https://github.com/eric-stone-plus/GALAHAD && cd GALAHAD/galahad-futures
 uv venv .venv && uv pip install --python .venv/bin/python -e . pytest
-.venv/bin/python -m pytest tests/ -q
+.venv/bin/python -m pytest tui/tests/ -q
 ```
 
 RASHOMON is documentation only (clone to read). CAUSEWAY is an optional

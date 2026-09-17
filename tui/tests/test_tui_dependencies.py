@@ -8,7 +8,7 @@ import re
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = {"textual": "8.2.8", "rich": "15.0.0"}
 
 

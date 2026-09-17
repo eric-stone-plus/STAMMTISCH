@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 仓库根（tui/tests 下移一层后由 parent.parent 改三级）
 
 from tui.engine import QuantEngine
 from tui.screener import _dual_ma_metrics, screen_market

@@ -542,7 +542,7 @@ class LiveServerTest(unittest.TestCase):
         # Exercise the HTTP boundary against the real verifier. Missing,
         # non-accepted, and digest-drifted manifests must all stop here rather
         # than reaching quantkit's network-capable live fetcher.
-        from tests.test_validated_bars import _manifest
+        from test_validated_bars import _manifest  # 同目录模块（pytest 置 basedir 于 sys.path）
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), ChartHandler)
         port = server.server_address[1]
@@ -576,7 +576,7 @@ class LiveServerTest(unittest.TestCase):
                     accepted_manifest["identity"]["market"] = "XSHG"
                     for source in accepted_manifest["sources"]:
                         source["identity"]["market"] = "XSHG"
-                    from tests.test_validated_bars import _reseal
+                    from test_validated_bars import _reseal  # 同目录模块
                     _reseal(accepted_manifest)
                     manifest_path = root / "600584.json"
                     manifest_path.write_text(
@@ -952,7 +952,7 @@ class ExternalBarsTest(unittest.TestCase):
 class ParentDeathWatchTest(unittest.TestCase):
     """The chart server must not outlive the TUI that spawned it."""
 
-    _REPO_ROOT = Path(__file__).resolve().parent.parent
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
 
     @staticmethod
     def _spawn_chart(parent_pid: int, ready_token: str):

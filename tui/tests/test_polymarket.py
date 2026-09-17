@@ -307,7 +307,7 @@ class MarketUrlTest(unittest.TestCase):
 class FrameworkLanguageTest(unittest.TestCase):
     def test_static_tool_chrome_contains_no_han_characters(self) -> None:
         """Keep framework copy English without policing upstream content."""
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         framework_files = (
             "tui/app.py",
             "tui/analysis.py",
@@ -331,7 +331,7 @@ class FrameworkLanguageTest(unittest.TestCase):
         self.assertEqual(offenders, [], "Han characters found: " + ", ".join(offenders))
 
     def test_public_framework_has_no_private_infrastructure_markers(self) -> None:
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         framework_files = (
             "tui/config.py",
             "tui/polymarket.py",
