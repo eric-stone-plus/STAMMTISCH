@@ -447,7 +447,11 @@ Status as of 2026-08-18:
 
 ## 11. Conformance and reliability test strategy
 
-The test suite is part of the deliverable, not an afterthought:
+The test suite is part of the deliverable, not an afterthought. Layout:
+Rust integration crates live in `tests/` (conformance, product pipelines,
+A2A adapter, plus the `tests/support` fake-A2A helper); the Python suite
+for the TUI lives in `tui/tests/` (`python -m pytest tui/tests/` — moved
+there 2026-09-18 when the mixed tests/ tree was split):
 
 1. Schema-valid receipts accepted; schema-invalid rejected (every contract).
 2. One-active: concurrent `run` calls serialize; at most one active run.

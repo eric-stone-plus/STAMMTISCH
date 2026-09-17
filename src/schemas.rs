@@ -1,4 +1,4 @@
-//! The five STAMMTISCH contract schemas, embedded at compile time so the
+//! The STAMMTISCH contract schemas, embedded at compile time so the
 //! single static binary is self-contained (validate/verify work without the
 //! repository present). `schemas/` in the repository remains the source of
 //! truth — these paths are compile-time includes of exactly those files.

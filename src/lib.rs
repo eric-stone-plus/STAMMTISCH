@@ -1,8 +1,10 @@
 //! STAMMTISCH P0 skeleton — deterministic pipeline state machine, evidence
 //! store, gate evaluator, and offline-verifiable deliverable bundles.
 //!
-//! Dependency discipline: serde/serde_json/sha2 only. No async runtime, no
-//! network, no argument-parser crate. `serde_json` is used WITHOUT the
+//! Dependency discipline: a minimal synchronous set — serde/serde_json/sha2
+//! for the core, plus `ureq` (blocking HTTP, A2A adapter only) and `libc`
+//! (fsync/kill probes). No async runtime, no argument-parser crate.
+//! `serde_json` is used WITHOUT the
 //! `preserve_order` feature, so every `Value` object is a BTreeMap and
 //! serializes with sorted keys — that property is the canonical form used
 //! for all digests (see [`canon`]).

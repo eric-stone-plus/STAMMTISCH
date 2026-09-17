@@ -20,9 +20,10 @@ this file is the operator's quick reference.
   store, gates, adapters, roadmap, conformance list);
   `docs/protocol-layer.md` — the wire protocol layer (A2A v1.0 adapter,
   receipt revisions, binding discipline).
-- `schemas/` — the seven STAMMTISCH contracts (pipeline, run manifest,
-  bundle manifest, gate record, run event, a2a invocation receipt,
-  cost ledger).
+- `schemas/` — the nine STAMMTISCH schema files: seven contracts
+  (pipeline, run manifest, bundle manifest, gate record, run event,
+  a2a invocation receipt, cost ledger) plus the `a2a-invocation-v2`
+  and `run-manifest-v1` revision files.
 - `src/` — Rust core. Key modules: `store.rs` (atomic writes, fsynced event
   log, launch lock), `runner.rs` (state machine + projection fold),
   `gates.rs` (deterministic gate evaluator), `adapters/` (`fake.rs` canned
