@@ -10,6 +10,9 @@ use crate::envelope;
 use crate::error::AppError;
 use crate::store::StateRoot;
 
+/// One parsed invocation. The variants mirror the USAGE grammar one-to-one;
+/// dispatch happens in [`crate::main`]-driven `run()`, JSON envelope shape in
+/// [`crate::envelope`]. Exit-code semantics live in [`crate::error::AppError`].
 #[derive(Debug)]
 pub enum Command {
     Init,
@@ -29,6 +32,10 @@ pub enum Command {
     Version,
 }
 
+/// Parsed argv: global flag(s) plus the subcommand.
+///
+/// `--json` selects machine envelopes on stdout (contract: one JSON object,
+/// human-readable text goes to stderr); default output is human text.
 pub struct Cli {
     pub json: bool,
     pub command: Command,
@@ -51,6 +58,11 @@ USAGE:
 
 EXIT CODES: 0 completed/clean · 1 product-failure · 2 blocked/halted/integrity · 3 usage";
 
+/// Parse raw argv (excluding the program name) into a [`Cli`].
+///
+/// Hand-rolled on purpose (dependency discipline: no clap): unknown flags,
+/// missing required values, and stray positionals are [`AppError::usage`]
+/// (exit 3) — never a panic, never a silent default.
 pub fn parse_args(args: &[String]) -> Result<Cli, AppError> {
     let mut json = false;
     let mut force = false;
@@ -187,6 +199,9 @@ fn missing(flag: &str) -> AppError {
     AppError::usage("args_invalid", format!("missing required {flag}"))
 }
 
+/// Stable subcommand name for a [`Command`] — the spelling used in events,
+/// logs, and gate records. Pure function; adding a variant without a match
+/// arm here is a compile error (exhaustiveness is the contract test).
 pub fn command_name(c: &Command) -> &'static str {
     match c {
         Command::Init => "init",
