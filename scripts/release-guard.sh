@@ -4,7 +4,7 @@
 # marketplace actions in release.yml). Re-pin: review the release-kit
 # change, then update RELEASE_KIT_PIN to its full commit SHA.
 set -euo pipefail
-RELEASE_KIT_PIN="56317f687db0c32e7043054b9e902935716be357"
+RELEASE_KIT_PIN="81aba74b4826ba5cb4670901dca9287ca82a4ac2"
 here="$(cd "$(dirname "$0")" && pwd)"
 kit="${RELEASE_KIT_HOME:-$here/../../release-kit}"
 if [ ! -d "$kit/.git" ]; then
