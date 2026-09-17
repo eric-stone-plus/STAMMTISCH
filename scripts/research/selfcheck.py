@@ -103,7 +103,13 @@ def main() -> int:
         with opener.open("http://127.0.0.1:8787/", timeout=10) as r:
             html = r.read().decode()
         assert "BUY" in html
-        return f"card {card.get('asof')}, buys {len(card['weights'])}"
+        # Freshness: the CN-direct path must keep the card within one
+        # trading day (allow 4 calendar days for weekends/holidays).
+        from datetime import date, timedelta
+        asof = date.fromisoformat(str(card["asof"]))
+        assert asof >= date.today() - timedelta(days=4), \
+            f"card stale: asof {asof}"
+        return f"card {card.get('asof')} (fresh), buys {len(card['weights'])}"
 
     def mr_loop_journal():
         path = Path(root) / "intel" / "mr-loop.jsonl"

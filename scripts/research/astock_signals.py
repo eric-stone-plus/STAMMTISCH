@@ -15,6 +15,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -44,9 +45,69 @@ def save_holdings(state_root: str, holdings: list[str]) -> None:
     path.write_text(json.dumps({"holdings": holdings}, indent=1), encoding="utf-8")
 
 
-def build_panel(config: Config, symbols: list[str], min_bars: int = 200) -> pd.DataFrame:
-    """Fresh daily closes per symbol: quantkit fetch (cache-first), then
-    the parquet cache as fallback. Symbols that fail stay out."""
+PANEL_FRESH_HOURS = 12.0
+
+
+def _reload(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _cn_direct_panel(symbols: list[str], state_root: str) -> dict[str, pd.Series]:
+    """Primary path: quant-python + akshare, CN-direct (no proxy, no 429).
+
+    Reuses a fresh (<12h) panel file; otherwise respawns the fetcher and
+    converts the JSON to a close series per symbol. Returns {} on any
+    failure so the caller falls back to the quantkit/yfinance path."""
+    import os
+    import subprocess
+
+    py = os.path.expanduser("~/.local/bin/quant-python")
+    if not os.path.exists(py):
+        return {}
+    script = Path(__file__).with_name("astock_fetch.py")
+    out = Path(state_root) / "intel" / "astock" / "panel-latest.json"
+    try:
+        cached = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else {}
+    except (OSError, ValueError):
+        cached = {}
+    usable = bool(cached.get("panel")) and cached.get("asof")
+    fresh = (usable
+             and time.time() - out.stat().st_mtime < PANEL_FRESH_HOURS * 3600)
+    if not fresh:
+        try:
+            proc = subprocess.run(
+                [py, str(script), "--out", str(out)],
+                input=json.dumps(symbols), capture_output=True, text=True,
+                timeout=300)
+            if proc.returncode != 0 or not out.is_file():
+                return {}
+        except (OSError, subprocess.TimeoutExpired):
+            return {}
+    payload = cached if fresh else _reload(out)
+    if payload is None:
+        return {}
+    series: dict[str, pd.Series] = {}
+    for symbol, rows in (payload.get("panel") or {}).items():
+        if len(rows) >= 60:
+            series[symbol] = pd.Series(
+                [float(close) for _d, close in rows],
+                index=pd.to_datetime([d for d, _c in rows])).sort_index()
+    return series
+
+
+def build_panel(config: Config, symbols: list[str], min_bars: int = 200,
+                state_root: str = "") -> pd.DataFrame:
+    """Fresh daily closes per symbol: CN-direct akshare via quant-python
+    first, then the quantkit fetch, then the parquet cache as the last
+    resort. Symbols that fail stay out."""
+    if state_root:
+        cn = _cn_direct_panel(symbols, state_root)
+        if len(cn) >= max(3, len(symbols) // 2):
+            frame = pd.DataFrame(cn)
+            return frame[sorted(frame.columns)]  # column order, not row reindex
     series: dict[str, pd.Series] = {}
     try:
         from quantkit.portfolio import fetch_price_panel
@@ -81,8 +142,8 @@ def signal(config: Config, *, capital: float, topk: int = 5, n_drop: int = 1,
         r"auto_(.+?)_1d", " ".join(p.name for p in
                                    (Path(config.data_dir) / "cache").glob("*.parquet")))
     universe = sorted({u.upper() for u in universe})
-    prices = build_panel(config, universe)
-    px = prices.ffill().dropna(axis=1, how="any")
+    prices = build_panel(config, universe, state_root=state_root)
+    px = prices.ffill().dropna()  # common window: rows, not columns
     current = load_holdings(state_root)
     scores = score_universe(px, mode=mode, mom_lookback=mom_lookback)
     selected, weights = select_topk_dropout(scores, current, topk, n_drop)
