@@ -132,6 +132,16 @@ def main() -> int:
 
         return asyncio.run(scenario())
 
+    def daemons():
+        out = subprocess.run(
+            ["bash", str(Path(__file__).resolve().parent / "start_daemons.sh"),
+             "status"], capture_output=True, text=True, timeout=15)
+        lines = [l for l in out.stdout.splitlines() if ": " in l]
+        down = [l for l in lines if l.endswith(": down")]
+        assert not down, f"daemons down: {down}"
+        return f"{len(lines)} up (" + "; ".join(
+            l.split(":")[0] for l in lines) + ")"
+
     def engine_topk():
         from tui.engine import QuantEngine
         engine = QuantEngine.from_config(config)
@@ -148,6 +158,7 @@ def main() -> int:
         ("crypto engine bridge [B]", engine_bridge),
         ("astock signal web page", astock_web),
         ("MR loop journal freshness", mr_loop_journal),
+        ("24/7 daemons under PID mgmt", daemons),
         ("strategy record v3", strategy_record),
         ("evolved quantkit tree", engine_topk),
         ("TUI boot (real config)", tui_boot),
