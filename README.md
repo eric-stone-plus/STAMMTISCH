@@ -329,3 +329,13 @@ ledger (`stammtisch.cost-ledger.v0`).
 ## License
 
 MIT (see [`LICENSE`](LICENSE)).
+
+## CI
+
+`ci.yml` runs on every push and PR: `cargo test --locked --all-features`
+and a `RUSTFLAGS="-D warnings"` check (the AGENTS.md warning-free rule,
+enforced at the compiler level) are blocking. The Python suite runs
+non-blocking: 17 of 524 tests import the optional quantkit dependency,
+which lives in a private sibling repo the public runner cannot clone —
+flip that step to blocking once quantkit is published or a private
+checkout is wired. `release.yml` remains manual-only (workflow_dispatch).
