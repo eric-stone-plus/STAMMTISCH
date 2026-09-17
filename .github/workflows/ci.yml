@@ -24,7 +24,9 @@ jobs:
       # dependency, which lives in a PRIVATE sibling repo
       # (quant-core) that this public runner cannot clone. Run the suite
       # for visibility but do not block on the quantkit-gated subset until
-      # quantkit is published or a PAT is wired for a private checkout.
+      # quantkit is published or a PAT is wired — the one-move flip plan
+      # for both options lives in docs/ci-python-blocking.md, and
+      # scripts/verify-python-ci-env.sh pre-flights it locally.
       - name: python tests (non-blocking until quantkit is reachable)
         continue-on-error: true
         run: |
