@@ -245,3 +245,10 @@ Suite after D-M6: 315 passed (302 → 315; +13 new tests: 5 M6 pins,
 `market_url` assertions folded into the renamed `test_format_detail`),
 lite env 235 passed + 14 skipped (227+13 before), ruff clean
 (ruff 0.16.8, line 100).
+
+### Flake watch
+
+One full-suite run under concurrent load showed a single failure (rerun
+green twice, 315/315; the known timing-marginal workbench off-thread
+test is the prime suspect — already widened once in the M5 round).
+Monitor; widen again only on recurrence with a captured failure name.
