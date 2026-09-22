@@ -18,6 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .chat import ChatScreen
+from services.history import history_store as _history_store
 
 class DailyIntakeScreen(Screen):
     """Direct product intake with evidence and coverage visible first.
@@ -510,6 +511,3 @@ def _galahad_report_analysis(screen: Any, doc: dict[str, Any]) -> None:
             initial_context=_report_digest(doc),
         )
     )
-# M7: the accessor moved next to the store (services.history.history_store);
-# the old private name stays as an alias for the screens-facade consumers.
-from services.history import history_store as _history_store

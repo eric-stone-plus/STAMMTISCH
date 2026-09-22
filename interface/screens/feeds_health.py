@@ -4,7 +4,7 @@ Absorbs the old FeedHealthScreen (``tui/screens/feeds.py:18``, read-only
 reference — never imported): per-provider ok/failed/EWMA-latency/last-
 error counters plus the lane cache line, rendered as a table with
 latency-band and failure marking. The data contract lives in
-:mod:`interface.services.feeds_health` (the tracked/all_stats copy);
+:mod:`interface.services.feeds_health` (the tracked/all_stats lane);
 this screen only renders and polls.
 
 Discipline: the screen polls its service on the spine's slow services

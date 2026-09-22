@@ -2,10 +2,10 @@
 
 Copy + adapt (no ``tui.`` import) of the old LEDGER screen's data side:
 
-- the fill-store read contract is copied from ``tui/portfolio.py:26-41``
+- the fill-store read contract is copied from ``services/portfolio.py:26-41``
   (``ledger_path`` = ``<state_root>/intel/portfolio/ledger.json``;
   missing file → empty; unreadable/no-fills-list → ``LedgerError``);
-- the FIFO fold is copied verbatim from ``tui/portfolio.py:94-138``
+- the FIFO fold is copied verbatim from ``services/portfolio.py:94-138``
   (``positions``): buys open long lots, sells close the OLDEST open
   lots first (realized P&L booked at the close price), excess sells
   open short lots a later buy closes; per-(broker, symbol) books keyed
@@ -55,7 +55,7 @@ def ledger_path(state_root: str | Path) -> Path:
 def load_fills(state_root: str | Path | None) -> list[dict[str, Any]]:
     """Read the fill list; missing file is empty, anything else raises.
 
-    Copy of tui/portfolio.py:30-41 (the read half only — M6 writes
+    Copy of services/portfolio.py:30-41 (the read half only — M6 writes
     nothing). ``None`` state root reads as no ledger at all (the shell's
     demo/no-root path stays honest instead of fishing a conventional
     default the operator never chose).
@@ -137,7 +137,7 @@ def _fill_row(fill: Mapping[str, Any]) -> FillRow:
 def fold_positions(fills: Sequence[Mapping[str, Any]]) -> list[PositionRow]:
     """Fold fills into per-(broker, symbol) rows via signed FIFO.
 
-    Copy of tui/portfolio.py:94-138: ts-then-id order, oldest-lot-first
+    Copy of services/portfolio.py:94-138: ts-then-id order, oldest-lot-first
     matching, realized P&L booked on every close, weighted average cost
     over the remaining lots. Unparseable or non-positive fills are
     skipped (the fold never raises on bad data).

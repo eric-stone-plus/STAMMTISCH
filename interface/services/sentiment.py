@@ -13,7 +13,7 @@ Copy + adapt (no ``tui.`` import) of the old sentiment data side:
   ``format_tape``, ``desk_sentiment``). The classification vocabulary
   includes Chinese terms — that is DATA (the scored newswire's own
   language), preserved verbatim per the RETIREMENT §5 fixture rule;
-- the history index is ADAPTED from ``tui/history.py``: the old
+- the history index is ADAPTED from ``services/history.py``: the old
   SQLite ``HistoryStore`` (incremental, mtime-gated) is old-tree
   machinery; this copy scans the two artifact shapes directly
   (``runs/*/fin-daily-<day>.json`` intake artifacts and legacy
@@ -636,7 +636,7 @@ def load_daily(date: str | None = None,
     return load_daily_path(jpath, html_path=html_path, expected_date=day)
 
 
-# ── the history index (adapted from tui/history.py) ─────────────────────
+# ── the history index (adapted from services/history.py) ─────────────────────
 
 
 @dataclass(frozen=True)

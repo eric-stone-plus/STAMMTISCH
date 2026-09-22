@@ -102,7 +102,8 @@ def test_sentiment_screen_renders_and_walks_the_history(
             # [O] is the deferred GALAHAD handoff: notify, no action.
             await pilot.press("o")
             await pilot.pause()
-            assert any("M7" in n.message for n in app._notifications)
+            assert any("audited chat lane" in n.message
+                       for n in app._notifications)
             await pilot.press("escape")
             await pilot.pause()
             assert screen not in app.screen_stack

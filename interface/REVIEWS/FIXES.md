@@ -252,3 +252,39 @@ One full-suite run under concurrent load showed a single failure (rerun
 green twice, 315/315; the known timing-marginal workbench off-thread
 test is the prime suspect — already widened once in the M5 round).
 Monitor; widen again only on recurrence with a captured failure name.
+
+## Round E — the M7 true merge (two-axis + cross-attack)
+
+Commit under review: `1ca4cf1` (M7: KEEP modules git-mv'd to a shared
+`services/` package, interface copies reconciled, CI three suites).
+Method per the house style, extended: two parallel reviewers (Standards
+axis vs Spec axis) then each ATTACKED the other's findings; this ledger
+records the adjudicated outcome, including one finding where the
+cross-attack overturned the fix itself.
+
+| Finding (axis, verdict after cross-attack) | Fix | Pin |
+|---|---|---|
+| E-1 (spec, CONFIRMED — ship-blocker): the dashboard glance worker still read `from .. import ccifeed, livefeed as lf, signals as sig` after `livefeed` moved; `_run_async` converts the ImportError to `{"ok": False}` and the glance sidebar silently renders empty — no test asserts glance rows, so the suites stayed green | import split: `from .. import ccifeed, signals as sig` + `from services import livefeed as lf` | the tui suite re-run; the untested-glance gap itself is recorded here as residual risk |
+| E-2 (spec, CONFIRMED): `scripts/research/broker_e2e.py:60` late `from tui import livefeed` — the rewrite missed indented package-form imports; the E2E section died on ImportError before placing any order | rewritten to `from services import livefeed`; sweep re-run over every `from tui import`/`from .. import` site — all remaining names are staying modules | sweep grep (zero remaining moved-module references outside `tui.config_cli`-style stayers) |
+| E-3 (standards, CONFIRMED): `services/chart_server.py:4` docstring still said the web assets are vendored under `tui/static/` (the three sibling references were fixed; line 4 missed) | `services/static/` | — |
+| E-4 (standards, CONFIRMED reframed): provenance citations to moved modules (`interface/services/ledger.py` ×4, `sentiment.py` ×2, `screens/ledger.py`, `collectors/feeds.py`, README services table) pointed at paths a stranger cannot follow | repointed at `services/*`; citations to genuinely-unmoved old-tree modules (energy/polymarket/brief/tape screens) stay as they were | — |
+| E-5 (standards, CONFIRMED): `screens/feeds_health.py` docstring still called the counters "the tracked/all_stats copy" after M7 made it a delegation | "lane" | — |
+| E-6 (standards, CONFIRMED trivial): ci.yml stated the three-suite-since-M7 fact twice in one comment block | deduped | — |
+| E-7 (standards, REFUTED as introduced — pre-existing at `3907a10:tui/tests/test_screener.py:9`, moved verbatim; translated anyway as the new `services/tests` package carries no zh grandfathering) | English comment, correct for `services/tests` depth | — |
+| E-8 (spec, REFUTED as regression): the retired compact resolver always mapped bare numeric codes `.HK` while `decide.py` — the decisions file's writer — has ALWAYS normalized through the full shared resolver (`3907a10:tui/engine.py:20-27`); post-merge reader and writer share ONE mapping, so this is a consistency fix, not drift (live example: `7203` → `7203.T` both sides now) | `decisions.py` docstring names the shared resolver and the reader/writer alignment | — |
+| E-9 (standards → cross-attack overturned the Standards remedy): first fix made `all_stats()` copy fields by name so a shared-registry row gaining a field would not raise; the Spec attack stood — that TypeError lands in `FeedHealthService.frame`'s degrade path and renders `stats error: ...` (loud, fail-closed per AGENTS rule 2), while a fields-driven copy would silently drop the field | kept `ProviderHealth(**vars(row))` with a comment recording the verdict so the next reader does not re-apply the silent variant | `test_services_feeds_health.py` (error-frame path) unchanged and green |
+| E-10 (standards, style nit): the `_history_store` alias sat in a trailing block where the def used to be | moved into the top import block | tui suite |
+| E-11 (spec, pre-existing label made stale by M7's redefinition): sentiment's `[O]` handoff notified "GALAHAD report analysis lands in M7" — M7 is now the true merge | notification + docstrings + README say "an audited chat lane" (the actual precondition) | `test_sentiment_pilot.py` pin updated to the new copy |
+
+Nothing to fix (adjudicated): `feeds_health.py` reconciliation is
+entailed by the feeds delegation, not scope creep — unrevised, the
+FEEDS screen would read counters that no longer tick (Spec attack:
+"necessity, not scope creep"); `tracked()` has only test callers but
+is the documented M6 contract seam the injection rule needs; the
+closure additions (engine/config/portfolio) are forced by the
+zero-tui-import boundary the merge itself installs.
+
+Suite after E: services+tui 526 passed / 1 skipped (repo venv),
+interface 315 passed (uv ephemeral), CI-mirror 824 passed + the 17
+pre-existing quantkit-gated failures; ruff interface clean, every
+touched file at-or-below its HEAD finding count.

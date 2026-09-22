@@ -20,16 +20,15 @@ jobs:
         env:
           RUSTFLAGS: "-D warnings"
         run: cargo check --locked --all-features
-      # Python suites (services + interface + tui since the M7 true
-      # merge): 17 of 842 tests import the optional quantkit dependency,
+      # Three python suites since the M7 true merge (the shared
+      # services package, the rebuilt interface, the transitional tui
+      # tree): 17 of 842 tests import the optional quantkit dependency,
       # which lives in a PRIVATE sibling repo (quant-core) that this
       # public runner cannot clone. Run the suites for visibility but do
       # not block on the quantkit-gated subset until quantkit is
       # published or a PAT is wired — the one-move flip plan for both
       # options lives in docs/ci-python-blocking.md, and
       # scripts/verify-python-ci-env.sh pre-flights it locally.
-      # Three python suites since the M7 true merge: the shared services
-      # package, the rebuilt interface, and the transitional tui tree.
       - name: python tests (non-blocking until quantkit is reachable)
         continue-on-error: true
         run: |

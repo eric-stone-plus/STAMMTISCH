@@ -3,7 +3,7 @@
 M4 addition closing the M2 gap (``WorkstationSnapshot.quotes`` was
 demo-only): a collector-side provider over the services copy of the old
 livefeed contract (:mod:`interface.services.feeds`, copied from
-tui/livefeed.py). The demo path never touches this module; the real
+services/livefeed.py). The demo path never touches this module; the real
 path (``--root``) assembles quotes with per-symbol age, the serving
 source, and STALE semantics:
 

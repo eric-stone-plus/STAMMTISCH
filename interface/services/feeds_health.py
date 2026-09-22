@@ -93,7 +93,14 @@ def tracked(name: str, fn: Callable[[], Any]) -> Any:
 
 
 def all_stats() -> list[ProviderHealth]:
-    """Shared counters, frozen and name-sorted (the FEEDS render order)."""
+    """Shared counters, frozen and name-sorted (the FEEDS render order).
+
+    ``**vars`` on purpose (adversarial-review verdict): if the shared
+    ``ProviderStats`` gains a field this contract lacks, the TypeError
+    lands in :meth:`FeedHealthService.frame`'s degrade path and the
+    FEEDS panel shows ``stats error: ...`` — loud, actionable drift
+    detection. A fields-driven copy would silently drop the field.
+    """
     return sorted(
         (ProviderHealth(**vars(row)) for row in _shared_registry.all_stats()),
         key=lambda row: row.name,

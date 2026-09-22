@@ -1,7 +1,7 @@
 """The LEDGER screen (``:ledger``; route ``ledger``) — one-shot, read-only.
 
 Absorbs the old LedgerScreen (``tui/screens/ledger.py:27`` + the
-``tui/portfolio.py`` FIFO fold, read-only references — never imported):
+``services/portfolio.py`` FIFO fold, read-only references — never imported):
 fills fold into per-(broker, symbol) positions with realized P&L and
 mark-to-live through the feeds lane. The data contract lives in
 :mod:`interface.services.ledger`.

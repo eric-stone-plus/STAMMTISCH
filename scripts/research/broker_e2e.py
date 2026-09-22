@@ -57,7 +57,7 @@ print(f"  open orders: {len(binance.open_orders())}")
 # ── 3. Alpaca E2E: deep limit order + cancel ─────────────────────────
 print("\n[3] ALPACA E2E — limit buy 1 AAPL @ 50% of market, then cancel")
 try:
-    from tui import livefeed
+    from services import livefeed
     quote = livefeed.fetch_batch(["AAPL"]).get("AAPL") or {}
     last = float(quote.get("last") or 332.0)
     limit = f"{last * 0.5:.2f}"

@@ -158,7 +158,8 @@ class DashboardScreen(Screen):
             return
 
         def _work() -> dict:
-            from .. import ccifeed, livefeed as lf, signals as sig
+            from .. import ccifeed, signals as sig
+            from services import livefeed as lf
 
             out: dict = {"quotes": lf.fetch_batch(
                 ["000001.SS", "HSI", "QQQ"]), "cci": None, "sent": {}}

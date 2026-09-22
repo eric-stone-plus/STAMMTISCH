@@ -20,9 +20,12 @@ Adaptations:
   object; the service takes the resolved root explicitly (the caller
   already knows it) with the old conventional default
   (``~/.local/share/stammtisch``) kept for parity.
-- Symbol normalization reuses the compact resolver copy already shipped
-  in :mod:`interface.services.quant_engine` (the old code imported
-  ``services.engine._normalize_symbol``).
+- Symbol normalization reuses the shared offline resolver
+  (:func:`services.symbols.normalize_symbol`, re-exported by
+  :mod:`interface.services.quant_engine` since the M7 reconciliation —
+  the retired compact copy always mapped bare numeric codes to ``.HK``
+  while ``decide.py``, the file's writer, has always normalized through
+  the full resolver; reader and writer now share one mapping).
 - ``_load_decision`` was less defensive than ``_decision_symbols`` (a
   non-dict position row raised, killing the whole read via the outer
   ``except``). This copy unifies on the defensive shape: malformed

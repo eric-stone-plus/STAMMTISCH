@@ -1,7 +1,7 @@
 """Local chart server — the browser viewport for K-line charts.
 
 The browser renders TradingView Lightweight Charts (vendored under
-`tui/static/`); this server only feeds it data. Stdlib-only on
+`services/static/`); this server only feeds it data. Stdlib-only on
 purpose: no new dependencies for the TUI.
 
 Routes:

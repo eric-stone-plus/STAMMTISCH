@@ -12,7 +12,8 @@ Discipline and deviations:
 - one-shot by nature: a daily report changes when the intake product
   writes it, so the screen loads on entry and on day switches — no
   spine poll (unlike the live tapes). ``r`` re-runs the current day.
-- ``[O]`` (the old GALAHAD report-analysis handoff) notifies "M7" —
+- ``[O]`` (the old GALAHAD report-analysis handoff) notifies the
+  deferral —
   the chat/analysis lane is deliberately deferred with the write-path
   discipline (RETIREMENT Option B).
 - the loaders are constructor-injected; the defaults resolve lazily at
@@ -203,8 +204,9 @@ class SentimentScreen(Screen[None]):
         self._open_index(self._index)
 
     def action_open_report(self) -> None:
-        """The old [O] GALAHAD handoff — deferred to M7 (notify, no-op)."""
-        self.notify("GALAHAD report analysis lands in M7",
+        """The old [O] GALAHAD handoff — deferred until an audited
+        chat lane exists (notify, no-op)."""
+        self.notify("GALAHAD report analysis lands with an audited chat lane",
                     severity="information")
 
     def action_scroll_down(self) -> None:
