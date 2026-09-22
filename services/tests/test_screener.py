@@ -8,8 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # 仓库根（tui/tests 下移一层后由 parent.parent 改三级）
 
-from tui.engine import QuantEngine
-from tui.screener import _dual_ma_metrics, screen_market
+from services.engine import QuantEngine
+from services.screener import _dual_ma_metrics, screen_market
 
 
 def _trending_close(n: int = 500, seed: int = 7) -> pd.Series:

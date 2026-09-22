@@ -8,9 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from tui.brokers import AlpacaBroker, BinanceBroker, BrokerRefused
-from tui.brokers.gate import ensure_trading_allowed, trading_mode
-from tui.brokers.keys import alpaca_credentials, binance_credentials, parse_env_file
+from services.brokers import AlpacaBroker, BinanceBroker, BrokerRefused
+from services.brokers.gate import ensure_trading_allowed, trading_mode
+from services.brokers.keys import alpaca_credentials, binance_credentials, parse_env_file
 
 
 def _config(trading_mode: str = "", alpaca_env: str = "", binance_env: str = "",
@@ -70,7 +70,7 @@ class MainnetRefusalTest(unittest.TestCase):
                 BinanceBroker(cfg, base="https://api.binance.com")
 
     def test_binance_futures_refuses_non_testnet_base(self):
-        from tui.brokers.binance import BinanceFuturesBroker
+        from services.brokers.binance import BinanceFuturesBroker
 
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / "binance.env"
@@ -84,7 +84,7 @@ class MainnetRefusalTest(unittest.TestCase):
                 BinanceFuturesBroker(cfg, base="https://fapi.binance.com")
 
     def test_binance_broker_factory_by_kind(self):
-        from tui.brokers.binance import BinanceFuturesBroker, binance_broker
+        from services.brokers.binance import BinanceFuturesBroker, binance_broker
 
         with tempfile.TemporaryDirectory() as tmp:
             env_file = Path(tmp) / "binance.env"
@@ -175,7 +175,7 @@ class BinanceSigningTest(unittest.TestCase):
             self.assertEqual(price, "29999.99")
 
     def test_futures_notional_key_variant_is_read(self):
-        from tui.brokers.binance import _extract_filters
+        from services.brokers.binance import _extract_filters
 
         filters = _extract_filters([
             {"filterType": "PRICE_FILTER", "tickSize": "0.10"},

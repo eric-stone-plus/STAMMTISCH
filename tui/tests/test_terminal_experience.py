@@ -16,7 +16,7 @@ from textual.widgets import DataTable, Static
 
 from tui.charts import TerminalChartScreen, df_to_candles, render_candles
 from tui.command_palette import WorkstationCommands
-from tui.datafeeds import registry
+from services.datafeeds import registry
 from tui.screens.domains import _watchlist_add, _watchlist_remove
 from tui.screens.feeds import FeedHealthScreen
 
@@ -205,7 +205,7 @@ class WatchlistRuleTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _config(self):
-        from tui.config import Config
+        from services.config import Config
 
         return Config()
 
@@ -264,7 +264,7 @@ class CryptoBoardScreenTest(unittest.TestCase):
              "chg_24h": -2.0, "market_cap": 4e11, "volume": 1.5e10,
              "spark": [], "source": "coingecko"},
         ], "btc_dominance": 55.0}
-        with mock.patch("tui.datafeeds.service.crypto_board",
+        with mock.patch("services.datafeeds.service.crypto_board",
                         return_value=board):
             host_screen = CryptoBoardScreen(engine=None, config=None)
 

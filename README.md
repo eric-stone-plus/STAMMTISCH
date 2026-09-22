@@ -96,7 +96,7 @@ See [`tui/README.md`](tui/README.md).
 
 ### Free-data feed layer
 
-`tui/datafeeds/` is the provider seam for keyless market data, in the
+`services/datafeeds/` is the provider seam for keyless market data, in the
 spirit of the open-source terminal projects (OpenBB's provider routing,
 OpenTerminal's fallback chains): one small module per source
 (`providers/tencent.py`, `yahoo.py`, `stooq.py`, `coingecko.py`,
@@ -110,7 +110,7 @@ journal to `<state_root>/intel/quotes/YYYY-MM-DD.jsonl`.
 
 ### Sandbox broker execution
 
-`tui/brokers/` executes orders against pinned sandbox endpoints only:
+`services/brokers/` executes orders against pinned sandbox endpoints only:
 Alpaca paper (`paper-api.alpaca.markets`) and Binance testnet (spot
 `testnet.binance.vision` or USDⓈ-M futures `testnet.binancefuture.com`,
 selected by config `binance_testnet_kind`). Mainnet endpoints are
@@ -172,17 +172,24 @@ stammtisch              ← unified launcher (TUI / CLI)
 │   │   ├── highball.rs ← HIGHBALL rules plane (Action Packets)
 │   │   └── a2a/        ← A2A v1.0 wire runtime (QUINTE review)
 │   └── cmd.rs          ← CLI surface
+├── services/           ← shared UI-free service lane (M7 true merge)
+│   ├── intake.py       ← verified daily-data product adapter + IntakeDriver
+│   ├── ai_driver.py    ← AI chat driver, OpenAI-compatible (optional)
+│   ├── engine.py       ← quantkit bridge (optional)
+│   ├── chart_server.py ← stdlib chart HTTP server + vendored web assets
+│   ├── datafeeds/      ← provider seam: registry/cache/journal/proxy chains
+│   ├── brokers/        ← sandbox-only broker adapters + trading_mode gate
+│   ├── config.py       ← file config + env overrides (0600)
+│   ├── decide.py       ← weekly decision writer (standalone CLI)
+│   └── symbols.py      ← offline multi-market resolver + zone classify
 ├── tui/                ← Python TUI (textual + rich, nmtui style)
 │   ├── app.py          ← app + global bindings
 │   ├── screens/        ← screen package: dashboard, domains, intake, runs, chat, config
 │   ├── analysis.py     ← quant screens (data/backtest/indicators/portfolio/gates)
-│   ├── intake.py       ← verified daily-data product adapter
 │   ├── widgets.py      ← stage flow, gate cards, HUD
 │   ├── driver.py       ← stammtisch-core CLI driver
-│   ├── engine.py       ← quantkit bridge (optional)
-│   ├── ai_driver.py    ← AI chat driver, OpenAI-compatible (optional)
-│   ├── config.py       ← file config + env overrides (0600)
 │   └── theme.py        ← grayscale CSS
+├── interface/          ← rebuilt monitoring workstation (M0-M6)
 ├── schemas/            ← JSON Schema contracts (versioned)
 ├── pipelines/examples/ ← example pipeline specs
 └── doctrine/examples/  ← example doctrine packs

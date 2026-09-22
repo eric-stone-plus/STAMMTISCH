@@ -16,7 +16,7 @@ from textual.widgets import Button, Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ..driver import StammtischDriver
-from ..ai_driver import AIDriver
+from services.ai_driver import AIDriver
 from ..analysis import _run_async
 from ..widgets import (
     DigestWidget, EventTimeline, GateCard,

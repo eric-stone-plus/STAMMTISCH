@@ -10,7 +10,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from tui import portfolio
+from services import portfolio
 from tui.screens.ledger import LedgerScreen
 
 
@@ -109,7 +109,7 @@ class LedgerScreenSmokeTest(unittest.TestCase):
             portfolio.add_fill(tmp, "buy", "AAPL", "2", "300.0", broker="alpaca")
             screen = LedgerScreen(
                 SimpleNamespace(state_root=tmp), SimpleNamespace())
-            with mock.patch("tui.livefeed.fetch_batch",
+            with mock.patch("services.livefeed.fetch_batch",
                             return_value={"AAPL": {
                                 "last": 320.0, "prev_close": 310.0,
                                 "name": "Apple", "source": "test"}}):

@@ -10,8 +10,11 @@ health counters, the trade-ledger FIFO fold, the EIA energy watchlist,
 the Polymarket Gamma tape, the daily-report sentiment tape — each
 behind injectable transports/paths), plus the shared pinned-proxy
 egress contract the two HTTP twins delegate to (review D extraction).
-Modules here may import the
-snapshot contract; they must never import Textual or reach back into
-the UI or collector layers (``tests/test_boundaries.py`` enforces all
-of it).
+Since the M7 true merge the quant-engine, feeds, and feeds-health
+lanes DELEGATE to the shared top-level ``services`` package instead of
+carrying copies (the one real engine, livefeed chain, and counters
+registry live there). Modules here may import the snapshot contract
+and the shared ``services`` package; they must never import Textual or
+reach back into the UI or collector layers
+(``tests/test_boundaries.py`` enforces all of it).
 """

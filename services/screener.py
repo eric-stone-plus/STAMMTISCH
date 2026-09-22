@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from .engine import QuantEngine
-from .screens.domains import security_zone
+from .symbols import security_zone
 
 # Quality floors a candidate must clear before ranking: enough bars in
 # the window for the slow MA to mean anything, enough trades to prove

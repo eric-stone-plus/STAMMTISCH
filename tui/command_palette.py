@@ -83,7 +83,7 @@ class WorkstationCommands(Provider):
         text = query.strip().upper()
         if not text or " " in text:
             return
-        from .symbols import resolve_query
+        from services.symbols import resolve_query
 
         for row in resolve_query(text)[:6]:
             symbol = str(row.get("symbol") or "")

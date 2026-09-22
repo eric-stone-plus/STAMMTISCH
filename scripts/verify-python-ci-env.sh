@@ -57,7 +57,7 @@ fi
 
 cd "$REPO"
 set +e
-OUT="$("$PY" -m pytest tui/tests/ -q -p no:cacheprovider 2>&1)"
+OUT="$("$PY" -m pytest services/tests/ interface/tests/ tui/tests/ -q -p no:cacheprovider 2>&1)"
 RC=$?
 set -e
 echo "$OUT" | tail -3

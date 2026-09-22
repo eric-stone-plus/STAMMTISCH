@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from tui.brief import curate_items, list_dates, load_daily, load_daily_path
-from tui.symbols import normalize_symbol, resolve_query
+from services.symbols import normalize_symbol, resolve_query
 
 
 def _report(day: str = "20260814") -> dict:

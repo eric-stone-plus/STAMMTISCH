@@ -11,7 +11,7 @@ Routes:
   GET /api/candles?symbol=...&start=...   OHLCV JSON (quantkit)
   GET /api/forecast?symbol=...[&horizon=N] forecast JSON (kronos_cmd)
 
-Run directly (``python -m tui.chart_server [--port PORT]``) or let the
+Run directly (``python -m services.chart_server [--port PORT]``) or let the
 TUI start it on demand when a chart is opened.
 """
 
@@ -653,7 +653,7 @@ def ensure_running(port: int = DEFAULT_PORT) -> int | None:
                 [
                     sys.executable,
                     "-m",
-                    "tui.chart_server",
+                    "services.chart_server",
                     "--port",
                     str(selected),
                     "--ready-token",
@@ -929,7 +929,7 @@ def _install_parent_death_watch(parent_pid: int | None) -> None:
     worker.)
     """
     if parent_pid is None or not hasattr(os, "getppid"):
-        # Manually started (python -m tui.chart_server): operator-managed
+        # Manually started (python -m services.chart_server): operator-managed
         # lifecycle, no parent contract.
         return
     if os.getppid() != parent_pid:

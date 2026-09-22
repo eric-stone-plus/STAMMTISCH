@@ -9,11 +9,12 @@ from textual.binding import Binding
 from textual.system_commands import SystemCommandsProvider
 from textual.widgets import Footer
 
+from services.ai_driver import AIDriver
+from services.config import Config
+from services.engine import QuantEngine
+
 from .command_palette import WorkstationCommands
-from .config import Config
 from .driver import StammtischDriver
-from .ai_driver import AIDriver
-from .engine import QuantEngine
 from .theme import THEME_CSS
 
 
@@ -54,7 +55,7 @@ class StammtischTUI(App):
         # graph. Downstream sentiment may reuse this exact report in-process;
         # it must not rediscover an unverified JSON file by filename.
         self.last_daily_intake_result = None
-        from .intake_job import IntakeSupervisor
+        from services.intake_job import IntakeSupervisor
         self.intake_supervisor = IntakeSupervisor()
 
     def on_mount(self) -> None:
@@ -64,29 +65,33 @@ class StammtischTUI(App):
         # under the state root, like the other intel sidecars.
         if self.driver.state_root:
             from pathlib import Path
-            from .datafeeds.cache import configure_disk_cache
+
+            from services.datafeeds.cache import configure_disk_cache
             configure_disk_cache(Path(self.driver.state_root) / "intel" / "feedcache")
         # Keyless global feeds ride the explicitly configured data proxy,
         # falling back to the egress proxy only when the data proxy
         # refuses connections (a dead primary must not blank the boards).
         # Ambient proxy variables are never consulted (pinned-egress rule).
-        from .datafeeds.http import configure_data_proxy, configure_proxy_fallback
+        from services.datafeeds.http import (
+            configure_data_proxy,
+            configure_proxy_fallback,
+        )
         configure_data_proxy(self.config.data_proxy_url)
         configure_proxy_fallback(self.config.egress_proxy_url)
         self.push_screen(DashboardScreen(self.driver, self.ai, self.engine, self.config))
         # Resident auto-capture: GALAHAD judges from a digest whether a
         # daily-data capture is due; deterministic gates run first.
-        from .intake_steward import steward_for
+        from services.intake_steward import steward_for
         steward_for(self).start(self)
 
     def on_unmount(self) -> None:
         """Reap local core/chart/intake processes owned by this application."""
-        from .intake_steward import steward_for
+        from services.intake_steward import steward_for
         steward_for(self).stop()
         self.driver.close()
-        from .chart_server import stop_owned_server
+        from services.chart_server import stop_owned_server
         stop_owned_server()
-        from .subproc import stop_owned
+        from services.subproc import stop_owned
         stop_owned()
 
     def compose(self) -> ComposeResult:

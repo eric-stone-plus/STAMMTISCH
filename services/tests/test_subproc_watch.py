@@ -16,8 +16,8 @@ import time
 import unittest
 from pathlib import Path
 
-from tui.intake_job import IntakeSupervisor, empty_session, save_session, session_path
-from tui.subproc import main, run_bounded, stop_owned
+from services.intake_job import IntakeSupervisor, empty_session, save_session, session_path
+from services.subproc import main, run_bounded, stop_owned
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,7 +77,7 @@ class SubprocShimTest(unittest.TestCase):
                 "\n".join([
                     "import sys, threading, time",
                     f"sys.path.insert(0, {str(ROOT)!r})",
-                    "from tui.subproc import run_bounded",
+                    "from services.subproc import run_bounded",
                     f"child = {[sys.executable, '-c', child_code]!r}",
                     "threading.Thread(",
                     "    target=lambda: run_bounded("
@@ -189,7 +189,7 @@ class IntakeSupervisorLockTest(unittest.TestCase):
         self.assertFalse(job.is_capturing_session(session["id"]))
 
     def test_finished_session_delete_leaves_no_resurrectable_file(self) -> None:
-        from tui.intake_job import delete_session
+        from services.intake_job import delete_session
 
         job = IntakeSupervisor()
         session = empty_session(self.root, "20260819")

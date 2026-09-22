@@ -14,7 +14,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Static
 from rich.text import Text
 
-from ..engine import QuantEngine
+from services.engine import QuantEngine
 from ..analysis import DataFetchScreen, BacktestScreen, IndicatorsScreen, PortfolioScreen
 from ..analysis import _run_async
 
@@ -122,7 +122,7 @@ def _open_browser_chart(screen: Any, config: Any, symbol: str) -> None:
     """Start the local chart server (first use) and open /chart/<symbol>."""
     import webbrowser
 
-    from ..chart_server import DEFAULT_PORT, ensure_running
+    from services.chart_server import DEFAULT_PORT, ensure_running
 
     configured_port = config.get("chart_port", DEFAULT_PORT) if config else DEFAULT_PORT
 
@@ -265,7 +265,7 @@ class FuturesScreen(Screen):
         return self._assemble(quotes)
 
     def _load_quotes(self) -> dict[str, Any]:
-        from ..engine import _missing_ohlcv, _normalize_symbol
+        from services.engine import _missing_ohlcv, _normalize_symbol
 
         quotes: dict[str, dict[str, Any]] = {}
         if self._symbols:
@@ -1200,7 +1200,7 @@ def security_watchlist(config: Any, state_root: str | None = None) -> list[str]:
     still flow in, so scans stay visible. Empty ``security_symbols`` is a
     decide.py full-market-screen signal, not an empty SECURITY board.
     """
-    from ..engine import _normalize_symbol
+    from services.engine import _normalize_symbol
 
     if config is None:
         return []
@@ -1244,7 +1244,7 @@ def security_zone(symbol: str) -> str:
 
 def _watchlist_add(config: Any, value: str) -> tuple[str | None, str, bool]:
     """Resolve + anchor one symbol. Returns (symbol, message, duplicate)."""
-    from ..engine import _normalize_symbol
+    from services.engine import _normalize_symbol
 
     symbol = _normalize_symbol(str(value or "").strip().upper())
     if not symbol:
@@ -1378,7 +1378,7 @@ class SecurityScreen(Screen):
         """Poll live quotes for the visible zone; refreshes in-place."""
         if not self.is_mounted:
             return
-        from .. import livefeed
+        from services import livefeed
 
         zone = self._zones[self._zone_idx] if self._zones else ""
         if not zone or zone not in ("A-SHARE", "US"):
@@ -1397,7 +1397,7 @@ class SecurityScreen(Screen):
         _run_async(self, _work, self._apply_live, dedup_key="security-live")
 
     def _apply_live(self, result: dict[str, Any]) -> None:
-        from .. import livefeed
+        from services import livefeed
 
         quotes = result.get("quotes") or {}
         if not quotes:
@@ -1406,7 +1406,7 @@ class SecurityScreen(Screen):
         # Time & sales telemetry under the state root: best-effort appends
         # that must never disturb the board render path.
         try:
-            from ..datafeeds import journal
+            from services.datafeeds import journal
 
             root = getattr(self.driver, "state_root", None)
             if root:
@@ -1508,7 +1508,7 @@ class SecurityScreen(Screen):
     def _load(self) -> dict[str, Any]:
         from concurrent.futures import ThreadPoolExecutor
 
-        from ..engine import _missing_ohlcv, _normalize_symbol
+        from services.engine import _missing_ohlcv, _normalize_symbol
 
         quotes: dict[str, dict[str, Any]] = {}
         if not self._symbols:

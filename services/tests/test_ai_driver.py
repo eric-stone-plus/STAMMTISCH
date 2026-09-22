@@ -9,8 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tui.config import AI_API_KEY_ENV_VARS, DEFAULT_CONFIG, Config
-from tui.ai_driver import (
+from services.config import AI_API_KEY_ENV_VARS, DEFAULT_CONFIG, Config
+from services.ai_driver import (
     AI_MAX_TOKENS,
     AI_MODEL,
     SYSTEM_PROMPT,

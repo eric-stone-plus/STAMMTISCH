@@ -3,6 +3,13 @@
 nmtui-style terminal workstation for STAMMTISCH — pipeline runs, evidence
 inspection, quant engine commands, and optional AI analysis in one screen.
 
+Since the M7 true merge the UI-free modules this front end consumes
+live in the shared top-level `services/` package (intake validator and
+driver, AI transport, quant engine, chart server, datafeeds, brokers,
+config, symbols, history, subproc, decide, the intake supervisor and
+steward); this tree keeps the screens, widgets, themes, and the
+core-CLI driver. Nothing moved behaviorally — imports did.
+
 ## Quick start
 
 ```sh
@@ -76,8 +83,8 @@ depend on a particular host, port, or checkout path.
 ## K-line timeseries (browser)
 
 Not MCP. The chart is TradingView Lightweight Charts vendored under
-`tui/static/` (Apache-2.0). A local stdlib HTTP server
-(`tui/chart_server.py`) feeds it OHLCV from quantkit; `k` starts that
+`services/static/` (Apache-2.0). A local stdlib HTTP server
+(`services/chart_server.py`) feeds it OHLCV from quantkit; `k` starts that
 server on loopback using an OS-assigned port and opens the page. An explicit
 `chart_port` may be configured when a stable local address is required.
 The page shows candlesticks (THS colors: red up / green down), volume,

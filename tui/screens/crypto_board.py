@@ -89,7 +89,7 @@ class CryptoBoardScreen(Screen):
 
     def action_refresh(self) -> None:
         def _work() -> dict[str, Any]:
-            from ..datafeeds import service
+            from services.datafeeds import service
 
             return service.crypto_board(limit=30)
 
@@ -150,7 +150,7 @@ class CryptoBoardScreen(Screen):
 
     # ── batch screener (hundreds of pairs) ──────────────────────────
     def action_screener(self) -> None:
-        from .. import batch_screener
+        from services import batch_screener
 
         self._set_status("  screener running (hundreds of pairs, ~2-5 min)…")
 

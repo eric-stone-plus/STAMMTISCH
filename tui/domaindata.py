@@ -22,7 +22,7 @@ import json
 import math
 from typing import Any
 
-from .subproc import run_bounded
+from services.subproc import run_bounded
 
 BOARD_SCHEMA = "mktdaily.sgx-board.v1"
 SPVAL_SCHEMA = "stammtisch.spval-board.v1"

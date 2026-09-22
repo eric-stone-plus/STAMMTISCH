@@ -1,10 +1,10 @@
-"""Multi-market ticker resolve — shipped tui.symbols, no network."""
+"""Multi-market ticker resolve — shipped services.symbols, no network."""
 
 from __future__ import annotations
 
 import unittest
 
-from tui.symbols import normalize_symbol, resolve_query, search_payload
+from services.symbols import normalize_symbol, resolve_query, search_payload
 
 
 class NormalizeSymbolTest(unittest.TestCase):

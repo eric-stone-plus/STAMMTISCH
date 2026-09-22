@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from .datafeeds.http import get_json
+from services.datafeeds.http import get_json
 
 SZSE_ENDPOINT = "http://www.szse.cn/api/report/ShowReport/data"
 SZSE_SOURCE = "SZSE announcements API"

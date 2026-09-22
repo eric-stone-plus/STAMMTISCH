@@ -8,7 +8,7 @@ from unittest import mock
 
 import pandas as pd
 
-from tui.engine import QuantEngine, _missing_ohlcv, _normalize_symbol
+from services.engine import QuantEngine, _missing_ohlcv, _normalize_symbol
 
 
 class FromConfigTest(unittest.TestCase):

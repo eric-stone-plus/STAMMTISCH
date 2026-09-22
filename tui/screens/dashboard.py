@@ -15,8 +15,8 @@ from rich.text import Text
 from textual.widgets.option_list import Option
 
 from ..driver import StammtischDriver
-from ..ai_driver import AIDriver
-from ..engine import QuantEngine
+from services.ai_driver import AIDriver
+from services.engine import QuantEngine
 from ..analysis import DataFetchScreen, BacktestScreen, IndicatorsScreen, PortfolioScreen, GatesScreen
 from ..analysis import _run_async
 from ..widgets import (
@@ -322,7 +322,7 @@ class DashboardScreen(Screen):
             return ""
 
     def _intake_session_rows(self) -> list[dict[str, str]]:
-        from ..intake_job import list_sessions, supervisor_for
+        from services.intake_job import list_sessions, supervisor_for
 
         tz = self._display_tz()
         root = ""
@@ -797,7 +797,7 @@ class DashboardScreen(Screen):
             def _work() -> dict[str, Any]:
                 deleted = 0
                 failed: list[str] = []
-                from ..intake_job import delete_session, supervisor_for
+                from services.intake_job import delete_session, supervisor_for
 
                 root = str(self.config.workspace_root or "") if self.config else ""
                 job = supervisor_for(self.app)
@@ -856,7 +856,7 @@ class DashboardScreen(Screen):
         ))
 
     def _delete_intake_session(self, session_id: str) -> None:
-        from ..intake_job import delete_session, supervisor_for
+        from services.intake_job import delete_session, supervisor_for
 
         job = supervisor_for(self.app)
         if job.is_capturing_session(session_id):
@@ -1032,7 +1032,7 @@ class DashboardScreen(Screen):
         chart server on first use)."""
         import webbrowser
 
-        from ..chart_server import DEFAULT_PORT, ensure_running
+        from services.chart_server import DEFAULT_PORT, ensure_running
 
         configured_port = self.config.get("chart_port", DEFAULT_PORT) if self.config else DEFAULT_PORT
 

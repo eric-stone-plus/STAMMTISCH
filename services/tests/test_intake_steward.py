@@ -8,7 +8,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from tui.intake_steward import IntakeSteward
+from services.intake_steward import IntakeSteward
 
 
 def _app(tmp, *, intake_cmd=None, capturing=False, ai_available=False, plain=False):
@@ -39,7 +39,7 @@ class IntakeStewardTest(unittest.TestCase):
             steward = IntakeSteward()
             app = _app(tmp, intake_cmd="http://127.0.0.1:1/", capturing=True)
             with mock.patch(
-                "tui.intake_steward.supervisor_for",
+                "services.intake_steward.supervisor_for",
                 return_value=SimpleNamespace(capturing=True),
             ):
                 self.assertEqual(
@@ -96,9 +96,9 @@ class IntakeStewardTest(unittest.TestCase):
                 start=lambda a, c, date=None: started.append(date),
             )
             with mock.patch(
-                "tui.intake_steward.supervisor_for", return_value=fake_supervisor
+                "services.intake_steward.supervisor_for", return_value=fake_supervisor
             ), mock.patch(
-                "tui.intake_steward._firecrawl_reachable", return_value=True
+                "services.intake_steward._firecrawl_reachable", return_value=True
             ), mock.patch.object(
                 IntakeSteward,
                 "ask_galahad",

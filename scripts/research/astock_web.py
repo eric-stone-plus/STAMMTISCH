@@ -28,7 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tui.config import Config  # noqa: E402
+from services.config import Config  # noqa: E402
 
 PORT = 8787
 REFRESH_SECONDS = 1800

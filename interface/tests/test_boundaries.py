@@ -7,7 +7,10 @@ a violation fails loudly with the offending file:line:
     ``tui/`` tree. The old package stays live until its M5 retirement,
     but this package must never reach into it statically.
 (b) ``interface/services/`` is the service lane: it imports the
-    snapshot contract and stdlib only — never ``interface.app`` /
+    snapshot contract, the stdlib, and — since the M7 true merge —
+    the SHARED top-level ``services`` package (the one real
+    implementation behind the reconciled quant-engine / feeds /
+    feeds-health lanes); never ``interface.app`` /
     ``interface.screens`` / ``interface.render`` (reverse dependency)
     and never ``interface.collectors`` (collectors consume services,
     not the other way) nor Textual (no UI types in service code).

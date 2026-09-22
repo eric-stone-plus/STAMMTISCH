@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tui.validated_bars import (
+from services.validated_bars import (
     MANIFEST_SCHEMA,
     ManifestLookupError,
     ManifestValidationError,

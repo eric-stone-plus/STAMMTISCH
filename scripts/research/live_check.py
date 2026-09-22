@@ -4,7 +4,7 @@ Uses only keyless public market-data endpoints. Trading APIs are NOT
 touched. Two backtest paths are exercised:
 
 - engine path: QuantEngine -> quantkit.data (the TUI's verified seam)
-- free-feed path: tui.datafeeds daily/crypto candles -> quantkit.backtest
+- free-feed path: services.datafeeds daily/crypto candles -> quantkit.backtest
   (same run_long_only accounting, explicitly labeled unverified feed)
 """
 
@@ -19,15 +19,15 @@ sys.path.insert(0, str(_P(__file__).resolve().parents[1]))
 
 import pandas as pd
 
-from tui import livefeed
-from tui.config import Config
-from tui.datafeeds import journal, registry, service
-from tui.datafeeds.http import configure_data_proxy
+from services import livefeed
+from services.config import Config
+from services.datafeeds import journal, registry, service
+from services.datafeeds.http import configure_data_proxy
 
 _config = Config()
 configure_data_proxy(_config.data_proxy_url)
 print(f"data proxy configured: {'yes' if _config.data_proxy_url else 'no (direct only)'}")
-from tui.engine import QuantEngine
+from services.engine import QuantEngine
 
 print("=" * 72)
 print(f"STAMMTISCH live full test run — {datetime.now().isoformat(timespec='seconds')}")
@@ -76,10 +76,10 @@ with tempfile.TemporaryDirectory() as tmp:
           f"  ({tape[0]['source'] if tape else 'n/a'})")
 
 # ── 5. Backtests across the full universe ────────────────────────────
-from tui.symbols import _NAMES
+from services.symbols import _NAMES
 
 universe = [symbol for symbol, _market, _name in _NAMES] + ["BZ=F"]
-engine = QuantEngine(data_dir=__import__("tui.config", fromlist=["Config"]).Config().data_dir)
+engine = QuantEngine(data_dir=__import__("services.config", fromlist=["Config"]).Config().data_dir)
 
 pilot = engine.run_backtest("AAPL", strategy="dual_ma", start="2023-01-01")
 use_engine = pilot.get("ok", False)

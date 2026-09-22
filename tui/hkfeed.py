@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 import pandas as pd
 
-from .datafeeds.http import get_json
+from services.datafeeds.http import get_json
 
 KLINE_ENDPOINT = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
 KLINE_SOURCE = "Tencent fqkline (qfq)"

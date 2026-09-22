@@ -21,4 +21,4 @@ TimeoutStartSec=2700
 # Mon-Fri A-share/HK close plus the US Friday close on Saturday. Sunday has
 # no new closes anywhere since the Saturday run — exit cleanly instead of
 # re-scanning stale data. Exchange holidays are out of scope here.
-ExecStart=/usr/bin/bash -c 'if [ "$(date +%%u)" = "7" ]; then echo "decide: Sunday, no new closes since Saturday run — skipping"; exit 0; fi; exec %h/.local/opt/STAMMTISCH/.venv/bin/python -m tui.decide'
+ExecStart=/usr/bin/bash -c 'if [ "$(date +%%u)" = "7" ]; then echo "decide: Sunday, no new closes since Saturday run — skipping"; exit 0; fi; exec %h/.local/opt/STAMMTISCH/.venv/bin/python -m services.decide'

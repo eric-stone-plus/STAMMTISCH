@@ -8,7 +8,7 @@ import os
 import tempfile
 import unittest
 
-from tui.timeseries import TimeseriesDriver
+from services.timeseries import TimeseriesDriver
 
 
 def _fake_cmd(body: str, exit_code: int = 0) -> str:

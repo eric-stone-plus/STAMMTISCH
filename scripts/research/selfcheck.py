@@ -29,8 +29,8 @@ def check(name: str, fn):
 
 
 def main() -> int:
-    from tui.config import Config
-    from tui.datafeeds.http import configure_data_proxy, configure_proxy_fallback
+    from services.config import Config
+    from services.datafeeds.http import configure_data_proxy, configure_proxy_fallback
 
     config = Config()
     configure_data_proxy(config.data_proxy_url)
@@ -38,20 +38,20 @@ def main() -> int:
     root = config.state_root or str(Path.home() / ".local/share/stammtisch")
 
     def quotes():
-        from tui.datafeeds import service
+        from services.datafeeds import service
         q = service.quotes(["AAPL", "600519.SS"])
         assert q, "no quotes served"
         assert all("source" in v for v in q.values())
         return f"{len(q)} quotes " + ",".join(v['source'].split()[0] for v in q.values())
 
     def candles():
-        from tui.datafeeds import service
+        from services.datafeeds import service
         bars = service.daily_candles("AAPL")
         assert len(bars) > 100
         return f"{len(bars)} bars to {bars[-1]['time']}"
 
     def crypto_board():
-        from tui.datafeeds import service
+        from services.datafeeds import service
         board = service.crypto_board(limit=30)
         assert len(board["rows"]) >= 10
         return f"{len(board['rows'])} coins, dom {board['btc_dominance'] and round(board['btc_dominance'],1)}%"
@@ -64,14 +64,14 @@ def main() -> int:
         return str(states)
 
     def alpaca_account():
-        from tui.brokers.alpaca import AlpacaBroker
+        from services.brokers.alpaca import AlpacaBroker
         acct = AlpacaBroker(config).account()
         assert acct.get("status") == "ACTIVE"
         orders = AlpacaBroker(config).open_orders()
         return f"equity {float(acct['equity']):,.0f}, open orders {len(orders)}"
 
     def binance_account():
-        from tui.brokers.binance import binance_broker
+        from services.brokers.binance import binance_broker
         b = binance_broker(config)
         acct = b.account()
         positions = b.positions()
@@ -149,7 +149,7 @@ def main() -> int:
             l.split(":")[0] for l in lines) + ")"
 
     def engine_topk():
-        from tui.engine import QuantEngine
+        from services.engine import QuantEngine
         engine = QuantEngine.from_config(config)
         assert engine.quantkit_tree, "evolved quantkit tree not loaded"
         return "tree: " + engine.quantkit_tree[-30:]

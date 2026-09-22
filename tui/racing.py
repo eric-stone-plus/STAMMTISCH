@@ -10,7 +10,7 @@ advice.
 from __future__ import annotations
 
 import json
-from .subproc import run_bounded
+from services.subproc import run_bounded
 from typing import Any
 
 from textual.app import ComposeResult

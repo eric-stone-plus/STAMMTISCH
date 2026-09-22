@@ -1,23 +1,23 @@
-"""Feeds lane tests (M4): the services livefeed-contract copy and the
+"""Feeds lane tests: the delegated livefeed contract and the
 collector-side provider. The real network path is NEVER exercised here —
 every fetch is a stub; the pin proves QuoteSnapshot rows with per-symbol
-ages, TTL batching, and the keep-last-good STALE behavior."""
+ages, TTL batching, and the keep-last-good STALE behavior. Since M7 the
+provider chain lives once in the shared services package (its parsers
+are pinned by services/tests/test_datafeeds.py); here we pin the
+DELEGATION and the interface-native age normalization."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from unittest import mock
 
 import pytest
 
 import interface.collectors.feeds as feeds_mod
+import interface.services.feeds as services_feeds
 from interface.collectors.feeds import FeedsCollector
 from interface.collectors.session import CollectorSession
-from interface.services.feeds import (
-    CN_TZ,
-    parse_batch,
-    quote_age_s,
-    to_tencent_code,
-)
+from interface.services.feeds import CN_TZ, quote_age_s
 from interface.snapshot import QUOTE_STALE_S, WorkstationSnapshot, workstation_flags
 
 QT = "Tencent qt.gtimg.cn"
@@ -116,42 +116,27 @@ def test_no_prev_close_is_zero_change_and_undatable_ages_from_fetch() -> None:
     assert row.age_s == pytest.approx(30.0)  # undatable → age from fetch
 
 
-# ── services.feeds contract copy (offline units) ──────────────────────
+# ── the M7 delegation seam: one chain, no parser copy ────────────────
 
 
-def test_to_tencent_code_mapping() -> None:
-    assert to_tencent_code("HSI") == "hkHSI"
-    assert to_tencent_code("600519.SS") == "sh600519"
-    assert to_tencent_code("000001.SZ") == "sz000001"
-    assert to_tencent_code("0700.HK") == "hk00700"
-    assert to_tencent_code("QQQ") == "usQQQ"
-    assert to_tencent_code("BRK-B.X") is None  # unmappable stays absent
+def test_fetch_batch_delegates_to_the_shared_livefeed() -> None:
+    """The lane calls services.livefeed.fetch_batch, nothing local.
+
+    The M7 reconciliation retired the M4 parser copy; this pin keeps it
+    retired — a re-inlined parser or a silent second chain shows up as
+    a call that never reaches the shared module.
+    """
+    rows = {"HSI": _tencent_row()}
+    with mock.patch("services.livefeed.fetch_batch",
+                    return_value=rows) as shared:
+        out = services_feeds.fetch_batch(["HSI"], timeout=4.0)
+    assert out == rows
+    shared.assert_called_once_with(["HSI"], timeout=4.0)
 
 
-def _batch_body() -> str:
-    fields = [""] * 46
-    fields[1] = "SH COMP"
-    fields[3] = "3300.50"
-    fields[4] = "3280.00"
-    fields[5] = "3290.00"
-    fields[6] = "123000"
-    fields[30] = "20260922150000"
-    fields[33] = "3310.00"
-    fields[34] = "3270.00"
-    return f'v_sh0000001="{"~".join(fields)}";'
-
-
-def test_parse_batch_field_map() -> None:
-    rows = parse_batch(_batch_body())
-    row = rows["sh0000001"]
-    assert row["last"] == 3300.50 and row["prev_close"] == 3280.00
-    assert row["high"] == 3310.00 and row["low"] == 3270.00
-    assert row["time"] == "20260922150000"
-    assert row["source"] == QT
-    # Guard clauses: short payloads and priceless rows are dropped.
-    assert parse_batch('v_sh0000002="1~2~3"') == {}
-    fields = [""] * 46
-    assert parse_batch(f'v_sh0000003={"~".join(fields)}') == {}
+def test_fetch_batch_total_failure_is_empty() -> None:
+    with mock.patch("services.livefeed.fetch_batch", return_value={}):
+        assert services_feeds.fetch_batch(["NOPE"]) == {}
 
 
 def test_quote_age_s_normalizes_every_provider_format() -> None:

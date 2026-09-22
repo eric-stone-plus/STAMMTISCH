@@ -16,7 +16,7 @@ from textual.widgets import Input, OptionList, Static, TextArea
 from rich.text import Text
 from textual.widgets.option_list import Option
 
-from ..ai_driver import AIDriver, ChatResponse
+from services.ai_driver import AIDriver, ChatResponse
 
 import logging
 
@@ -336,7 +336,7 @@ class ChatScreen(Screen):
         if not hasattr(self.ai, "history"):
             return
         try:
-            from ..ai_driver import SYSTEM_PROMPT, ChatMessage
+            from services.ai_driver import SYSTEM_PROMPT, ChatMessage
             messages = [ChatMessage("system", SYSTEM_PROMPT)]
             for turn in self._session.get("turns") or []:
                 if not isinstance(turn, dict):

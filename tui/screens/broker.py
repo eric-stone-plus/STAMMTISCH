@@ -19,10 +19,10 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Input, Static
 
 from ..analysis import _run_async
-from ..brokers import (AlpacaBroker, BinanceBroker, BrokerError,
+from services.brokers import (AlpacaBroker, BinanceBroker, BrokerError,
                        BrokerRefused)
-from ..brokers.binance import binance_broker
-from ..brokers.gate import trading_mode
+from services.brokers.binance import binance_broker
+from services.brokers.gate import trading_mode
 from ..widgets import CYAN, DIM, GREEN, GRAY, RED, WHITE
 
 

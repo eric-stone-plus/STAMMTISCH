@@ -233,7 +233,7 @@ class TerminalChartScreen(Screen):
                     candles = df_to_candles(result.get("df"))
                     if candles:
                         return candles, "quantkit daily pipeline (verified)"
-            from .datafeeds import service
+            from services.datafeeds import service
             try:
                 return service.daily_candles(self.symbol), (
                     "free feed chain (stooq → yahoo) — unverified")

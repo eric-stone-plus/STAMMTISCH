@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tui.intake import IntakeDriver
+from services.intake import IntakeDriver
 
 
 DATE = "20260814"
@@ -568,7 +568,7 @@ class IntakeDriverTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def run_completed(self, completed: dict, date: str | None = DATE):
-        with mock.patch("tui.intake.run_bounded", return_value=completed) as invoked:
+        with mock.patch("services.intake.run_bounded", return_value=completed) as invoked:
             result = self.driver.run(date)
         return result, invoked
 
@@ -595,7 +595,7 @@ class IntakeDriverTest(unittest.TestCase):
         result, invoked = self.run_completed(self.fixture.completed(), None)
         self.assertTrue(result.ok, result.error)
         self.assertNotIn("--date", invoked.call_args.args[0])
-        with mock.patch("tui.intake.run_bounded") as never:
+        with mock.patch("services.intake.run_bounded") as never:
             invalid = self.driver.run("20260230")
         self.assertFalse(invalid.ok)
         self.assertEqual(invalid.returncode, 3)
@@ -618,7 +618,7 @@ class IntakeDriverTest(unittest.TestCase):
         self.assertIn("capture failed", nonzero.error or "")
 
         with mock.patch(
-            "tui.intake.run_bounded",
+            "services.intake.run_bounded",
             return_value={"ok": False, "error": "daily intake command timed out after 12s",
                           "stdout": b"", "stderr": b"", "returncode": None},
         ):

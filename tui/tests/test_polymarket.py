@@ -312,13 +312,13 @@ class FrameworkLanguageTest(unittest.TestCase):
             "tui/app.py",
             "tui/analysis.py",
             "tui/config_cli.py",
-            "tui/ai_driver.py",
+            "services/ai_driver.py",
             "tui/polymarket.py",
             "tui/screens/__init__.py",
             "tui/screens/chat.py",
             "tui/screens/dashboard.py",
             "tui/theme.py",
-            "tui/web_chart.html",
+            "services/web_chart.html",
             "tui/widgets.py",
         )
         offenders = []
@@ -333,7 +333,7 @@ class FrameworkLanguageTest(unittest.TestCase):
     def test_public_framework_has_no_private_infrastructure_markers(self) -> None:
         root = Path(__file__).resolve().parents[2]
         framework_files = (
-            "tui/config.py",
+            "services/config.py",
             "tui/polymarket.py",
             "tui/screens/__init__.py",
             "tui/screens/chat.py",

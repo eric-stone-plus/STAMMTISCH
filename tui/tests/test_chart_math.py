@@ -1,4 +1,4 @@
-"""Drive the shipped chart math (tui/static/chart_math.js) via Node.
+"""Drive the shipped chart math (services/static/chart_math.js) via Node.
 
 The browser page loads this file; these tests require the same file.
 They do not re-implement resample / legend / pane formulas.
@@ -13,8 +13,8 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[2]
-CHART_MATH = REPO / "tui" / "static" / "chart_math.js"
-WEB_CHART = REPO / "tui" / "web_chart.html"
+CHART_MATH = REPO / "services" / "static" / "chart_math.js"
+WEB_CHART = REPO / "services" / "web_chart.html"
 
 
 def _call(fn: str, *args):

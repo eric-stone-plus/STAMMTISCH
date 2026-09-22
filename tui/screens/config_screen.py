@@ -13,10 +13,10 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Input, Select, Static
 from rich.text import Text
 
-from ..config import AI_PROFILES, ai_profile_for_base_url
+from services.config import AI_PROFILES, ai_profile_for_base_url
 from ..driver import StammtischDriver
-from ..ai_driver import AIDriver
-from ..engine import QuantEngine
+from services.ai_driver import AIDriver
+from services.engine import QuantEngine
 
 import logging
 

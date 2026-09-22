@@ -10,9 +10,9 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Static
 
-from ..datafeeds import cache as dfcache
-from ..datafeeds import journal as dfjournal
-from ..datafeeds.registry import all_stats
+from services.datafeeds import cache as dfcache
+from services.datafeeds import journal as dfjournal
+from services.datafeeds.registry import all_stats
 
 
 class FeedHealthScreen(Screen):

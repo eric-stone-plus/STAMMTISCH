@@ -19,7 +19,7 @@ from rich.text import Text
 from textual.widgets import DataTable, Footer, Static
 
 from ..analysis import _run_async
-from .. import portfolio
+from services import portfolio
 from ..screens.broker import route_symbol
 from ..widgets import DIM, GREEN, GRAY, RED
 
@@ -82,7 +82,7 @@ class LedgerScreen(Screen):
             quotes: dict[str, dict[str, Any]] = {}
             if symbols:
                 try:
-                    from .. import livefeed
+                    from services import livefeed
 
                     quotes = livefeed.fetch_batch(symbols)
                 except Exception:

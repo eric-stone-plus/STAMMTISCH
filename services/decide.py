@@ -37,7 +37,7 @@ from typing import Any
 
 from .config import Config
 from .engine import QuantEngine
-from .screens.domains import security_zone
+from .symbols import security_zone
 
 DECISION_VERSION = 1
 KRONOS_TIMEOUT = 150

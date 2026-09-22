@@ -442,7 +442,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def needles_for_symbol(raw: str) -> set[str]:
-    from .symbols import normalize_symbol, resolve_query
+    from services.symbols import normalize_symbol, resolve_query
 
     sym = normalize_symbol(raw or "")
     out = {raw.lower(), sym.lower()}
@@ -485,7 +485,7 @@ def symbol_tape(symbol: str, brief: Any, markets: Any) -> dict[str, Any]:
     Empty hits → stance=watch, n=0. Hype on that name still cannot
     become constructive.
     """
-    from .symbols import normalize_symbol
+    from services.symbols import normalize_symbol
 
     sym = normalize_symbol(symbol or "")
     needles = needles_for_symbol(symbol)

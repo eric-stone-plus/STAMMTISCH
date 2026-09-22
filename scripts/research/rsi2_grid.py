@@ -16,9 +16,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tui.config import Config  # noqa: E402
-from tui.datafeeds import http as dfhttp  # noqa: E402
-from tui.datafeeds.http import (  # noqa: E402
+from services.config import Config  # noqa: E402
+from services.datafeeds import http as dfhttp  # noqa: E402
+from services.datafeeds.http import (  # noqa: E402
     configure_data_proxy, configure_proxy_fallback)
 
 

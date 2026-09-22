@@ -12,8 +12,8 @@ from typing import Any
 
 import pandas as pd
 
-from .brokers.alpaca import AlpacaBroker
-from .datafeeds.http import configure_data_proxy, configure_proxy_fallback
+from services.brokers.alpaca import AlpacaBroker
+from services.datafeeds.http import configure_data_proxy, configure_proxy_fallback
 
 DEFAULT_SYMBOLS = ("SPY", "QQQ")
 

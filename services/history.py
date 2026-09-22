@@ -333,3 +333,26 @@ class HistoryStore:
             sha256=str(row["sha256"]),
             ingested_at=float(row["ingested_at"]),
         )
+
+
+def history_store(config: Any) -> tuple["HistoryStore | None", str | None]:
+    """Build the report-history store and index both origins.
+
+    Relocated from tui/screens/daily_intake.py at the M7 true merge:
+    the screens facade re-exported this private helper as the de-facto
+    inter-module API (steward, intake job, brief, dashboard all called
+    it), so the accessor belongs next to the store it builds. Never
+    raises: an index failure is reported, not thrown, so one corrupted
+    artifact cannot wedge a screen.
+    """
+    if config is None:
+        return None, "report history is not configured"
+    try:
+        store = HistoryStore(config.history_db)
+        store.index_all(
+            config.workspace_root,
+            str(config.get("reports_root") or "") or None,
+        )
+    except Exception as exc:
+        return None, str(exc)
+    return store, None

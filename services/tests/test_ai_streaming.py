@@ -9,8 +9,8 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from tui import ai_driver
-from tui.ai_driver import AIDriver, ChatResponse, fallback_profiles_from_config
+from services import ai_driver
+from services.ai_driver import AIDriver, ChatResponse, fallback_profiles_from_config
 
 
 class _FakeStream:

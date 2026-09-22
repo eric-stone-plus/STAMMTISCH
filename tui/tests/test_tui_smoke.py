@@ -220,7 +220,7 @@ class TuiSmokeTest(unittest.TestCase):
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
-        from tui.intake_job import (
+        from services.intake_job import (
             observe_workspace,
             render_progress,
             report_session_date,
@@ -253,7 +253,7 @@ class TuiSmokeTest(unittest.TestCase):
             self.assertIsNone(report_session_date(pre_open))
             self.assertIsNone(report_session_date(after_open))
             with mock.patch(
-                "tui.intake_job._calendar_session_date", return_value="20260817"
+                "services.intake_job._calendar_session_date", return_value="20260817"
             ) as calendar:
                 self.assertEqual(report_session_date(pre_open), "20260817")
                 calendar.assert_called_once()
@@ -263,7 +263,7 @@ class TuiSmokeTest(unittest.TestCase):
             ))
             # ...and an empty date means "the product certifies it", never
             # a guess.
-            from tui.intake_job import empty_session
+            from services.intake_job import empty_session
 
             with tempfile.TemporaryDirectory() as tmp:
                 session = empty_session(tmp)
@@ -1145,7 +1145,7 @@ class TuiSmokeTest(unittest.TestCase):
                         opened = []
                         with mock.patch("webbrowser.open",
                                         lambda url: opened.append(url) or True), \
-                             mock.patch("tui.chart_server.ensure_running",
+                             mock.patch("services.chart_server.ensure_running",
                                         return_value=9876):
                             # Exchange-settled row → the SGX: chart symbol.
                             await pilot.press("right")
@@ -1221,7 +1221,7 @@ class TuiSmokeTest(unittest.TestCase):
                     opened = []
                     with mock.patch("webbrowser.open",
                                     lambda url: opened.append(url) or True), \
-                         mock.patch("tui.chart_server.ensure_running",
+                         mock.patch("services.chart_server.ensure_running",
                                     return_value=9876):
                         await pilot.press("k")
                         for _ in range(40):
@@ -2002,7 +2002,7 @@ class TuiSmokeTest(unittest.TestCase):
             }), encoding="utf-8")
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                with mock.patch("tui.intake.IntakeDriver.run", _slow_run):
+                with mock.patch("services.intake.IntakeDriver.run", _slow_run):
                     async with app.run_test(size=(120, 40)) as pilot:
                         await pilot.pause()
                         app.push_screen(DailyIntakeScreen(app.screen.config, auto_start=False))
@@ -2035,7 +2035,7 @@ class TuiSmokeTest(unittest.TestCase):
                         self.assertTrue(app.intake_supervisor.result.ok)
 
     async def _chat_page_scenario(self) -> None:
-        from tui.ai_driver import AIDriver
+        from services.ai_driver import AIDriver
         from tui.screens import ChatScreen
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2117,7 +2117,7 @@ class TuiSmokeTest(unittest.TestCase):
                     )
 
     async def _intake_rows_delete_scenario(self) -> None:
-        from tui.intake_job import (
+        from services.intake_job import (
             empty_session,
             save_session,
             session_path,
@@ -2325,7 +2325,7 @@ class TuiSmokeTest(unittest.TestCase):
                     await pilot.pause()
                     # Enter hands the captured day to GALAHAD: a real chat
                     # turn seeded with the report digest, never a report view.
-                    from tui.ai_driver import ChatResponse
+                    from services.ai_driver import ChatResponse
                     from tui.screens import ChatScreen
 
                     def _fake_chat(query, context=None):
@@ -2459,7 +2459,7 @@ class TuiSmokeTest(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                with mock.patch("tui.intake.IntakeDriver.run", return_value=accepted) as run_spy:
+                with mock.patch("services.intake.IntakeDriver.run", return_value=accepted) as run_spy:
                     async with app.run_test(size=(120, 40)) as pilot:
                         await pilot.pause()
                         app.screen.action_open_intake()
@@ -2604,7 +2604,7 @@ class TuiSmokeTest(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {"STAMMTISCH_CONFIG": str(cfg_path)}):
                 app = StammtischTUI(binary="/nonexistent/stammtisch-core", skip_boot=True)
-                with mock.patch("tui.intake.IntakeDriver.run", return_value=rejected):
+                with mock.patch("services.intake.IntakeDriver.run", return_value=rejected):
                     async with app.run_test(size=(120, 40)) as pilot:
                         await pilot.pause()
                         app.screen.action_open_intake()
@@ -2890,7 +2890,7 @@ class ChatScreenTest(unittest.TestCase):
         asyncio.run(self._chat_input_scenario())
 
     async def _chat_input_scenario(self) -> None:
-        from tui.ai_driver import ChatResponse
+        from services.ai_driver import ChatResponse
         from tui.screens import ChatInput, ChatScreen
 
         class _FakeAI:
@@ -2934,7 +2934,7 @@ class ChatScreenTest(unittest.TestCase):
 
     async def _chat_thinking_scenario(self) -> None:
         import time as _time
-        from tui.ai_driver import ChatResponse
+        from services.ai_driver import ChatResponse
         from tui.screens import ChatInput, ChatScreen
 
         class _SlowAI:
@@ -2968,7 +2968,7 @@ class ChatScreenTest(unittest.TestCase):
     async def _chat_serialization_scenario(self) -> None:
         import threading as _threading
 
-        from tui.ai_driver import ChatResponse
+        from services.ai_driver import ChatResponse
         from tui.screens import ChatInput, ChatScreen
 
         class _BlockingAI:
@@ -3045,7 +3045,7 @@ class ChatScreenTest(unittest.TestCase):
         asyncio.run(self._chat_history_session_scenario())
 
     async def _chat_history_session_scenario(self) -> None:
-        from tui.ai_driver import ChatResponse
+        from services.ai_driver import ChatResponse
         from tui.screens import AskSessionScreen, ChatInput, ChatScreen
 
         class _FakeAI:

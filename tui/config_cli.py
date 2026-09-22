@@ -24,7 +24,7 @@ import subprocess
 import sys
 from typing import Any
 
-from .config import AI_PROFILES, DEFAULT_CONFIG, Config, ai_profile_for_base_url
+from services.config import AI_PROFILES, DEFAULT_CONFIG, Config, ai_profile_for_base_url
 
 # Keys whose values must be integers.
 _INT_KEYS = {

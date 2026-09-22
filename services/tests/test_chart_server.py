@@ -23,9 +23,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pandas as pd
-import tui.chart_server as chart_server
+import services.chart_server as chart_server
 
-from tui.chart_server import (
+from services.chart_server import (
     ChartHandler,
     ThreadingHTTPServer,
     candles_payload,
@@ -247,7 +247,7 @@ class CandlesPayloadTest(unittest.TestCase):
                 },
             },
         )
-        with mock.patch("tui.validated_bars.ValidatedBarsStore") as store_cls:
+        with mock.patch("services.validated_bars.ValidatedBarsStore") as store_cls:
             store_cls.return_value.lookup.return_value = result
             payload = validated_candles_payload(
                 "600584.SS", "XSHG", "/evidence/consensus"
@@ -311,7 +311,7 @@ class CandlesPayloadTest(unittest.TestCase):
                 },
             },
         )
-        with mock.patch("tui.validated_bars.ValidatedBarsStore") as store_cls:
+        with mock.patch("services.validated_bars.ValidatedBarsStore") as store_cls:
             store_cls.return_value.lookup.return_value = result
             payload = validated_candles_payload("H30184", "XSHG", "/evidence")
 
@@ -358,7 +358,7 @@ class LiveServerTest(unittest.TestCase):
             egress_proxy_url="",
             egress_switch_cmd="",
         )
-        config_patch = mock.patch("tui.chart_server.Config", return_value=config)
+        config_patch = mock.patch("services.chart_server.Config", return_value=config)
         config_patch.start()
         server = ThreadingHTTPServer(("127.0.0.1", 0), ChartHandler)
         port = server.server_address[1]
@@ -516,8 +516,8 @@ class LiveServerTest(unittest.TestCase):
             config.ohlcv_mode = "validated"
             config.validated_bars_root = "/evidence/consensus"
             with (
-                mock.patch("tui.chart_server.Config", return_value=config),
-                mock.patch("tui.validated_bars.ValidatedBarsStore") as store_cls,
+                mock.patch("services.chart_server.Config", return_value=config),
+                mock.patch("services.validated_bars.ValidatedBarsStore") as store_cls,
                 mock.patch("quantkit.data.fetch_ohlcv") as live_fetch,
             ):
                 store_cls.return_value.lookup.side_effect = ValueError("digest drift")
@@ -542,7 +542,7 @@ class LiveServerTest(unittest.TestCase):
         # Exercise the HTTP boundary against the real verifier. Missing,
         # non-accepted, and digest-drifted manifests must all stop here rather
         # than reaching quantkit's network-capable live fetcher.
-        from test_validated_bars import _manifest  # 同目录模块（pytest 置 basedir 于 sys.path）
+        from .test_validated_bars import _manifest  # sibling module (package-relative since M7)
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), ChartHandler)
         port = server.server_address[1]
@@ -565,7 +565,7 @@ class LiveServerTest(unittest.TestCase):
                     return payload
 
                 with (
-                    mock.patch("tui.chart_server.Config", return_value=config),
+                    mock.patch("services.chart_server.Config", return_value=config),
                     mock.patch("quantkit.data.fetch_ohlcv") as live_fetch,
                 ):
                     missing = request()
@@ -576,7 +576,7 @@ class LiveServerTest(unittest.TestCase):
                     accepted_manifest["identity"]["market"] = "XSHG"
                     for source in accepted_manifest["sources"]:
                         source["identity"]["market"] = "XSHG"
-                    from test_validated_bars import _reseal  # 同目录模块
+                    from .test_validated_bars import _reseal  # sibling module (package-relative since M7)
                     _reseal(accepted_manifest)
                     manifest_path = root / "600584.json"
                     manifest_path.write_text(
@@ -662,7 +662,7 @@ class LiveServerTest(unittest.TestCase):
                     "kronos_cmd": command,
                     "kronos_horizon": 3,
                 }.get(key, default)
-                with mock.patch("tui.chart_server.Config", return_value=config):
+                with mock.patch("services.chart_server.Config", return_value=config):
                     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
                     conn.request("GET", "/api/forecast?symbol=AAPL")
                     response = conn.getresponse()
@@ -960,7 +960,7 @@ class ParentDeathWatchTest(unittest.TestCase):
             [
                 sys.executable,
                 "-m",
-                "tui.chart_server",
+                "services.chart_server",
                 "--port",
                 "0",
                 "--ready-token",
@@ -993,7 +993,7 @@ class ParentDeathWatchTest(unittest.TestCase):
         launcher_code = (
             "import os, subprocess, sys\n"
             "p = subprocess.Popen(\n"
-            "    [sys.executable, '-m', 'tui.chart_server',\n"
+            "    [sys.executable, '-m', 'services.chart_server',\n"
             "     '--port', '0', '--ready-token', 't',\n"
             "     '--parent-pid', str(os.getpid())],\n"
             "    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)\n"

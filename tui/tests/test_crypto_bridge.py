@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tui import cryptobacktest as cb
-from tui.engine import QuantEngine
+from services.engine import QuantEngine
 
 
 def _config(cmd: str = "", quantkit_path: str = ""):
@@ -222,7 +222,7 @@ class TimingStatusTest(unittest.TestCase):
 
 class BatchScreenerTest(unittest.TestCase):
     def test_crypto_screen_offline_and_persist(self):
-        from tui import batch_screener as bs
+        from services import batch_screener as bs
 
         cfg = _config("paper")
         cfg.data_proxy_url = ""

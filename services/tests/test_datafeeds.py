@@ -9,10 +9,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tui.datafeeds import cache as dfcache
-from tui.datafeeds import journal, registry, service
-from tui.datafeeds.errors import FeedError
-from tui.datafeeds.providers import binance, coingecko, stooq, tencent, yahoo
+from services.datafeeds import cache as dfcache
+from services.datafeeds import journal, registry, service
+from services.datafeeds.errors import FeedError
+from services.datafeeds.providers import binance, coingecko, stooq, tencent, yahoo
 
 
 def _quote(symbol: str, source: str = "test") -> dict:
@@ -345,11 +345,11 @@ class JournalTest(unittest.TestCase):
 
 class HttpProxyTest(unittest.TestCase):
     def setUp(self):
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
         dfhttp.configure_data_proxy(None)
 
     def test_configure_sets_default_and_pins_tencent_direct(self):
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
         dfhttp.configure_data_proxy("http://127.0.0.1:9")
         self.assertEqual(dfhttp.proxy_for("yahoo"), "http://127.0.0.1:9")
         self.assertEqual(dfhttp.proxy_for("binance"), "http://127.0.0.1:9")
@@ -359,7 +359,7 @@ class HttpProxyTest(unittest.TestCase):
         self.assertIsNone(dfhttp.proxy_for("yahoo"))
 
     def test_get_text_routes_by_provider(self):
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
         dfhttp.configure_data_proxy("http://127.0.0.1:9")
         opener = mock.Mock()
         opener.open.return_value = mock.MagicMock()
@@ -379,7 +379,7 @@ class HttpProxyTest(unittest.TestCase):
 
 class LivefeedDelegationTest(unittest.TestCase):
     def test_fetch_batch_delegates_to_service(self):
-        from tui import livefeed
+        from services import livefeed
         with mock.patch.object(service, "quotes",
                                return_value={"AAPL": _quote("AAPL")}) as q:
             result = livefeed.fetch_batch(["AAPL"])
@@ -387,12 +387,12 @@ class LivefeedDelegationTest(unittest.TestCase):
         q.assert_called_once()
 
     def test_fetch_batch_failure_returns_empty(self):
-        from tui import livefeed
+        from services import livefeed
         with mock.patch.object(service, "quotes", side_effect=RuntimeError("x")):
             self.assertEqual(livefeed.fetch_batch(["AAPL"]), {})
 
     def test_qt_source_exported(self):
-        from tui import livefeed
+        from services import livefeed
         self.assertEqual(livefeed.QT_SOURCE, tencent.SOURCE)
         self.assertEqual(livefeed.QT_ENDPOINT, tencent.QT_ENDPOINT)
 
@@ -403,18 +403,18 @@ if __name__ == "__main__":
 
 class ProxyFallbackTest(unittest.TestCase):
     def setUp(self):
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
         dfhttp.configure_data_proxy(None)
         dfhttp.configure_proxy_fallback(None)
 
     def tearDown(self):
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
         dfhttp.configure_data_proxy(None)
         dfhttp.configure_proxy_fallback(None)
 
     def test_dead_primary_retries_via_fallback(self):
         import urllib.error
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
 
         dfhttp.configure_data_proxy("http://127.0.0.1:9")   # dead port
         dfhttp.configure_proxy_fallback("http://127.0.0.1:10")  # fake-live
@@ -439,7 +439,7 @@ class ProxyFallbackTest(unittest.TestCase):
 
     def test_http_error_does_not_fall_back(self):
         import urllib.error
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
 
         dfhttp.configure_data_proxy("http://127.0.0.1:9")
         dfhttp.configure_proxy_fallback("http://127.0.0.1:10")
@@ -456,7 +456,7 @@ class ProxyFallbackTest(unittest.TestCase):
 
     def test_no_fallback_configured_raises_primary_error(self):
         import urllib.error
-        from tui.datafeeds import http as dfhttp
+        from services.datafeeds import http as dfhttp
 
         dfhttp.configure_data_proxy("http://127.0.0.1:9")
         dfhttp.configure_proxy_fallback(None)

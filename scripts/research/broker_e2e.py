@@ -12,10 +12,10 @@ import time
 from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).resolve().parents[1]))
 
-from tui.config import Config
-from tui.datafeeds.http import configure_data_proxy
-from tui.brokers import AlpacaBroker, BrokerError, BrokerRefused
-from tui.brokers.binance import binance_broker
+from services.config import Config
+from services.datafeeds.http import configure_data_proxy
+from services.brokers import AlpacaBroker, BrokerError, BrokerRefused
+from services.brokers.binance import binance_broker
 
 config = Config()
 # The configured data proxy (127.0.0.1:46617) is down; use the live

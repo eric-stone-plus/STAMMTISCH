@@ -443,9 +443,9 @@ class IntakeSupervisor:
             if result is not None and getattr(result, "ok", False):
                 app.last_daily_intake_result = result
                 try:
-                    from .screens import _history_store
+                    from .history import history_store
 
-                    _history_store(app.config)
+                    history_store(app.config)
                 except Exception:
                     pass
             screen = getattr(app, "screen", None)

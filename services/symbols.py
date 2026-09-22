@@ -197,3 +197,20 @@ def normalize_symbol(symbol: str) -> str:
 def search_payload(q: str, market: str | None = None, limit: int = 12) -> dict[str, Any]:
     hits = resolve_query(q, market)[: max(1, min(int(limit), 30))]
     return {"ok": True, "q": q, "hits": hits}
+
+
+def security_zone(symbol: str) -> str:
+    """Classify a provider symbol into a market zone by exchange suffix.
+
+    Relocated from tui/screens/domains.py at the M7 true merge so the
+    service modules that classify by zone (decide, screener) stop
+    importing a UI package; the old screens import it from here.
+    """
+    text = symbol.strip().upper()
+    if text.endswith((".SS", ".SZ", ".BJ")):
+        return "A-SHARE"
+    if text.endswith(".HK"):
+        return "HK"
+    if "." not in text:
+        return "US"
+    return "OTHER"

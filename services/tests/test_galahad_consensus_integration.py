@@ -26,7 +26,7 @@ from types import ModuleType
 
 import pandas as pd
 
-from tui.validated_bars import ManifestLookupError, load_validated_bars
+from services.validated_bars import ManifestLookupError, load_validated_bars
 
 
 _MODULE_NAME = "_stammtisch_galahad_consensus_integration"

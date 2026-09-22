@@ -92,7 +92,7 @@ class DailyIntakeScreen(Screen):
             lines.append(f"  History index: {error}")
         else:
             lines.append("  No daily report is indexed yet.")
-        from ..intake_job import report_session_date, today_yyyymmdd
+        from services.intake_job import report_session_date, today_yyyymmdd
 
         day = report_session_date()
         if day is None:
@@ -114,7 +114,7 @@ class DailyIntakeScreen(Screen):
         self.query_one("#intake-text", Static).update("\n".join(lines) + "\n")
 
     def _attach_live_job(self) -> bool:
-        from ..intake_job import render_progress, supervisor_for
+        from services.intake_job import render_progress, supervisor_for
 
         job = supervisor_for(self.app)
         live = job.snapshot()
@@ -134,7 +134,7 @@ class DailyIntakeScreen(Screen):
         return False
 
     def _show_named_session(self) -> bool:
-        from ..intake_job import load_session, render_progress
+        from services.intake_job import load_session, render_progress
 
         if not self._session_id or not self.config:
             return False
@@ -161,7 +161,7 @@ class DailyIntakeScreen(Screen):
             self._progress_timer = None
 
     def _tick_progress(self) -> None:
-        from ..intake_job import render_progress, supervisor_for
+        from services.intake_job import render_progress, supervisor_for
 
         if not self.is_mounted:
             return
@@ -184,7 +184,7 @@ class DailyIntakeScreen(Screen):
         if result is None:
             live = None
             try:
-                from ..intake_job import supervisor_for
+                from services.intake_job import supervisor_for
 
                 live = supervisor_for(self.app).snapshot()
             except Exception:
@@ -207,7 +207,7 @@ class DailyIntakeScreen(Screen):
         _history_store(self.config)
 
     def action_capture(self) -> None:
-        from ..intake_job import render_progress, supervisor_for
+        from services.intake_job import render_progress, supervisor_for
 
         job = supervisor_for(self.app)
         if job.capturing:
@@ -228,7 +228,7 @@ class DailyIntakeScreen(Screen):
             self.notify("Daily-data intake command is not configured.", severity="warning")
             return
 
-        from ..intake import IntakeDriver
+        from services.intake import IntakeDriver
 
         try:
             # Constructed before any state flip: the driver rejects config
@@ -424,7 +424,7 @@ class DailyIntakeScreen(Screen):
         """Open the daily report — the browser renders the HTML; the
         terminal keeps only the sentiment tape: Enter hands the captured
         dataset to GALAHAD for a real analysis turn."""
-        from ..intake_job import supervisor_for
+        from services.intake_job import supervisor_for
 
         if self._capture_running or supervisor_for(self.app).capturing:
             self.notify("Capture is still running.", severity="warning")
@@ -510,22 +510,6 @@ def _galahad_report_analysis(screen: Any, doc: dict[str, Any]) -> None:
             initial_context=_report_digest(doc),
         )
     )
-def _history_store(config: Any) -> tuple[Any, str | None]:
-    """Build the report-history store and index both origins.
-
-    Never raises: an index failure is reported, not thrown, so one corrupted
-    artifact cannot wedge a screen.
-    """
-    if config is None:
-        return None, "report history is not configured"
-    from ..history import HistoryStore
-
-    try:
-        store = HistoryStore(config.history_db)
-        store.index_all(
-            config.workspace_root,
-            str(config.get("reports_root") or "") or None,
-        )
-    except Exception as exc:
-        return None, str(exc)
-    return store, None
+# M7: the accessor moved next to the store (services.history.history_store);
+# the old private name stays as an alias for the screens-facade consumers.
+from services.history import history_store as _history_store

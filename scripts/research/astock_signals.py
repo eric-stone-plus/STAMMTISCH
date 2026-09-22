@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pandas as pd
 
-from tui.config import Config  # noqa: E402
+from services.config import Config  # noqa: E402
 
 STATE = "intel/astock"
 

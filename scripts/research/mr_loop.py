@@ -22,10 +22,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tui.brokers.binance import binance_broker  # noqa: E402
-from tui.config import Config  # noqa: E402
-from tui.datafeeds import http as dfhttp  # noqa: E402
-from tui.datafeeds.http import (  # noqa: E402
+from services.brokers.binance import binance_broker  # noqa: E402
+from services.config import Config  # noqa: E402
+from services.datafeeds import http as dfhttp  # noqa: E402
+from services.datafeeds.http import (  # noqa: E402
     configure_data_proxy, configure_proxy_fallback)
 
 PAIR = "ETHUSDT"
@@ -90,7 +90,7 @@ def pd_diff(closes):
     return float(rsi.iloc[-1])
 
 def cycle(state_root: str) -> dict:
-    from tui.brokers.gate import trading_mode
+    from services.brokers.gate import trading_mode
 
     record: dict = {"mode": trading_mode(config)}
     peg_ok, peg_price = usdt_peg_ok()

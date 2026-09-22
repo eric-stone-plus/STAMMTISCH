@@ -17,9 +17,9 @@ sys.path.insert(0, str(_P(__file__).resolve().parents[1]))
 
 from quantkit.backtest import dual_ma_signal, rsi_mean_reversion_signal, run_long_only
 
-from tui.config import Config
-from tui.datafeeds import registry, service
-from tui.datafeeds.http import configure_data_proxy
+from services.config import Config
+from services.datafeeds import registry, service
+from services.datafeeds.http import configure_data_proxy
 
 config = Config()
 print("=" * 78)
@@ -136,7 +136,7 @@ for symbol in ("AAPL", "0700.HK"):
 
 # ── 5. Six-gate evaluation on one cached result ──────────────────────
 try:
-    from tui.engine import QuantEngine
+    from services.engine import QuantEngine
 
     engine = QuantEngine(data_dir=config.data_dir)
     sample = next((row for row in rows if row["zone"] == "A-SHARE"

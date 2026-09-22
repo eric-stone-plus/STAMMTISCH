@@ -13,8 +13,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .ai_driver import build_market_context
-from .engine import QuantEngine
+from services.ai_driver import build_market_context
+from services.engine import QuantEngine
 
 
 @dataclass

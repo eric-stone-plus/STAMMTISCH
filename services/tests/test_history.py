@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tui.history import INTAKE, LEGACY, HistoryStore
+from services.history import INTAKE, LEGACY, HistoryStore
 
 
 def _native_doc(day: str, run_id: str, counts: dict[str, int]) -> dict:

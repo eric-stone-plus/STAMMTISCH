@@ -10,7 +10,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from tui.config import AI_API_KEY_ENV_VARS, DEFAULT_CONFIG, Config, default_config_file
+from services.config import AI_API_KEY_ENV_VARS, DEFAULT_CONFIG, Config, default_config_file
 from tui import config_cli
 
 

@@ -22,7 +22,7 @@ Adaptations:
   (``~/.local/share/stammtisch``) kept for parity.
 - Symbol normalization reuses the compact resolver copy already shipped
   in :mod:`interface.services.quant_engine` (the old code imported
-  ``tui.engine._normalize_symbol``).
+  ``services.engine._normalize_symbol``).
 - ``_load_decision`` was less defensive than ``_decision_symbols`` (a
   non-dict position row raised, killing the whole read via the outer
   ``except``). This copy unifies on the defensive shape: malformed

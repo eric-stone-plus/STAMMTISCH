@@ -56,7 +56,7 @@ def daily_candles(symbol: str, *, timeout: float = 10.0) -> list[dict[str, Any]]
 def _daily_candles_chain(symbol: str, *, timeout: float) -> list[dict[str, Any]]:
     errors: list[str] = []
     def _alpaca_candles():
-        from tui.config import Config as _Config
+        from ..config import Config as _Config
         from ..brokers.alpaca import AlpacaBroker
 
         broker = AlpacaBroker(_Config())

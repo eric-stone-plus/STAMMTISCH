@@ -50,9 +50,9 @@ def _firecrawl_reachable(url: str | None, timeout: float = 4.0) -> bool:
 def _latest_report_dates(config: Any) -> dict[str, str]:
     """Newest accepted report date from the history index."""
     try:
-        from .screens import _history_store
+        from .history import history_store
 
-        store, _error = _history_store(config)
+        store, _error = history_store(config)
         entry = store.latest() if store is not None else None
         if entry is not None and entry.report_date:
             return {"latest": str(entry.report_date)}
@@ -201,19 +201,21 @@ class IntakeSteward:
         return self._record(decision)
 
     def start_capture(self, app: Any) -> bool:
-        from .screens import DailyIntakeScreen  # late import: screens imports steward-free
-
         config = app.config
         supervisor = supervisor_for(app)
         if supervisor.capturing:
             return False
         screen = getattr(app, "screen", None)
         # Capture without leaving the current screen: the supervisor owns
-        # the job and the Home row shows progress.
+        # the job and the Home row shows progress. The UI refresh is a
+        # duck-typed poke (M7): the service must not import a screen
+        # class — whatever screen is showing offers action_capture or
+        # nothing, exactly the old isinstance(DailyIntakeScreen) gate.
         supervisor.start(app, config, date=None)
         self._last_capture_started_at = time.time()
-        if isinstance(screen, DailyIntakeScreen):
-            screen.action_capture()
+        action = getattr(screen, "action_capture", None)
+        if callable(action):
+            action()
         return True
 
     def decision(self) -> dict[str, Any]:
