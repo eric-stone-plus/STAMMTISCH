@@ -33,9 +33,9 @@ from typing import Any
 try:
     from textual.app import ComposeResult
     from textual.binding import Binding
-    from textual.containers import ScrollableContainer, Vertical
-    from textual.screen import Screen
-    from textual.widgets import Footer, OptionList, Static
+    from textual.containers import Horizontal, ScrollableContainer, Vertical
+    from textual.screen import ModalScreen, Screen
+    from textual.widgets import Button, Footer, OptionList, Static
     from textual.widgets.option_list import Option
 except ImportError:  # pragma: no cover - textual is optional for lib use
     CrawlerPanelScreen = None  # type: ignore[misc, assignment]
@@ -101,13 +101,25 @@ else:
         return value.strip()
 
     def container_counts(compose_dir: str) -> tuple[int, int]:
-        """(running, total) containers of the compose project."""
+        """(running, total) containers of the compose project rooted at
+        ``compose_dir``.
+
+        Project-scoped via the compose label (project name = directory
+        basename, compose's own default): a bare ``podman ps`` would
+        count every foreign rootless container on the host and render a
+        misleading header total. If a compose file's top-level ``name:``
+        ever diverges from the directory name the filter matches nothing
+        and the header renders 0/0 — visibly contradictory next to an UP
+        probe, i.e. fail-visible, not silently wrong.
+        """
         if not compose_dir:
             return (0, 0)
+        project = Path(compose_dir).name
         running = 0
         total = 0
         for flag in ("", "-a"):
             cmd = ["podman", "ps", *filter(None, [flag]),
+                   "--filter", f"label=com.docker.compose.project={project}",
                    "--format", "{{.Names}}"]
             code, output = _run(cmd, cwd=compose_dir, timeout=20.0)
             if code != 0:
@@ -187,6 +199,51 @@ else:
         if len(cleaned) <= width:
             return cleaned
         return cleaned[: max(width - 1, 1)] + "…"
+
+    class ConfirmOpScreen(ModalScreen[bool]):
+        """Yes/No gate before a stack-affecting operation.
+
+        With a live compose dir configured, one stray keypress on the
+        panel would otherwise stop the whole crawl stack or disable the
+        watchdog (fail-closed doctrine — the switch must be deliberate).
+        Esc/Cancel refuses; only Confirm runs the op.
+        """
+
+        CSS = """
+        ConfirmOpScreen { align: center middle; }
+        #confirm-op-box {
+            width: 64; height: auto;
+            border: thick $error; background: $surface;
+            padding: 1 2;
+        }
+        #confirm-op-buttons { height: auto; align: center middle; }
+        #confirm-op-buttons Button { margin: 0 1; }
+        """
+
+        def __init__(self, question: str) -> None:
+            super().__init__()
+            self._question = question
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="confirm-op-box"):
+                yield Static(self._question, id="confirm-op-question")
+                with Horizontal(id="confirm-op-buttons"):
+                    yield Button("Confirm", id="confirm-op-yes",
+                                 variant="error")
+                    yield Button("Cancel", id="confirm-op-no")
+
+        def on_mount(self) -> None:
+            # Fail-closed focus (interface ConfirmDialog doctrine): a
+            # stray Enter must CANCEL, never confirm the destructive op.
+            self.query_one("#confirm-op-no", Button).focus()
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            self.dismiss(event.button.id == "confirm-op-yes")
+
+        def on_key(self, event: Any) -> None:
+            if event.key == "escape":
+                event.stop()
+                self.dismiss(False)
 
     class CrawlerPanelScreen(Screen):
         """Status + switches for the whole crawling side."""
@@ -414,7 +471,7 @@ else:
                     timeout=180.0,
                 )
 
-            self._run_op("stack stop" if up else "stack start", _work)
+            self._confirm_op("stack stop" if up else "stack start", _work)
 
         def action_toggle_timer(self) -> None:
             active = watch_timer_active()
@@ -424,7 +481,7 @@ else:
                     return systemctl("disable", "--now", WATCH_TIMER)
                 return systemctl("enable", "--now", WATCH_TIMER)
 
-            self._run_op("timer off" if active else "timer on", _work)
+            self._confirm_op("timer off" if active else "timer on", _work)
 
         def action_restart_api(self) -> None:
             if not self._require("crawler_compose_dir"):
@@ -433,7 +490,24 @@ else:
             def _work():
                 return _run(["podman", "restart", "firecrawl-api-1"], timeout=120.0)
 
-            self._run_op("restart api", _work)
+            self._confirm_op("restart api", _work)
+
+        def _confirm_op(self, label: str, work) -> None:
+            """Gate a stack-affecting op behind an explicit Yes.
+
+            A stray keypress on an armed panel must not stop the crawl
+            stack or disable the watchdog: Cancel/Esc refuses with a
+            notice, only Confirm reaches _run_op.
+            """
+            question = self._tr("crawlers.confirm", "Run '%s' now?") % label
+
+            def _proceed(confirmed: bool | None) -> None:
+                if confirmed:
+                    self._run_op(label, work)
+                else:
+                    self.notify(f"{label} cancelled.", severity="information")
+
+            self.app.push_screen(ConfirmOpScreen(question), _proceed)
 
         def action_heal_now(self) -> None:
             heal_cmd = self._require("crawler_heal_cmd")

@@ -30,6 +30,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "crawlers.running": {"en": "running", "zh": "运行中"},
     "crawlers.enabled": {"en": "enabled", "zh": "启用"},
     "crawlers.toggle_hint": {"en": "toggle", "zh": "启停"},
+    "crawlers.confirm": {"en": "Run '%s' now?", "zh": "立即执行「%s」？"},
     "crawlers.k.refresh": {"en": "refresh status + sources", "zh": "刷新状态与源清单"},
     "crawlers.k.stack": {"en": "crawl stack on/off (compose stop/up)", "zh": "采集栈开/关"},
     "crawlers.k.timer": {"en": "self-heal timer on/off", "zh": "自愈定时器开/关"},

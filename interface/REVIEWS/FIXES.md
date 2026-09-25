@@ -465,3 +465,55 @@ new. The evolved tree is untouched (`git status` clean). Host-level,
 outside the diff: the venv's editable `quantkit` now resolves to the
 evolved tree (0.4.0), `scikit-learn`/`lightgbm`/`xgboost` installed for
 the ML runtime path, `pip check` clean.
+
+## Round I — firecrawl restoration + panel arming hardening (cross-attack driven)
+
+Operator ruling: restore the retired firecrawl stack. Fact-finding first:
+the stack was FULLY retired (compose dir, images, volumes all gone; only
+the fin_daily scripts survived, hardcoding
+`private/agent-design/tools/firecrawl`), while `scrape.sh` — the live
+intake pipeline — still probes `127.0.0.1:3002` and calls
+`POST /v2/scrape`. A research sub-agent (mattpocock `research` skill)
+pinned the rebuild against primary sources:
+`firecrawl/firecrawl` tag **v2.11.407** root `docker-compose.yaml`
+(note: `quant-analysis/tools/fin_daily/docs/research/20260926-firecrawl-stack-rebuild.md`,
+39 citations). Key resolutions: this generation's `api` container runs
+the harness with in-container workers (no `worker` service needed —
+the 6-service heal list was always complete); `USE_DB_AUTHENTICATION=false`
+makes `/v2/scrape` keyless (matches scrape.sh's missing Authorization
+header); gfw-proxy = local `alpine/socat` splicing 18880 → bridge
+gateway :17879 (`causeway_gw_forward.py`'s actual bind — NOT 17878, the
+pasta-owned netns loopback); `firecrawl_backend` pinned to
+10.89.20.0/24 because strix-egress squats 10.89.0.0/24.
+
+Restoration executed per the runbook and cross-attacked by an
+adversarial sub-agent — **9/9 claims CONFIRMED, SHIP-GREEN**: 6
+containers up (rabbitmq/nuq-postgres healthy), api loopback-only on
+127.0.0.1:3002 (unauthenticated API never exposed off-host), forwarder
+live on 10.89.20.1:17879, domestic smoke scrape OK (60 KB markdown),
+overseas phase flip verified end-to-end (in-api undici probe 204 + real
+futunn scrape 11.7 KB), stack left overseas-ready (sources.conf's
+documented daily default), `.env` 600 with the generated POSTGRES
+password found nowhere else, watchdog timer re-enabled (linger=yes;
+first run exit 0), STAMMTISCH config diff = `crawler_compose_dir` only
+(backup `config.json.bak-20260926`), digests rollback anchor recorded,
+zero collateral damage to the other 17 rootless containers.
+
+The restoration ARMED the crawler panel (empty compose_dir was its
+fail-closed), and the same cross-attack caught two panel defects —
+fixed in this round's diff:
+
+| Finding (verdict) | Fix | Pin |
+|---|---|---|
+| M1 (MEDIUM): `container_counts` docstring promised "the compose project" but ran bare `podman ps` — header rendered 6/23, counting 17 foreign exited containers | `--filter label=com.docker.compose.project=<dir basename>`; docstring documents the `name:`-divergence behaviour (renders 0/0 next to an UP probe — fail-visible) | `test_counts_are_scoped_to_the_compose_project` (mutation-verified: removing the filter fails it), `test_unconfigured_dir_counts_nothing_and_spawns_nothing`; live: (6, 6) |
+| M2 (MEDIUM): with a live compose dir, one stray keypress on [S]/[T]/[R] ran `compose stop` ×6 / `systemctl disable` / api restart — ZERO confirmation | `ConfirmOpScreen` modal gate (`_confirm_op`): Cancel/Esc refuses with a notice, only Confirm reaches `_run_op`; fail-closed default focus on Cancel (interface ConfirmDialog doctrine — a stray Enter cancels); bilingual question via `crawlers.confirm`; [H] heal deliberately ungated (probe-first, restorative-only, same script the unattended timer runs) | `test_destructive_keys_are_gated_and_cancel_refuses` (all three keys, argv-shape assertions, focus pin, cancellation notice), `test_confirm_runs_the_gated_op` (full compose-stop argv incl. STACK_SERVICES order); mutation-verified: bypassing the gate fails both |
+
+The fix batch got its own adversarial pass: pins mutation-tested, modal
+escape hatches (click-outside, Esc leak to the panel's back binding,
+None-dismiss) all fail-closed, `_tr % label` verified in both languages,
+no bypass paths, **SHIP-GREEN, zero must-fix**. NITs noted: help chrome
+doesn't mention the gate; the pre-confirm probe is mildly TOCTOU (both
+branches idempotent).
+
+Suite after I: services+tui 571 passed / 2 skipped (+4 pins); ruff
+touched files 4 findings = HEAD baseline, zero new.
