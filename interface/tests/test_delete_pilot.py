@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -156,12 +157,18 @@ def test_silence_timeout_resolves_cancel_and_is_audited() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
             await asyncio.sleep(0.3)
             await pilot.pause()
+            # Wide margins: pilot.pause() costs real wall time here
+            # (observed 0.6–1.2s: wait_for_idle against the shell's 20Hz
+            # refresh + full-size render), so the silence window must
+            # exceed the worst-case pause or the timer legitimately
+            # expires before the assert. Semantics pinned: "resolves on
+            # its own without input", not milliseconds.
             dialog = ConfirmDialog("demo-run-live", app._delete_resolved,
-                                   silence_s=0.5)
+                                   silence_s=5.0)
             app.push_screen(dialog)
             await pilot.pause()
             assert app.screen is dialog
-            assert await _until(lambda: dialog._resolved, timeout=3.0), (
+            assert await _until(lambda: dialog._resolved, timeout=10.0), (
                 "30s-of-silence (shortened) resolves on its own")
             await pilot.pause()
             assert dialog.last_resolution == ("silence", False)
@@ -178,16 +185,28 @@ def test_any_key_rearms_the_silence_window() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
             await asyncio.sleep(0.3)
             await pilot.pause()
-            # Wide margins: the full suite's load can overshoot sleeps by
-            # hundreds of ms; the semantics pinned are before/after the
-            # ORIGINAL deadline, not millisecond timing.
+            # Adaptive margins: pilot.pause()/press() each consume real
+            # wall time here (observed ~1s: wait_for_idle against the
+            # shell's 20Hz refresh), so fixed sleeps race the dialog's
+            # deadlines. Semantics pinned: the assert lands AFTER the
+            # original deadline (t_push + silence_s) yet BEFORE the
+            # re-armed one (~t_press + silence_s) — sleep to the
+            # midpoint of that window, whatever wall time the presses
+            # consumed.
+            silence_s = 6.0
+            t_push = time.monotonic()
             dialog = ConfirmDialog("demo-run-live", app._delete_resolved,
-                                   silence_s=3.0)
+                                   silence_s=silence_s)
             app.push_screen(dialog)
             await pilot.pause()
             await asyncio.sleep(1.0)
             await pilot.press("right")  # activity: re-arm the window
-            await asyncio.sleep(2.2)  # now PAST the original 3.0s deadline
+            t_press = time.monotonic()
+            elapsed = t_press - t_push
+            assert elapsed < silence_s, (
+                "precondition: the re-arming press must land inside the "
+                f"original window (took {elapsed:.1f}s of wall time)")
+            await asyncio.sleep(silence_s - elapsed / 2.0)
             assert not dialog._resolved, (
                 "past the original deadline but alive: only the re-armed "
                 "window is running")
@@ -214,9 +233,10 @@ def test_help_never_stacks_over_confirm_and_silence_still_cancels() -> None:
             await asyncio.sleep(0.3)
             await pilot.pause()
             # Wide margin: the ? press must land BEFORE the silence
-            # fires even under full-suite load.
+            # fires even under full-suite load (pilot.pause() costs
+            # real wall time here — keep the window ≫ the worst pause).
             dialog = ConfirmDialog("demo-run-live", app._delete_resolved,
-                                   silence_s=3.0)
+                                   silence_s=5.0)
             app.push_screen(dialog)
             await pilot.pause()
             assert app.screen is dialog
@@ -226,7 +246,7 @@ def test_help_never_stacks_over_confirm_and_silence_still_cancels() -> None:
                 "the sheet must never stack over the confirm dialog")
             assert any("confirm dialog" in m for m in _messages(app)), (
                 "the refusal is announced")
-            assert await _until(lambda: dialog._resolved, timeout=8.0), (
+            assert await _until(lambda: dialog._resolved, timeout=10.0), (
                 "the fail-closed silence resolves on its own")
             await pilot.pause()
             assert dialog.last_resolution == ("silence", False)

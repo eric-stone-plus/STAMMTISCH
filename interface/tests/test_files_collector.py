@@ -3,8 +3,11 @@ service-plane presence booleans (shape checks only, never key values)."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
+
+import pytest
 
 import interface.collectors.files as files_mod
 from interface.collectors.files import FilesCollector
@@ -121,6 +124,14 @@ def test_session_without_state_shows_unknown(tmp_path: Path) -> None:
 # ── service-plane booleans ───────────────────────────────────────────
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("quantkit") is not None,
+    reason="this pin asserts the quantkit-ABSENT env shape (ephemeral CI); "
+           "hosts with quantkit installed are covered by the monkeypatched "
+           "test_quantkit_reflected_when_importable below — an ungated "
+           "absent-shape assert would also silently block the "
+           "--with-quantkit preflight mode (docs/ci-python-blocking.md)",
+)
 def test_quantkit_absent_in_test_env_shape(tmp_path: Path) -> None:
     _intake, services, _ = _collect(tmp_path)
     quantkit = next(s for s in services if s.name == "quantkit")

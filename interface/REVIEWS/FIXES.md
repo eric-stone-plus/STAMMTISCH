@@ -410,3 +410,58 @@ touched file at-or-below its HEAD finding count (batch_screener 4→3 via
 the F821 fix), new test file clean. Live smoke: screener degrades with
 the actionable 451 copy, board stamps `generated_at`, `CRYPTO:ETH`
 chart payload serves 92 collapsed day-bars through the coingecko leg.
+
+## Round H — quantkit alignment: sibling loader, cost basis, env-shape pins (two-axis + cross-attack)
+
+The host venv's editable `quantkit` was repointed from the public
+GALAHAD tree (0.3.x) to the operator's evolved tree (0.4-lineage), whose
+`quantkit_path` the engine bridge already preferred. The repo had to
+stop assuming GALAHAD is importable, and two dormant env-dependent pins
+woke up. The diff: two-phase `ml_pipeline` loading in `tui/tools.py`
+(installed tree first, then a file-based GALAHAD sibling load — never a
+`sys.path` insert, which would shadow the installed tree's data
+providers), `COST_TIER_BPS` rebaselined, the capability-gap pin taken
+offline, plus two preflight-driven interface fixes below.
+
+**Operator adjudication (the round's one doctrine call):** the two
+quantkit lines carry opposite, each-internally-tested cost conventions
+— GALAHAD halves the declared tier per side (8cd8f74, 2026-08-19,
+"charge two-sided tiers once per round trip"); the evolved line charges
+the FULL tier per one-sided unit, pinned by its own cost-tier tests and
+its gates' friction calibration — while both docstrings claim
+"two-sided all-in rate". Ruling: **the mirror follows the installed
+tree** (the engine is the authority the decision chain verifies
+against): `COST_TIER_BPS = {low: 20, mid: 40, high: 50}`; the private
+tree stays untouched this round; `MirrorParityTest` now consumes the
+constant itself, making it the drift detector that fails loudly on the
+next basis move.
+
+Method: mattpocock `code-review` (Standards + Spec parallel sub-agents)
+with the Round E cross-attack (a judge sub-agent re-verified every
+finding live — CONFIRMED/REFUTED/PARTIAL — plus a false-negative hunt).
+
+| Finding (axis, verdict after cross-attack) | Fix | Pin |
+|---|---|---|
+| P-1 (spec, CONFIRMED — the round's real bug): the sibling loader never registered the module in `sys.modules` before `exec_module`; Python 3.14 `dataclasses._is_type` resolves postponed (string) annotations through `sys.modules` DURING class construction, so the real GALAHAD `ml_pipeline.py` (`from __future__ import annotations` + `@dataclass ModelResult`) died with `AttributeError: 'NoneType'` — swallowed into "module not available" on exactly the host the round targets. All three loader tests missed it: synthetic sources were dataclass-free and the fallback tests mocked the loader out entirely | register pre-exec, pop the half-initialized module on failure, raise with the reason (same shape as the consensus loader in `services/tests/test_galahad_consensus_integration.py`) | `test_loads_dataclass_module_with_postponed_annotations` (the exact failing shape), `test_broken_module_degrades_loudly` (raise + `sys.modules` pop asserted), env-gated `RealSiblingLoaderTest` (`STAMMTISCH_IT=1`) against the REAL file; live check: `MLPipeline` loads from the true sibling |
+| S-2 (standards, judgement → CONFIRMED-upgraded by the cross-attack: A-1/B-2/B-3/E-1/E-9 and Round G P-1 license no silence, and the swallow actively MASKED P-1): "a broken sibling degrades like an absent one" contradicted the degrade-loudly doctrine | loader raises `RuntimeError` with the reason; handler converts to `error: ml_pipeline sibling load failed: …[:150]` (absent sibling still yields the plain "not available") | `test_broken_sibling_degrades_to_error_string` |
+| test_capability_gap_is_actionable (same class, surfaced by the retarget): the pin assumed the installed tree LACKS `selection` — the day it gained one, the "gap" test started live-fetching yahoo and failed `No price data` | the gap is injected through `sys.modules` (`{"quantkit.selection": None}`), firing before any fetch | offline + tree-independent; passes against both lineages |
+| ENV-1 (preflight find, outside the diff): `test_quantkit_absent_in_test_env_shape` asserted quantkit ABSENT with no env gate — red on any quantkit-installed host, silently blocking the `--with-quantkit` flip-safe preflight mode (and any future CI flip) | `skipif(find_spec("quantkit"))`, reason points at the monkeypatched present-shape mirror | both shapes now pinned per-env: absent in ephemeral CI, present via `test_quantkit_reflected_when_importable` |
+| ENV-2 (preflight find, outside the diff): `test_delete_pilot`'s real-wall margins raced `pilot.pause()`/`press()` — each consumes ~1s here (`wait_for_idle` against the shell's 20 Hz refresh + full-size render), so `press()`'s own cost pushed the re-arm assert past the re-armed deadline; the failure set rotated run-to-run and reproduced on clean HEAD | silence/help windows widened ≫ worst observed pause (5.0 s, `_until` 10.0); the re-arm test went ADAPTIVE: it measures the elapsed wall of push→press and sleeps to the midpoint between the original and re-armed deadlines, with a precondition assert that the press landed inside the original window | 12/12 green × 3 consecutive file runs AND inside the loaded full-suite run (both envs) |
+| S-1 (standards, SPLIT by the cross-attack): "operator's"-style phrasing is shipped-source precedent; the stranger-repro breach was REFUTED (a GALAHAD-0.3.x host failing `MirrorParityTest` IS the adjudicated drift detector; quantkit-less strangers are documented-red non-blocking CI); the hardcoded "0.4.0" version pin was a CONFIRMED staleness smell | version pins dropped from shipped comments; the cross-attack's FN sweep also caught `docs/ci-python-blocking.md` Option A now contradicting the full-tier basis | Option A carries a cost-basis caveat: publish a tree matching the pinned basis or re-adjudicate `COST_TIER_BPS` in the same change |
+| P-2 (spec, REFUTED by the cross-attack: `ai_driver.py` wraps every handler call in `except Exception → "error: …"`, so no raise can escape into the TUI) | — | — |
+| P-3 (scope creep, PARTIAL — KEPT: doctrine-aligned, pinned, tiny): the runtime train/load guard extends "never raise into the TUI" past the loader | kept | `test_runtime_dependency_gap_degrades_to_error_string` |
+| S-4 (smell, PARTIAL — two rationale sites, not three): the cost-basis story was narrated twice | canonical block lives at `COST_TIER_BPS`; the test comment shortened to a pointer | — |
+| S-5 (REFUTED as issue: the `galahad_root=None` injection param is the house M4 pattern — explicit args over monkeypatching), S-3 (CONFIRMED compliant: every behaviour change ships a pin) | — | — |
+
+Suite after H: services+tui 567 passed / 2 skipped (plain venv), 569 / 0
+under `STAMMTISCH_IT=1` (real-sibling + GALAHAD consensus integration
+both exercised); interface 319 passed / 2 skipped in the venv; the
+ephemeral `verify-python-ci-env.sh --with-quantkit <evolved tree>`
+preflight — the documented flip-safety gate — ran **886 passed / 4
+skipped / 0 failed, RESULT: green** for the first time (previously
+blocked by ENV-1, and after the retarget also by the cost basis).
+Ruff: touched files 11 findings at HEAD → 11 in the working tree, zero
+new. The evolved tree is untouched (`git status` clean). Host-level,
+outside the diff: the venv's editable `quantkit` now resolves to the
+evolved tree (0.4.0), `scikit-learn`/`lightgbm`/`xgboost` installed for
+the ML runtime path, `pip check` clean.

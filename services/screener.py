@@ -32,12 +32,15 @@ MIN_MAXDD = -0.55  # drawdown floor: worse than -55% disqualifies
 
 FAST = 20
 SLOW = 50
-# Per-side rates in bps. quantkit COST_TIERS declare a round-trip
-# (both legs) rate and charge half per unit of one-sided turnover
-# (quantkit/backtest.py: ``per_side_bps = notional_bps / 2``), so the
-# mirror carries the same halved per-side numbers — parity with the
-# engine pass the decision chain trusts.
-COST_TIER_BPS = {"low": 10.0, "mid": 20.0, "high": 25.0}
+# Per-side rates in bps. The quantkit line this screen is pinned against
+# charges the FULL tier rate per unit of one-sided turnover
+# (``cost = turnover * (notional_bps + cancel_bps) / 1e4``), so a round
+# trip pays the declared tier twice; the mirror carries the matching
+# per-side numbers — parity with the engine pass the decision chain
+# trusts. The GALAHAD 0.3.x line instead halves the tier per side
+# (round trip pays it once); MirrorParityTest is the drift detector that
+# fails loudly when the installed tree's basis moves under this table.
+COST_TIER_BPS = {"low": 20.0, "mid": 40.0, "high": 50.0}
 
 
 def _symbol_of(path: Path) -> str | None:

@@ -9,7 +9,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root (two levels up from services/tests)
 
 from services.engine import QuantEngine
-from services.screener import _dual_ma_metrics, screen_market
+from services.screener import COST_TIER_BPS, _dual_ma_metrics, screen_market
 
 
 def _trending_close(n: int = 500, seed: int = 7) -> pd.Series:
@@ -39,9 +39,10 @@ class MirrorParityTest(unittest.TestCase):
 
         close = _trending_close()
         result = run_long_only(close, dual_ma_signal(close), cost_tier="low")
-        # quantkit charges half the round-trip tier per one-sided unit:
-        # "low" 0.2% round trip = 10 bps per side.
-        mirror = _dual_ma_metrics(close.to_numpy(float), 10.0)
+        # The mirror's per-side number is the screener's own constant —
+        # this test is the drift detector between the installed quantkit
+        # tree's cost basis and the screen's pre-rank (see COST_TIER_BPS).
+        mirror = _dual_ma_metrics(close.to_numpy(float), COST_TIER_BPS["low"])
         self.assertAlmostEqual(mirror["tr"], result.total_return, places=8)
         self.assertAlmostEqual(mirror["sharpe"], result.sharpe, places=2)
         self.assertEqual(mirror["trades"], result.trades)

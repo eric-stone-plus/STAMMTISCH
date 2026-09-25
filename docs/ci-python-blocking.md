@@ -24,6 +24,12 @@ if it prints `RESULT: green`, the flip is safe.
 Make `quant-core` installable from a public location (PyPI, or the public
 `GALAHAD` repo already carrying it under `quantkit/`).
 
+> **Cost-basis caveat:** `MirrorParityTest` pins the screen's cost mirror
+> to the full-tier-per-side basis (`COST_TIER_BPS` in `services/screener.py`).
+> The GALAHAD 0.3.x quantkit halves the tier per side — publishing *that*
+> tree turns the drift detector red. Option A must publish a tree matching
+> the pinned basis, or re-adjudicate `COST_TIER_BPS` in the same change.
+
 1. Publish (out of band, repo-side work).
 2. In `.github/workflows/ci.yml`, python step:
    - add the install line:  `python -m pip install quantkit`

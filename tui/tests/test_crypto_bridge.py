@@ -103,9 +103,15 @@ class RunTest(unittest.TestCase):
 
 class TopkPortfolioTest(unittest.TestCase):
     def test_capability_gap_is_actionable(self):
-        """The installed public quantkit has no selection module."""
+        """A quantkit tree without the topk capability must yield the
+        actionable quantkit_path error. The gap is injected through
+        sys.modules so the pin is independent of WHICH tree the host
+        installed (and stays offline: the guard fires before any fetch —
+        the old env-dependent form started live-fetching yahoo the day
+        the operator's tree gained ``selection``)."""
         engine = QuantEngine(data_dir="/tmp/qk-nonexistent")
-        result = engine.run_topk_portfolio(["AAPL", "MSFT"])
+        with mock.patch.dict(sys.modules, {"quantkit.selection": None}):
+            result = engine.run_topk_portfolio(["AAPL", "MSFT"])
         self.assertFalse(result["ok"])
         self.assertIn("quantkit_path", result["error"])
 

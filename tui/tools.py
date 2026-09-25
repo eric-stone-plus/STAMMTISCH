@@ -35,16 +35,65 @@ class Tool:
         }
 
 
-def _ml_signal(engine: QuantEngine, args: dict[str, Any]) -> str:
-    """ML pipeline tool handler."""
-    import sys
-    from datetime import date, timedelta
+def _sibling_galahad_root():
+    """The optional GALAHAD checkout cloned next to this repository."""
     from pathlib import Path
 
-    # Optional sibling checkout: quantkit from the GALAHAD repo cloned
-    # next to this one.  When it is absent the import below fails and
-    # the handler degrades to a clear error string.
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "GALAHAD" / "quantkit"))
+    return Path(__file__).resolve().parents[2] / "GALAHAD" / "quantkit"
+
+
+def _load_sibling_ml_pipeline(galahad_root=None):
+    """File-based load of GALAHAD's ``ml_pipeline.py``.
+
+    Returns None when the sibling is absent; raises RuntimeError when it
+    is present but broken — a broken sibling must never masquerade as an
+    absent one (AGENTS.md rule 2, FIXES.md B-3/E-1 degrade-loudly).
+
+    The operator's quantkit tree (the venv editable install or the engine
+    bridge's ``quantkit_path``) may be an evolved fork that intentionally
+    does not ship ``ml_pipeline`` — its doctrine home is the public
+    GALAHAD checkout. Loading the single file by path (instead of
+    inserting the sibling onto ``sys.path``) keeps the installed tree
+    authoritative for every other quantkit module: a path insert would
+    silently shadow the operator's data providers with GALAHAD's. The
+    module's own package import (``quantkit.indicators``) resolves
+    against whichever quantkit is installed.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    root = Path(galahad_root) if galahad_root is not None \
+        else _sibling_galahad_root()
+    module_path = root / "quantkit" / "ml_pipeline.py"
+    if not module_path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "_stammtisch_galahad_ml_pipeline", module_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    # Register BEFORE exec: dataclasses with postponed (string)
+    # annotations resolve their defining module through sys.modules
+    # during class construction (Python 3.14 dataclasses._is_type), so
+    # an unregistered module dies mid-exec. Same pattern as the
+    # consensus loader in services/tests/test_galahad_consensus_integration.py.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException as exc:
+        # Pop the half-initialized module so no stale partial stays
+        # reachable by name, then surface the reason.
+        sys.modules.pop(spec.name, None)
+        raise RuntimeError(
+            f"sibling ml_pipeline failed to load: {exc}") from exc
+    return module
+
+
+def _ml_signal(engine: QuantEngine, args: dict[str, Any]) -> str:
+    """ML pipeline tool handler."""
+    from datetime import date, timedelta
+    from pathlib import Path
 
     symbols = args.get("symbols")
     if not isinstance(symbols, list) or not symbols:
@@ -64,6 +113,14 @@ def _ml_signal(engine: QuantEngine, args: dict[str, Any]) -> str:
     try:
         from quantkit.ml_pipeline import MLPipeline
     except ImportError:
+        # The installed quantkit tree does not ship ml_pipeline (evolved
+        # fork): fall back to the file-based sibling load before giving up.
+        try:
+            sibling = _load_sibling_ml_pipeline()
+        except Exception as exc:  # noqa: BLE001 — handlers degrade to error strings
+            return f"error: ml_pipeline sibling load failed: {str(exc)[:150]}"
+        MLPipeline = getattr(sibling, "MLPipeline", None)
+    if MLPipeline is None:
         return "error: ml_pipeline module not available"
 
     # Fetch data
@@ -79,16 +136,22 @@ def _ml_signal(engine: QuantEngine, args: dict[str, Any]) -> str:
     if not data_dict:
         return "error: no data available for any symbol"
 
-    # Train or load model
+    # Train or load model. The tool contract is a clear error string, so
+    # runtime-dependency gaps (a pickled model needing an absent booster,
+    # a missing optional extra) degrade here instead of escaping as an
+    # unhandled exception into the chat driver.
     model_dir = str(Path.home() / ".local" / "share" / "stammtisch" / "ml_models")
-    pipe = MLPipeline(model_dir=model_dir)
-    if not pipe.load_best():
-        if len(data_dict) >= 3:
-            pipe.train_cross_sectional(data_dict, label_col="fwd_ret_5")
-        else:
-            # Single-symbol fallback: train on that one fetched frame.
-            sym, df = next(iter(data_dict.items()))
-            pipe.train(df, label_col="fwd_ret_5")
+    try:
+        pipe = MLPipeline(model_dir=model_dir)
+        if not pipe.load_best():
+            if len(data_dict) >= 3:
+                pipe.train_cross_sectional(data_dict, label_col="fwd_ret_5")
+            else:
+                # Single-symbol fallback: train on that one fetched frame.
+                sym, df = next(iter(data_dict.items()))
+                pipe.train(df, label_col="fwd_ret_5")
+    except Exception as exc:  # noqa: BLE001 — handlers degrade to error strings
+        return f"error: ml_pipeline failed: {str(exc)[:150]}"
 
     # Generate predictions
     out = []
