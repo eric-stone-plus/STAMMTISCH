@@ -198,6 +198,48 @@ def test_any_key_rearms_the_silence_window() -> None:
     _run(scenario)
 
 
+def test_help_never_stacks_over_confirm_and_silence_still_cancels() -> None:
+    """The overlay-over-confirm contract, pinned (round F, S-1): the
+    sheet REFUSES to stack over the ONE write path's dialog — Textual's
+    ``Screen.dismiss()`` pops the TOPMOST screen, so a mid-stack silence
+    resolution under a cover would pop the wrong screen and strand the
+    spent dialog (inert, unclosable). The refusal is a notify; the
+    dialog stays on top and its fail-closed silence still resolves
+    CANCEL — audited, never spawning the delete. Help never actions."""
+    calls: list[str] = []
+
+    async def scenario() -> None:
+        app = _harness(delete_run=calls.append)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await asyncio.sleep(0.3)
+            await pilot.pause()
+            # Wide margin: the ? press must land BEFORE the silence
+            # fires even under full-suite load.
+            dialog = ConfirmDialog("demo-run-live", app._delete_resolved,
+                                   silence_s=3.0)
+            app.push_screen(dialog)
+            await pilot.pause()
+            assert app.screen is dialog
+            await pilot.press("question_mark")
+            await pilot.pause()
+            assert app.screen is dialog, (
+                "the sheet must never stack over the confirm dialog")
+            assert any("confirm dialog" in m for m in _messages(app)), (
+                "the refusal is announced")
+            assert await _until(lambda: dialog._resolved, timeout=8.0), (
+                "the fail-closed silence resolves on its own")
+            await pilot.pause()
+            assert dialog.last_resolution == ("silence", False)
+            assert calls == [], "silence never actions: no delete spawned"
+            assert any("ui.delete cancelled run=demo-run-live" in line
+                       for line in _audit_lines(app))
+            # Topmost dismiss: the spent dialog leaves the stack cleanly.
+            assert dialog not in app.screen_stack
+            assert isinstance(app.screen, OverviewScreen)
+
+    _run(scenario)
+
+
 def test_left_right_cycle_the_focus() -> None:
     async def scenario() -> None:
         app = _harness()

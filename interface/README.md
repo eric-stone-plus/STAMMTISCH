@@ -9,7 +9,7 @@ This package is the UI; it owns no business logic.
 | `args.py` | Shared `--demo` / `--root` CLI plumbing (explicit flags; root resolves explicit > `$STAMMTISCH_HOME` > `~/.local/share/stammtisch`) |
 | `collectors/` | Read-only data layer plus the ONE audited write: deterministic demo; real collectors (events.jsonl byte-offset tail + fold, intake/cost files, core-CLI adapter with TTL + strict op whitelist + the sole `delete` write op) behind long-lived sessions |
 | `render/` | Pure snapshot → Rich renderables; `tokens.py` is the single color truth; `flags.py` fixed-width letter flags |
-| `app/` | `spine.py` (tick/multipliers/STALE/single-flight + `force_refresh` + the M6 `SlowLane` bounded screen-poll lane), `shell.py` (thin Textual app + the audited delete lane), `verbs.py` (filter/sort/follow/cursor policy), `router.py` (screen registry, `:` bar + ⌃P palette, one command vocabulary, recents), `confirm.py` (the fail-closed confirm dialog for the ONE write) |
+| `app/` | `spine.py` (tick/multipliers/STALE/single-flight + `force_refresh` + the M6 `SlowLane` bounded screen-poll lane), `shell.py` (thin Textual app + the audited delete lane), `verbs.py` (filter/sort/follow/cursor policy), `router.py` (screen registry, `:` bar + ⌃P palette, one command vocabulary, recents), `confirm.py` (the fail-closed confirm dialog for the ONE write), `help_overlay.py` (the `?` key sheet, generated from the live binding table — never hand-written) |
 | `screens/` | `overview.py` (wall + verb bindings + audit chrome), `workbench.py` (spec-driven five quant tools), `runs_detail.py` (`:detail <id>` full run screen), plus the M6 absorbed read-only screens: `feeds_health.py` (`:feeds`), `ledger.py` (`:ledger`), `energy.py` (`:energy`), `polymarket.py` (`:polymarket`), `sentiment.py` (`:sentiment`) |
 | `services/` | UI-free service lane. Since the M7 true merge the shared implementations live in the top-level `services/` package and three lanes DELEGATE instead of carrying copies: `quant_engine.py` (subclass of the real `services.engine.QuantEngine` + the deterministic demo twin + the honest resolver), `feeds.py` (`fetch_batch` → `services.livefeed`, plus the interface-native `quote_age_s`), `feeds_health.py` (counters → the shared `services.datafeeds.registry`, frozen rows + lane-cache split + latency bands). Still copy+adapt extractions citing their old file:line: `glance.py` (dashboard.py:155-234), `decisions.py` (domains.py:1144-1230, 1661-1691), `board_merge.py` (domains.py:537-589), `intake_format.py` (daily_intake.py:254-414), and the M6 wave: `ledger.py` (services/portfolio.py + tui/screens/ledger.py), `energy.py` (tui/energy.py), `polymarket.py` (tui/polymarket.py), `sentiment.py` (tui/brief.py + tui/tape.py + services/history.py), plus the shared `egress.py` pinned-proxy contract (extracted from the energy/polymarket twins by review D) |
 | `status.py` / `watch.py` | Tier 1 one-shot summary (stdlib) / tier 2 Rich Live rotator with keys: `p` pause, `1..9` page jump, space advance, `q`/Ctrl-C quit |
@@ -61,7 +61,10 @@ additionally exercised by the Pilot suite). Watch keys: `p` pauses
 auto-rotation (paused still polls — a stalled provider still shows the
 STALE banner next to PAUSED), `1..9` jump to a page, space advances,
 `q` / Ctrl-C quits. Piped stdin/stdout degrades `watch` to one tier-1
-status frame and exit 0.
+status frame and exit 0. In the TUI, `?` toggles the key sheet — every
+row is projected from the live binding table (`app/help_overlay.py`), so
+help cannot drift from the bindings; a focused input (regex filter,
+command bar, palette) always keeps `?` as text.
 
 ```sh
 # Tests (ephemeral env, nothing installed into the repo):

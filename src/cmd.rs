@@ -322,12 +322,21 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
                     let mut runs = Vec::new();
                     for id in root.list_run_ids()? {
                         match crate::runner::load_manifest(&root.run_dir(&id)) {
-                            Ok(manifest) => runs.push(json!({
-                                "run_id": id,
-                                "pipeline_id": manifest["pipeline"]["id"],
-                                "state": manifest["state"]["code"],
-                                "created_at": manifest["created_at"],
-                            })),
+                            Ok(manifest) => {
+                                let state = manifest["state"]["code"].as_str().unwrap_or_default();
+                                runs.push(json!({
+                                    "run_id": id,
+                                    "pipeline_id": manifest["pipeline"]["id"],
+                                    "state": manifest["state"]["code"],
+                                    "created_at": manifest["created_at"],
+                                    // Read-only twin of reconcile's liveness
+                                    // probe: the projection is state-neutral
+                                    // for `run.reconciled`, so without this
+                                    // flag a dead host's run reads as
+                                    // `running` forever.
+                                    "interrupted": crate::runner::holder_interrupted(&root, &id, state),
+                                }))
+                            }
                             Err(error) => runs.push(json!({
                                 "run_id": id,
                                 "pipeline_id": Value::Null,
@@ -337,7 +346,20 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
                         }
                     }
                     let data = json!({"state_root": root.path.display().to_string(), "runs": runs});
-                    let human = format!("{} run(s) in {}", runs_len(&data), root.path.display());
+                    let interrupted = runs
+                        .iter()
+                        .filter(|run| run["interrupted"].as_bool() == Some(true))
+                        .count();
+                    let human = if interrupted > 0 {
+                        format!(
+                            "{} run(s) in {} — {} interrupted (holder dead; run `stammtisch reconcile`)",
+                            runs_len(&data),
+                            root.path.display(),
+                            interrupted
+                        )
+                    } else {
+                        format!("{} run(s) in {}", runs_len(&data), root.path.display())
+                    };
                     Ok((0, data, human))
                 }
                 Some(id) => {
@@ -349,12 +371,19 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
                         ));
                     }
                     let manifest = crate::runner::load_manifest(&run_dir)?;
-                    let human = format!(
+                    let state = manifest["state"]["code"].as_str().unwrap_or("?");
+                    let mut human = format!(
                         "run {} — {} ({})",
                         id,
-                        manifest["state"]["code"].as_str().unwrap_or("?"),
+                        state,
                         manifest["pipeline"]["id"].as_str().unwrap_or("?")
                     );
+                    if crate::runner::holder_interrupted(&root, id, state) {
+                        // `data` stays the schema-pure manifest (the schema
+                        // is additionalProperties:false); the computed
+                        // interruption fact rides on the human note only.
+                        human.push_str(" [interrupted — holder dead; run `stammtisch reconcile`]");
+                    }
                     Ok((0, manifest, human))
                 }
             }
@@ -866,10 +895,7 @@ fn execute(command: &Command) -> Result<(i32, Value, String), AppError> {
                         .as_str()
                         .unwrap_or("?")
                         .to_string();
-                    let terminal = matches!(
-                        state.as_str(),
-                        "completed" | "blocked" | "failed" | "halted" | "cancelled"
-                    );
+                    let terminal = crate::runner::state_code_is_terminal(&state);
                     (state, terminal)
                 }
                 Err(error) => {

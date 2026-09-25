@@ -33,6 +33,7 @@ from textual.binding import Binding
 from textual.theme import Theme
 
 from interface.app.confirm import ConfirmDialog
+from interface.app.help_overlay import HelpOverlay, help_rows
 from interface.app.router import (
     ROOT_ROUTE,
     CommandBarScreen,
@@ -173,6 +174,12 @@ class WorkstationShell(App[None]):
         Binding("q", "quit", "Quit the workstation"),
         Binding("ctrl+p", "palette", "Command palette (recents first)"),
         Binding("colon", "command_bar", "Type a command (:runs, :backtest…)"),
+        # Priority so the sheet reaches modal screens too (the non-priority
+        # chain stops at the last modal). A focused Input still keeps `?` as
+        # text: Textual strips Input-consumed keys from the binding chain
+        # before priority dispatch — a filter regex can always contain `?`.
+        Binding("question_mark", "help_overlay",
+                "Key sheet (generated from the live bindings)", priority=True),
     ]
 
     def __init__(
@@ -256,6 +263,41 @@ class WorkstationShell(App[None]):
 
     def action_command_bar(self) -> None:
         self.push_screen(CommandBarScreen())
+
+    def action_help_overlay(self) -> None:
+        """``?`` — push the key sheet GENERATED from the live bindings.
+
+        Rows are captured from the topmost screen's ``active_bindings``
+        (the dispatcher's own chain: focused widget → screen → app)
+        BEFORE the overlay is pushed, so the sheet describes the screen
+        underneath, never itself. Nothing is hand-listed: a binding
+        declared anywhere shows up without touching this module.
+
+        The binding is priority (the only way it reaches modal screens),
+        which also makes it fire while the sheet itself is open — hence
+        the toggle: ``?`` closes the sheet it opened.
+
+        The sheet NEVER stacks over the ConfirmDialog: Textual's
+        ``Screen.dismiss()`` pops the TOPMOST screen unconditionally
+        (textual/screen.py: ``dismiss`` → ``app.pop_screen()``), so a
+        dialog resolving mid-stack (its fail-closed silence can fire
+        while another modal covers it) would pop the WRONG screen and
+        strand the resolved — inert, single-shot, unclosable — dialog on
+        top. Refusing keeps the ONE write path's surface clean.
+        """
+        screen = self.screen
+        if isinstance(screen, HelpOverlay):
+            screen.dismiss(None)
+            return
+        if isinstance(screen, ConfirmDialog):
+            self.notify("key sheet unavailable over the confirm dialog "
+                        "(Esc cancels it)", severity="warning")
+            return
+        route = getattr(screen, "route_name", None)
+        title = f"KEYS · {route}" if route else "KEYS"
+        self.push_screen(
+            HelpOverlay(help_rows(screen.active_bindings, self.get_key_display),
+                        title=title))
 
     def get_default_screen(self) -> OverviewScreen:
         return OverviewScreen()

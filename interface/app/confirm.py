@@ -172,7 +172,15 @@ class ConfirmDialog(ModalScreen[None]):
         if self._silence_timer is not None:
             self._silence_timer.stop()
             self._silence_timer = None
-        self.dismiss(None)
+        # Defense in depth (round F, S-1): ``Screen.dismiss()`` pops the
+        # TOPMOST screen unconditionally (textual/screen.py: dismiss →
+        # ``app.pop_screen()``). Were anything covering the dialog when it
+        # resolves (the shell's help guard makes that unreachable), a
+        # dismiss would pop the WRONG screen and strand this spent dialog
+        # on top — inert (single-shot) and unclosable (Esc cannot
+        # re-resolve). Never pop a screen that is not ours.
+        if self.app.screen is self:
+            self.dismiss(None)
         try:
             self._on_resolved(self.run_id, confirmed)
         except Exception:  # noqa: BLE001 - never let an audit crash the UI

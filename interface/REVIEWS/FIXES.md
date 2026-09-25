@@ -288,3 +288,59 @@ Suite after E: services+tui 526 passed / 1 skipped (repo venv),
 interface 315 passed (uv ephemeral), CI-mirror 824 passed + the 17
 pre-existing quantkit-gated failures; ruff interface clean, every
 touched file at-or-below its HEAD finding count.
+
+## Round F — the audit-residual batch (two-axis + cross-attack)
+
+Batch under review (uncommitted working tree on `fdbd0bc`), closing the
+three residuals the redesign left open:
+
+1. **GRILLING D3(2)** — core `status` surfaces `interrupted` (the
+   read-only twin of `reconcile`'s liveness probe): list rows gain the
+   computed boolean, the human note counts/marks it, the single-run
+   `data` stays the schema-pure manifest (`additionalProperties:false`).
+   `runner::holder_interrupted` + `state_code_is_terminal`; conformance
+   pin `status_surfaces_interrupted_runs` (dead holder → true; live lock
+   holder → false; terminal → false; manifest data key-free).
+2. **Blueprint §3 / M3 acceptance / ui-review P6** — the `?` key sheet
+   GENERATED from the live binding table (`app/help_overlay.py`:
+   `help_rows` pure projection + `HelpOverlay` modal; shell priority
+   binding with toggle). Pins in `tests/test_help_overlay.py`:
+   projection fidelity, coverage modulo widget-consumed/shadowed keys
+   (the DataTable owns `enter` — pinned as the known case), per-screen
+   generation on a modal, and `?`-as-text in the filter Input.
+3. **Round E residual risk** — `tui/tests/test_dashboard_glance.py`
+   runs the REAL `_glance_tick` worker path offline (only the two
+   network legs stubbed) and fails on `(no data)`; negative self-check
+   exercised: the E-1 import shape fails the pin, the fixed shape passes.
+
+Method: the mattpocock `code-review` skill (Standards + Spec axes as
+parallel sub-agents) extended with the Round E cross-attack (each axis
+attacked the other's findings). Adjudicated outcome:
+
+| Finding (axis, verdict after cross-attack) | Fix | Pin |
+|---|---|---|
+| S-1 (standards, CONFIRMED — the round's real bug): the documented help-over-ConfirmDialog interaction was prose-only, and probing it exposed a zombie trap — `Screen.dismiss()` pops the TOPMOST screen (textual/screen.py: dismiss → `app.pop_screen()`), so a dialog resolving mid-stack (its fail-closed silence firing under a cover) pops the WRONG screen and strands the spent dialog: inert (single-shot) and unclosable (Esc cannot re-resolve) | the sheet NEVER stacks over the confirm dialog (shell guard: refuse + notify); defense in depth in `_resolve`: dismiss only when topmost (never pop a screen that is not ours) | `test_help_never_stacks_over_confirm_and_silence_still_cancels` (refusal announced, dialog stays on top, silence still resolves `("silence", False)`, zero deletes spawned, audit line, clean stack exit) |
+| S-2 (standards, CONFIRMED): `state_code_is_terminal` restated the delete arm's inline five-code cascade (cmd.rs:898) | predicate made `pub`, delete arm consumes it — one terminality truth for state codes | existing delete conformance + `status_surfaces_interrupted_runs` |
+| S-11 (standards, CONFIRMED): README claimed THREE Inputs keep `?` as text; only the filter was pinned (D-1 precedent: documented contract without shipped test) | palette + command-bar pins added | `test_palette_and_command_bar_keep_the_question_mark_as_text` |
+| P-1 (spec, OK→OVERSTATED by the standards attack): the reconcile-parity equivalence is conditional — a hand-crafted log with a state-neutral event (`run.resumed`/`run.reconciled`) AFTER a terminal event keys differently (reconcile: last-event type; status: folded code). Unreachable via shipped commands (nothing emits `run.resumed`; reconcile appends only for non-terminal logs) | `holder_interrupted` docstring scopes the parity claim explicitly (never read as unconditional) | — (doc scoping; the reachable space is pinned by the conformance test) |
+| P-8 (spec, OK-NOTE→OVERSTATED by the standards attack): the glance test's docstring claimed a provenance pin it does not ship (old tree appends `ccidx`/`fin-daily` unconditionally — grandfathered; the interface twin fixed that in M4) | docstring reworded to what the test actually pins (per-quote tencent/yahoo sources; the unconditional suffix explicitly NOT pinned as honest) | — |
+| S-8 (standards, REFUTED except one sliver): the overlay's own `?`→dismiss binding is display-load-bearing (modal chain cuts app bindings, so the Footer shows `?` only because of it) — KEPT; the dead `title="KEYS"` default was speculative | default removed (title required) | shell always passes a title (existing pins) |
+| S-6 (standards, REFUTED as a gate — the ruff clean claim is interface-scoped; tui/ carries 344 pre-existing findings and was never held clean) | new test file still written cleaner than its tree: blocking config write moved out of the async scenario (zero ASYNC230 in the new file) | `uvx ruff check interface/ tui/tests/test_dashboard_glance.py` clean |
+| S-4 (REFUTED): corrupt rows lacking `interrupted` is the pre-existing loud shape; `interrupted` is a PROVED verdict — asserting it for an unprovable state would invent facts (rule 2's durable record IS the corrupt row) | — | `item_status_isolates_corrupt_runs` |
+| S-5 (REFUTED): the fold-divergence note's "revisit if the core changes" meant the projection divergence; this batch IS the engine-side fix D3 asked for. Wall-side consumption of the CLI field would need hot-path spawns — forbidden by ui-review §3 | — | — |
+| S-3 / S-7 (OVERSTATED → accept-as-is): note-text twins and the third `_ENV_HYGIENE_KEYS` copy are deferred-smell class (FIXES.md "Smells deferred"); tui/ is the retired track | — | — |
+| S-9 / S-10 / S-12 (REFUTED): shell is the sanctioned composition root (title building belongs there); rule (c) never covered app/ modules (confirm/router/verbs precedent); `interrupted` is the core's OWN vocabulary (reconcile output) and D3 prescribes exactly that word | — | — |
+| P-2 / P-3 (OK-NOTE): `live` stays derivable (`non-terminal ∧ ¬interrupted`); the list human-line suffix is a third surface but §8 constrains only "stderr stays human text" | — | — |
+| P-5 (CONFIRMED, accepted): per-screen coverage pins exist for Overview + RunDetail; the remaining screens ride the screen-agnostic generator (fidelity clause pins the projection for ANY screen) | — | fidelity clause in `test_sheet_is_the_faithful_projection_of_the_live_table` |
+
+Engine-side notes recorded (no action in this batch): docs/architecture.md
+§8 lists `stammtisch resume RUN_ID` but no `Resume` command exists in
+`src/cmd.rs` (pre-existing doc drift, surfaced by the P-1 attack);
+`run.resumed` remains vocabulary for that future op.
+
+Suite after F: cargo test --locked --all-features green (conformance 26);
+services+interface+tui 846 passed / 2 skipped in the repo venv, the one
+red being the documented quantkit-gated env fact (the repo venv HAS
+quantkit, `test_quantkit_absent_in_test_env_shape` asserts its absence —
+green in the CI/ephemeral env); ruff interface + the new tui file clean.
+

@@ -215,6 +215,36 @@ fn lock_holder_is_alive(holder_text: &str) -> bool {
         .is_some_and(pid_is_alive)
 }
 
+/// True for the five terminal run-manifest state codes (the schema enum
+/// minus the four in-flight codes `created`/`staged`/`running`/`gating`).
+/// The single predicate behind every state-code terminality check
+/// (`status`'s interrupted probe, `delete`'s force gate).
+pub fn state_code_is_terminal(code: &str) -> bool {
+    matches!(
+        code,
+        "completed" | "blocked" | "failed" | "halted" | "cancelled"
+    )
+}
+
+/// `reconcile`'s liveness verdict, exposed read-only for reporters: true
+/// when a run's projected state is non-terminal but no live holder keeps
+/// its launch lock — the host died mid-run. The projection fold is
+/// state-neutral for `run.reconciled` by enum necessity (the run-manifest
+/// schema has no such code), so without this verdict a dead host's run
+/// reads as `running` forever. Never writes: binding durable state stays
+/// `reconcile`'s exclusive job.
+///
+/// Equivalence scope: `reconcile` keys on the LAST EVENT'S type, this
+/// keys on the FOLDED STATE CODE. The two coincide for every log the
+/// shipped core can write (it refuses appends after a terminal event,
+/// and nothing emits `run.resumed`); a hand-crafted log with a
+/// state-neutral event appended after a terminal one would key
+/// differently — unreachable via shipped commands, documented so the
+/// parity claim is never read as unconditional.
+pub fn holder_interrupted(root: &StateRoot, run_id: &str, state_code: &str) -> bool {
+    !state_code_is_terminal(state_code) && !live_holder_for(root, run_id)
+}
+
 /// Append a terminal event to a non-terminal run. Never relaunches a stage.
 pub fn seal_run(
     run_dir: &Path,

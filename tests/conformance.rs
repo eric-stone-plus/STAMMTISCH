@@ -1266,6 +1266,83 @@ fn item_status_isolates_corrupt_runs() {
     assert_ne!(bad_row["state"], "running");
 }
 
+/// A dead host's non-terminal run must not read as plain `staged`/`running`
+/// forever: list `status` surfaces `interrupted` (the read-only twin of
+/// `reconcile`'s liveness probe), a live launch-lock holder flips it back,
+/// and the single-run form keeps `data` a schema-pure manifest while the
+/// human note names the interruption.
+#[test]
+fn status_surfaces_interrupted_runs() {
+    let tmp = Tmp::new("status-interrupted");
+    init(&tmp.0);
+    let good = run_example(&tmp.0);
+
+    // A non-terminal run whose host is gone: created + staged, no lock.
+    let dead = stammtisch::ids::uuid_v7().unwrap();
+    let dir = tmp.0.join("runs").join(&dead);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut w = stammtisch::store::EventWriter::new(&dir, &dead);
+    w.emit(
+        "run.created",
+        None,
+        json!({
+            "pipeline": {"id": "p", "canonical_sha256": format!("sha256:{}", "a".repeat(64))},
+            "doctrine": {"pack": "galahad", "resolved_sha256": format!("sha256:{}", "b".repeat(64))},
+            "stages": [{"id": "brief", "product": "doctrine", "gate": Value::Null, "outputs": ["brief.json"]}],
+            "state_root": tmp.0.display().to_string(),
+        }),
+    )
+    .unwrap();
+    w.emit("run.staged", None, json!({})).unwrap();
+    drop(w);
+
+    fn rows(home: &Path) -> Value {
+        let out = sh(home, &["status", "--json"]);
+        assert_eq!(out.code, 0, "{}", out.stderr);
+        out.json()["data"]["runs"].clone()
+    }
+    fn find(runs: &Value, id: &str) -> Value {
+        runs.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["run_id"] == id)
+            .cloned()
+            .expect("row present")
+    }
+
+    let runs = rows(&tmp.0);
+    let dead_row = find(&runs, &dead);
+    assert_eq!(dead_row["state"], "staged");
+    assert_eq!(dead_row["interrupted"], json!(true));
+    let good_row = find(&runs, &good);
+    assert_eq!(good_row["state"], "completed");
+    assert_eq!(good_row["interrupted"], json!(false));
+
+    // A live holder on the launch lock (this test process) flips the verdict.
+    let lock = tmp.0.join("host").join("launch.lock");
+    std::fs::write(
+        &lock,
+        serde_json::to_vec(&json!({
+            "run_id": dead,
+            "pid": std::process::id(),
+            "acquired_at": "2026-09-25T00:00:00Z",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(find(&rows(&tmp.0), &dead)["interrupted"], json!(false));
+    std::fs::remove_file(&lock).unwrap();
+
+    // Single-run status: the human note names the interruption …
+    let out = sh(&tmp.0, &["status", &dead]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stderr.contains("interrupted"), "{}", out.stderr);
+    // … while `data` stays the schema-pure manifest (no injected key).
+    let out = sh(&tmp.0, &["status", &dead, "--json"]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.json()["data"].get("interrupted").is_none());
+}
+
 /// Bonus: unknown gate kind is fail-closed at evaluation (§7).
 #[test]
 fn unknown_gate_kind_halts() {
