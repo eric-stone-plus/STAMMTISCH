@@ -11,16 +11,19 @@ re-read them without re-running the network sweep.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 import numpy as np
 import pandas as pd
 
 from . import portfolio  # noqa: F401  (state-root sibling, documents layout)
+from .brokers.alpaca import AlpacaBroker
 from .config import Config
 from .datafeeds import http as dfhttp
 from .datafeeds.http import configure_data_proxy, configure_proxy_fallback
@@ -45,19 +48,52 @@ def crypto_screen(config: Config, *, min_volume: float = 2_000_000,
                   timeout: float = 480.0) -> dict[str, Any]:
     """RSI(2) mean reversion on 1h bars for every liquid USDT pair."""
     _prepare(config)
-    tickers = dfhttp.get_json("https://api.binance.com/api/v3/ticker/24hr",
-                              provider="binance")
+    try:
+        tickers = dfhttp.get_json(
+            "https://api.binance.com/api/v3/ticker/24hr", provider="binance")
+    except HTTPError as exc:
+        if exc.code == 451:
+            # Binance answers 451 when the exit IP sits in a blocked
+            # jurisdiction. There is no free substitute for the 1h-kline
+            # universe, so degrade with an actionable, honest error
+            # instead of a bare transport string.
+            return {"ok": False,
+                    "error": "binance geo-blocks this egress (HTTP 451) — "
+                             "rotate the egress exit or point data_proxy_url "
+                             "at a permitted one"}
+        return {"ok": False,
+                "error": f"binance ticker request failed (HTTP {exc.code})"}
+    except (URLError, TimeoutError, OSError) as exc:
+        return {"ok": False,
+                "error": f"binance ticker unreachable: {exc}"}
     ranked = [t for t in tickers if t["symbol"].endswith("USDT")
               and float(t.get("quoteVolume", 0)) >= min_volume
               and not t["symbol"].startswith(("USDC", "FDUSD", "TUSD", "EUR"))]
     ranked.sort(key=lambda t: float(t["quoteVolume"]), reverse=True)
     universe = [t["symbol"] for t in ranked[:limit]]
 
+    # Transport failures must stay distinguishable from "no trades found":
+    # a geo-blocked egress fails every klines fetch, and the sweep below
+    # must not present the empty (or near-empty) survivor set as a
+    # universe-wide statistic.
+    failures = {"count": 0, "samples": []}
+    failures_lock = threading.Lock()
+
+    def _note_failure(symbol: str, exc: Exception) -> None:
+        with failures_lock:
+            failures["count"] += 1
+            if len(failures["samples"]) < 3:
+                failures["samples"].append(f"{symbol}: {exc}")
+
     def one(symbol: str) -> dict[str, Any] | None:
         try:
             raw = dfhttp.get_json(
                 "https://api.binance.com/api/v3/klines"
                 f"?symbol={symbol}&interval=1h&limit=200", provider="binance")
+        except (HTTPError, URLError, OSError) as exc:
+            _note_failure(symbol, exc)
+            return None
+        try:
             closes = np.array([float(k[4]) for k in raw], dtype=float)
             if len(closes) < 100:
                 return None
@@ -87,6 +123,21 @@ def crypto_screen(config: Config, *, min_volume: float = 2_000_000,
             row = future.result()
             if row:
                 rows.append(row)
+    failed = failures["count"]
+    samples = "; ".join(failures["samples"])
+    if not rows or failed >= max(1, int(0.9 * len(universe))):
+        if "451" in samples:
+            error = (f"binance geo-blocks this egress (HTTP 451 on klines: "
+                     f"{failed}/{len(universe)} pairs) — rotate the egress "
+                     f"exit or point data_proxy_url at a permitted one")
+        elif failed:
+            error = (f"klines transports failed on {failed}/{len(universe)} "
+                     f"pairs: {samples}")
+        else:
+            error = (f"no pair produced enough trades "
+                     f"({len(universe)} pairs screened)")
+        return {"ok": False, "universe": len(universe), "evaluated": len(rows),
+                "error": error}
     tiers = {f"{fee:.2%}": {
         "median_net": float(np.median([r["mean"] - fee for r in rows])),
         "positive_share": float(np.mean([r["mean"] - fee > 0 for r in rows])),
@@ -151,15 +202,25 @@ def stock_screen(config: Config, *, limit: int = 320, workers: int = 6,
             row = future.result()
             if row:
                 rows.append(row)
+    if not rows:
+        return {"ok": False, "universe": len(sample), "evaluated": 0,
+                "error": f"no name produced enough trades "
+                         f"({len(sample)} sampled)"}
     return {"universe": len(sample), "evaluated": len(rows), "rows": rows}
 
 
 def persist(state_root: str | Path, kind: str, payload: dict[str, Any]) -> Path:
+    """Atomically write one screener payload as strict JSON.
+
+    ``allow_nan=False``: a NaN/Infinity slipping into a persisted result
+    would produce a file no strict JSON reader accepts — fail loudly at
+    the write instead of corrupting the state root.
+    """
     path = Path(state_root) / "intel" / "screeners" / f"{kind}-{datetime.now():%Y%m%d}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps({"generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                               **payload}, default=str), encoding="utf-8")
+                               **payload}, default=str, allow_nan=False), encoding="utf-8")
     tmp.replace(path)
     return path
 

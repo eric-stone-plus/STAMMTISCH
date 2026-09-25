@@ -8,7 +8,9 @@ Routes:
 
   GET /                      the chart page
   GET /chart/<symbol>        the chart page preloaded with a symbol
-  GET /api/candles?symbol=...&start=...   OHLCV JSON (quantkit)
+  GET /api/candles?symbol=...&start=...   OHLCV JSON (quantkit;
+      ``SGX:<CODE>`` reads operator-local settlement exports and
+      ``CRYPTO:<SYM>`` rides the free-data candle chain)
   GET /api/forecast?symbol=...[&horizon=N] forecast JSON (kronos_cmd)
 
 Run directly (``python -m services.chart_server [--port PORT]``) or let the
@@ -323,6 +325,34 @@ def _merge_bar(prev: dict, bar: dict) -> dict:
     }
 
 
+def _collapse_day_bars(entries: Any, time_key: str) -> list[dict]:
+    """Candle-ish dicts → unique ascending calendar-day bars.
+
+    Shared by the operator-local (``date`` key) and free-chain crypto
+    (``time`` key) routes: first open, max high, min low, last close,
+    summed volume. Unusable entries are dropped, never raised on.
+    """
+    if not isinstance(entries, list):
+        return []
+    merged: dict[str, dict] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        bar = _row_bar(
+            entry.get(time_key),
+            entry.get("open"),
+            entry.get("high"),
+            entry.get("low"),
+            entry.get("close"),
+            entry.get("volume", 0.0),
+        )
+        if bar is None:
+            continue
+        prev = merged.get(bar["time"])
+        merged[bar["time"]] = bar if prev is None else _merge_bar(prev, bar)
+    return [merged[key] for key in sorted(merged)]
+
+
 def bars_from_ohlcv(df) -> list[dict]:
     """OHLCV frame → unique ascending finite candles.
 
@@ -422,23 +452,7 @@ def external_candles_payload(root: str, symbol: str) -> dict:
             "symbol": symbol,
             "candles": [],
         }
-    candles_by_time: dict[str, dict] = {}
-    for entry in bars:
-        if not isinstance(entry, dict):
-            continue
-        bar = _row_bar(
-            entry.get("date"),
-            entry.get("open"),
-            entry.get("high"),
-            entry.get("low"),
-            entry.get("close"),
-            entry.get("volume", 0.0),
-        )
-        if bar is None:
-            continue
-        prev = candles_by_time.get(bar["time"])
-        candles_by_time[bar["time"]] = bar if prev is None else _merge_bar(prev, bar)
-    candles = [candles_by_time[key] for key in sorted(candles_by_time)]
+    candles = _collapse_day_bars(bars, "date")
     if not candles:
         return {
             "ok": False,
@@ -455,6 +469,62 @@ def external_candles_payload(root: str, symbol: str) -> dict:
             "source": str(document.get("source") or "operator-local export"),
             "name": str(document.get("name") or match.group(1)),
             "unit": str(document.get("unit") or ""),
+        },
+    }
+
+
+_CRYPTO_SYMBOL_RE = re.compile(r"^CRYPTO:([A-Z0-9]{1,20})$")
+
+
+def crypto_candles_payload(config: Any, symbol: str) -> dict:
+    """``CRYPTO:<SYM>`` → the free-data candle chain (binance → coingecko).
+
+    Proxy discipline follows the operator config (explicit data proxy with
+    egress fallback, never ambient proxy variables). Fail closed: an
+    invalid symbol or a dead chain becomes a structured ``ok: False``
+    body — never a 500, never a silent substitute. Intraday candles from
+    the chain collapse onto calendar days like the external route.
+    """
+    match = _CRYPTO_SYMBOL_RE.fullmatch(symbol)
+    if match is None:
+        return {
+            "ok": False,
+            "error": f"invalid crypto symbol: {symbol}",
+            "symbol": symbol,
+            "candles": [],
+        }
+    from .datafeeds import service as df_service
+    from .datafeeds.http import configure_data_proxy, configure_proxy_fallback
+
+    configure_data_proxy(getattr(config, "data_proxy_url", "") or None)
+    configure_proxy_fallback(getattr(config, "egress_proxy_url", "") or None)
+    try:
+        candles = df_service.crypto_candles(match.group(1), interval="1d",
+                                            limit=365)
+    except Exception as exc:  # noqa: BLE001 — a dead chain is a closed gate
+        return {
+            "ok": False,
+            "error": f"crypto candles unavailable for {symbol}: {exc}",
+            "symbol": symbol,
+            "candles": [],
+        }
+    out = _collapse_day_bars(candles, "time")
+    if not out:
+        return {
+            "ok": False,
+            "error": f"no usable crypto candles for {symbol}",
+            "symbol": symbol,
+            "candles": [],
+        }
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "candles": out,
+        "provenance": {
+            "data_mode": "crypto-chain",
+            "source": "free-data chain (binance -> coingecko)",
+            "note": "the coingecko fallback reports no volume; 0.0 volumes "
+                    "may be placeholders, not measured turnover",
         },
     }
 
@@ -797,11 +867,22 @@ class ChartHandler(BaseHTTPRequestHandler):
                     raw_symbol, mic, config.validated_bars_root
                 )
             except Exception as exc:  # loader failures are a closed data gate
+                if raw_symbol.startswith(("SGX:", "CRYPTO:")):
+                    # Mode-aware copy: the operator asked for the sealed
+                    # store only, so the free-chain routes are blocked by
+                    # design — say that instead of a generic loader error.
+                    error = (
+                        "validated mode serves sealed manifests only; the "
+                        f"{raw_symbol.split(':', 1)[0]}: free-chain route is "
+                        "blocked by design (ohlcv_mode)"
+                    )
+                else:
+                    error = f"validated bars unavailable: {exc}"
                 self._json(
                     200,
                     {
                         "ok": False,
-                        "error": f"validated bars unavailable: {exc}",
+                        "error": error,
                         "symbol": raw_symbol,
                         "mic": mic,
                         "candles": [],
@@ -818,6 +899,12 @@ class ChartHandler(BaseHTTPRequestHandler):
             self._json(
                 200, external_candles_payload(config.external_bars_root, raw_symbol)
             )
+            return
+
+        if raw_symbol.startswith("CRYPTO:"):
+            # Free-data candle chain (binance -> coingecko) — never routed
+            # to quantkit either.
+            self._json(200, crypto_candles_payload(config, raw_symbol))
             return
 
         symbol = _normalize_symbol(raw_symbol)
@@ -897,6 +984,18 @@ class ChartHandler(BaseHTTPRequestHandler):
                 return
             symbol = raw_symbol
         else:
+            if raw_symbol.startswith(("SGX:", "CRYPTO:")):
+                # Kronos models market symbols. Operator-local settlement
+                # exports and free-chain crypto routes have no forecast:
+                # fail closed with a structured body instead of spawning
+                # kronos_cmd on a symbol it can never resolve.
+                self._json(200, {
+                    "ok": False,
+                    "error": ("forecast is not supported for "
+                              f"{raw_symbol.split(':', 1)[0]}: series"),
+                    "symbol": raw_symbol,
+                })
+                return
             symbol = _normalize_symbol(raw_symbol)
         driver = TimeseriesDriver(config.get("kronos_cmd"))
         self._json(

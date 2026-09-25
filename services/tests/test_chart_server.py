@@ -949,6 +949,149 @@ class ExternalBarsTest(unittest.TestCase):
         self.assertEqual(payload["provenance"]["unit"], "USD/mt")
 
 
+class CryptoCandlesTest(unittest.TestCase):
+    """CRYPTO:<SYM> — free-data candle chain, fail closed at every step."""
+
+    @staticmethod
+    def _config():
+        return SimpleNamespace(data_proxy_url="http://proxy.invalid:1",
+                               egress_proxy_url="http://fallback.invalid:2")
+
+    def test_symbol_shape_is_enforced(self):
+        for bad in ("CRYPTO:btc", "CRYPTO:", "CRYPTO:BTC/USDT",
+                    "CRYPTO:ABCDEFGHIJKLMNOPQRSTU"):
+            payload = chart_server.crypto_candles_payload(self._config(), bad)
+            self.assertFalse(payload["ok"], bad)
+            self.assertIn("invalid crypto symbol", payload["error"])
+
+    def test_dead_chain_fails_closed(self):
+        with mock.patch("services.datafeeds.service.crypto_candles",
+                        side_effect=RuntimeError(
+                            "no crypto candles provider (binance: HTTP 451)")):
+            payload = chart_server.crypto_candles_payload(
+                self._config(), "CRYPTO:BTC")
+        self.assertFalse(payload["ok"])
+        self.assertIn("unavailable", payload["error"])
+        self.assertEqual(payload["candles"], [])
+
+    def test_chain_candles_map_to_payload(self):
+        candles = [
+            {"time": "2026-09-25", "open": 1.0, "high": 2.0, "low": 0.5,
+             "close": 1.5, "volume": 9.0},
+            {"time": "2026-09-26", "open": 1.5, "high": 3.0, "low": 1.0,
+             "close": 2.5, "volume": 8.0},
+        ]
+        with mock.patch("services.datafeeds.service.crypto_candles",
+                        return_value=candles) as fetch:
+            payload = chart_server.crypto_candles_payload(
+                self._config(), "CRYPTO:BTC")
+        self.assertTrue(payload["ok"], payload.get("error"))
+        self.assertEqual(payload["symbol"], "CRYPTO:BTC")
+        self.assertEqual(len(payload["candles"]), 2)
+        self.assertEqual(payload["candles"][1]["close"], 2.5)
+        self.assertEqual(payload["provenance"]["data_mode"], "crypto-chain")
+        fetch.assert_called_once_with("BTC", interval="1d", limit=365)
+
+    def test_intraday_candles_collapse_to_calendar_days(self):
+        candles = [
+            {"time": "2026-09-25 08:00", "open": 1.0, "high": 2.0, "low": 0.5,
+             "close": 1.5, "volume": 4.0},
+            {"time": "2026-09-25 16:00", "open": 1.5, "high": 4.0, "low": 1.2,
+             "close": 3.0, "volume": 5.0},
+        ]
+        with mock.patch("services.datafeeds.service.crypto_candles",
+                        return_value=candles):
+            payload = chart_server.crypto_candles_payload(
+                self._config(), "CRYPTO:ETH")
+        self.assertTrue(payload["ok"], payload.get("error"))
+        self.assertEqual(len(payload["candles"]), 1)
+        bar = payload["candles"][0]
+        self.assertEqual(bar["time"], "2026-09-25")
+        self.assertEqual(bar["open"], 1.0)   # first open of the day
+        self.assertEqual(bar["high"], 4.0)   # max high
+        self.assertEqual(bar["low"], 0.5)    # min low
+        self.assertEqual(bar["close"], 3.0)  # last close
+        self.assertEqual(bar["volume"], 9.0)  # summed
+
+    def test_proxy_configuration_follows_operator_config(self):
+        with mock.patch("services.datafeeds.service.crypto_candles",
+                        return_value=[]), \
+             mock.patch("services.datafeeds.http.configure_data_proxy") as primary, \
+             mock.patch("services.datafeeds.http.configure_proxy_fallback") as fallback:
+            chart_server.crypto_candles_payload(self._config(), "CRYPTO:BTC")
+        primary.assert_called_once_with("http://proxy.invalid:1")
+        fallback.assert_called_once_with("http://fallback.invalid:2")
+
+
+class CryptoRouteWiringTest(unittest.TestCase):
+    """End-to-end do_GET wiring for the CRYPTO: route (mocked chain)."""
+
+    @staticmethod
+    def _live_config(**overrides):
+        cache = tempfile.TemporaryDirectory(prefix="stammtisch-chart-test-")
+        config = SimpleNamespace(
+            ohlcv_mode="live",
+            data_dir=cache.name,
+            data_proxy_url="",
+            egress_proxy_url="",
+            egress_switch_cmd="",
+            validated_bars_root=cache.name,
+            external_bars_root="",
+            get=lambda key, default=None: default,
+        )
+        for name, value in overrides.items():
+            setattr(config, name, value)
+        return config, cache
+
+    def _get_json(self, config, path):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ChartHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with mock.patch("services.chart_server.Config",
+                            return_value=config):
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                return resp.status, json.loads(resp.read().decode())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_candles_route_serves_crypto_chain(self):
+        config, cache = self._live_config()
+        candles = [{"time": "2026-09-25", "open": 1.0, "high": 2.0,
+                    "low": 0.5, "close": 1.5, "volume": 9.0}]
+        with cache, mock.patch("services.datafeeds.service.crypto_candles",
+                               return_value=candles):
+            status, payload = self._get_json(
+                config, "/api/candles?symbol=CRYPTO:BTC")
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"], payload.get("error"))
+        self.assertEqual(payload["candles"][0]["close"], 1.5)
+
+    def test_forecast_refuses_free_chain_classes(self):
+        config, cache = self._live_config()
+        with cache:
+            for symbol in ("CRYPTO:BTC", "SGX:MF5F"):
+                status, payload = self._get_json(
+                    config, f"/api/forecast?symbol={symbol}")
+                self.assertEqual(status, 200, symbol)
+                self.assertFalse(payload["ok"], symbol)
+                self.assertIn("not supported", payload["error"])
+
+    def test_validated_mode_names_the_design_block(self):
+        config, cache = self._live_config(ohlcv_mode="validated")
+        with cache:
+            status, payload = self._get_json(
+                config, "/api/candles?symbol=CRYPTO:BTC")
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["ok"])
+        self.assertIn("blocked by design", payload["error"])
+
+
 class ParentDeathWatchTest(unittest.TestCase):
     """The chart server must not outlive the TUI that spawned it."""
 

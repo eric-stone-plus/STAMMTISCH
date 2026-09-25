@@ -12,7 +12,10 @@ from ..errors import FeedError
 from ..http import get_json
 
 MARKETS_ENDPOINT = "https://api.coingecko.com/api/v3/coins/markets"
+SEARCH_ENDPOINT = "https://api.coingecko.com/api/v3/search"
+OHLC_ENDPOINT = "https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
 SOURCE = "CoinGecko /coins/markets"
+CANDLE_SOURCE = "CoinGecko /coins/{id}/ohlc"
 
 # 7-day hourly sparkline downsampled to roughly this many points keeps
 # the sidebar sparkline readable at 40 cells.
@@ -76,3 +79,91 @@ def fetch_board(*, limit: int = 30, timeout: float = 10.0) -> dict[str, Any]:
     except Exception as exc:
         raise FeedError("coingecko", f"markets request failed: {exc}") from exc
     return parse_markets(payload)
+
+
+def parse_ohlc(payload: Any) -> list[dict[str, Any]]:
+    """Parse the /ohlc array (newest last) into candle dicts.
+
+    The endpoint reports no volume; the field stays present (0.0) so the
+    candle shape matches the binance chain partner.
+    """
+    if not isinstance(payload, list) or not payload:
+        raise FeedError("coingecko", "ohlc payload is empty")
+    from datetime import datetime, timezone
+
+    candles: list[dict[str, Any]] = []
+    for row in payload:
+        if not isinstance(row, list) or len(row) < 5:
+            continue
+        try:
+            stamp_ms = int(row[0])
+            values = [float(v) for v in row[1:5]]
+        except (TypeError, ValueError):
+            continue
+        opened = datetime.fromtimestamp(stamp_ms / 1000, tz=timezone.utc)
+        time_format = "%Y-%m-%d" if opened.hour == 0 and opened.minute == 0 \
+            else "%Y-%m-%d %H:%M"
+        candles.append({
+            "time": opened.strftime(time_format),
+            "open": values[0],
+            "high": values[1],
+            "low": values[2],
+            "close": values[3],
+            "volume": 0.0,
+        })
+    if not candles:
+        raise FeedError("coingecko", "ohlc payload has no rows")
+    return candles
+
+
+def resolve_coin_id(symbol: str, *, timeout: float = 10.0) -> str:
+    """Map a board ticker (BTC) to its CoinGecko id (bitcoin).
+
+    Exact symbol match wins; among matches the best market-cap rank is
+    taken so look-alike tickers on the /search page cannot hijack the
+    candle chain.
+    """
+    from urllib.parse import urlencode
+
+    wanted = symbol.strip().upper()
+    if not wanted:
+        raise FeedError("coingecko", "empty symbol for id lookup")
+    url = SEARCH_ENDPOINT + "?" + urlencode({"query": wanted})
+    try:
+        payload = get_json(url, timeout=timeout, provider="coingecko")
+    except Exception as exc:
+        raise FeedError("coingecko", f"search for {wanted}: {exc}") from exc
+    coins = payload.get("coins") if isinstance(payload, dict) else None
+    if not isinstance(coins, list):
+        raise FeedError("coingecko", f"search payload for {wanted} has no coins")
+    matches = [
+        coin for coin in coins
+        if isinstance(coin, dict) and coin.get("id")
+        and str(coin.get("symbol") or "").upper() == wanted
+    ]
+    if not matches:
+        raise FeedError("coingecko", f"no coin matches symbol {wanted}")
+    matches.sort(key=lambda coin: coin.get("market_cap_rank") or float("inf"))
+    return str(matches[0]["id"])
+
+
+def fetch_candles(symbol: str, *, days: int = 180,
+                  timeout: float = 10.0) -> list[dict[str, Any]]:
+    """OHLC candles for one coin symbol via the keyless /ohlc endpoint.
+
+    Granularity is endpoint-controlled: hourly for short windows, 4h up
+    to 30 days, daily beyond — callers get whatever /ohlc serves for the
+    requested ``days`` (capped to the API's 365-day window).
+    """
+    from urllib.parse import urlencode
+
+    coin_id = resolve_coin_id(symbol, timeout=timeout)
+    url = OHLC_ENDPOINT.format(coin_id=coin_id) + "?" + urlencode({
+        "vs_currency": "usd",
+        "days": str(max(1, min(int(days), 365))),
+    })
+    try:
+        payload = get_json(url, timeout=timeout, provider="coingecko")
+    except Exception as exc:
+        raise FeedError("coingecko", f"ohlc for {coin_id}: {exc}") from exc
+    return parse_ohlc(payload)

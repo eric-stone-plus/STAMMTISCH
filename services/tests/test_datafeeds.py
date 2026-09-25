@@ -232,6 +232,67 @@ class CoingeckoProviderTest(unittest.TestCase):
             coingecko.parse_markets([])
 
 
+class CoingeckoOhlcTest(unittest.TestCase):
+    @staticmethod
+    def _ms(*args) -> int:
+        from datetime import datetime, timezone
+
+        return int(datetime(*args, tzinfo=timezone.utc).timestamp() * 1000)
+
+    def test_parse_ohlc_day_and_intraday_shapes(self):
+        payload = [
+            [self._ms(2026, 9, 25), 100.0, 110.0, 95.0, 105.0],
+            [self._ms(2026, 9, 25, 16, 0), 105.0, 108.0, 104.0, 107.0],
+            ["garbage", 1, 2],
+        ]
+        candles = coingecko.parse_ohlc(payload)
+        self.assertEqual(len(candles), 2)
+        self.assertEqual(candles[0]["time"], "2026-09-25")
+        self.assertEqual(candles[1]["time"], "2026-09-25 16:00")
+        self.assertEqual(candles[0]["close"], 105.0)
+        # The /ohlc endpoint reports no volume; the shape stays uniform.
+        self.assertEqual(candles[0]["volume"], 0.0)
+
+    def test_parse_ohlc_empty_raises(self):
+        with self.assertRaises(FeedError):
+            coingecko.parse_ohlc([])
+
+    def test_resolve_coin_id_prefers_best_rank(self):
+        payload = {"coins": [
+            {"id": "btc-clone", "symbol": "BTC", "market_cap_rank": 900},
+            {"id": "bitcoin", "symbol": "btc", "market_cap_rank": 1},
+            {"id": "other", "symbol": "ETH", "market_cap_rank": 2},
+        ]}
+        with mock.patch.object(coingecko, "get_json", return_value=payload):
+            self.assertEqual(coingecko.resolve_coin_id("BTC"), "bitcoin")
+
+    def test_resolve_coin_id_no_match_raises(self):
+        with mock.patch.object(coingecko, "get_json",
+                               return_value={"coins": [{"id": "x",
+                                                        "symbol": "ETH"}]}), \
+             self.assertRaises(FeedError):
+            coingecko.resolve_coin_id("BTC")
+        with mock.patch.object(coingecko, "get_json", return_value={}), \
+             self.assertRaises(FeedError):
+            coingecko.resolve_coin_id("BTC")
+
+    def test_fetch_candles_chains_search_then_ohlc(self):
+        ohlc = [[self._ms(2026, 9, 25), 1.0, 2.0, 0.5, 1.5]]
+
+        def fake_get_json(url, **kwargs):
+            if "/search" in url:
+                return {"coins": [{"id": "bitcoin", "symbol": "BTC",
+                                   "market_cap_rank": 1}]}
+            self.assertIn("/coins/bitcoin/ohlc", url)
+            self.assertIn("vs_currency=usd", url)
+            return ohlc
+
+        with mock.patch.object(coingecko, "get_json", side_effect=fake_get_json):
+            candles = coingecko.fetch_candles("BTC", days=180)
+        self.assertEqual(len(candles), 1)
+        self.assertEqual(candles[0]["close"], 1.5)
+
+
 class BinanceProviderTest(unittest.TestCase):
     def test_parse_klines(self):
         payload = [
@@ -319,6 +380,71 @@ class ServiceChainTest(unittest.TestCase):
             result = service.crypto_board(limit=5)
         self.assertEqual(result["rows"][0]["last"], 10.0)
         self.assertEqual(result["rows"][0]["source"], "binance")
+
+    def test_crypto_board_stamps_generated_at(self):
+        from datetime import datetime
+
+        board = {"rows": [], "btc_dominance": None}
+        with mock.patch.object(coingecko, "fetch_board", return_value=board):
+            result = service.crypto_board(limit=5)
+        stamp = result.get("generated_at")
+        self.assertIsInstance(stamp, str)
+        self.assertIsNotNone(datetime.fromisoformat(stamp).tzinfo)
+
+    def test_crypto_candles_binance_then_coingecko(self):
+        candles = [{"time": "2026-09-25", "open": 1, "high": 2, "low": 0.5,
+                    "close": 1.5, "volume": 0.0}]
+        with mock.patch.object(binance, "fetch_candles",
+                               side_effect=FeedError("binance", "HTTP 451")), \
+             mock.patch.object(coingecko, "fetch_candles",
+                               return_value=candles):
+            result = service.crypto_candles("BTC", interval="1d", limit=180)
+        self.assertEqual(result, candles)
+        stats = {entry.name: entry for entry in registry.all_stats()}
+        self.assertEqual(stats["binance"].failed, 1)
+        self.assertEqual(stats["coingecko"].ok, 1)
+
+    def test_crypto_candles_coingecko_fallback_trims_to_limit(self):
+        candles = [{"time": f"2026-09-{day:02d}", "open": 1, "high": 2,
+                    "low": 0.5, "close": 1.5, "volume": 0.0}
+                   for day in range(1, 29)]
+        with mock.patch.object(binance, "fetch_candles",
+                               side_effect=FeedError("binance", "down")), \
+             mock.patch.object(coingecko, "fetch_candles",
+                               return_value=candles):
+            result = service.crypto_candles("ETH-USD", interval="1d", limit=10)
+        self.assertEqual(len(result), 10)
+        self.assertEqual(result[-1]["time"], "2026-09-28")  # newest survive
+
+    def test_crypto_candles_all_down_raises(self):
+        with mock.patch.object(binance, "fetch_candles",
+                               side_effect=FeedError("binance", "down")), \
+             mock.patch.object(coingecko, "fetch_candles",
+                               side_effect=FeedError("coingecko", "down")), \
+             self.assertRaises(RuntimeError) as ctx:
+            service.crypto_candles("SOL", interval="1d", limit=180)
+        self.assertIn("no crypto candles provider", str(ctx.exception))
+
+    def test_crypto_candles_intraday_never_falls_back(self):
+        # The coingecko granularity is endpoint-controlled: serving it
+        # under a 1h cache key would make the cache lie. Honest failure
+        # instead — and the fallback must not even be attempted.
+        with mock.patch.object(binance, "fetch_candles",
+                               side_effect=FeedError("binance", "HTTP 451")), \
+             mock.patch.object(coingecko, "fetch_candles") as gecko, \
+             self.assertRaises(RuntimeError) as ctx:
+            service.crypto_candles("BTC", interval="1h", limit=200)
+        gecko.assert_not_called()
+        self.assertIn("binance", str(ctx.exception))
+
+    def test_crypto_board_preserves_provider_stamp(self):
+        board = {"rows": [], "btc_dominance": None,
+                 "generated_at": "2020-01-01T00:00:00+00:00"}
+        with mock.patch.object(coingecko, "fetch_board", return_value=board):
+            result = service.crypto_board(limit=5)
+        # setdefault, never overwrite: a producer-side stamp outranks the
+        # chain's own clock.
+        self.assertEqual(result["generated_at"], "2020-01-01T00:00:00+00:00")
 
 
 class JournalTest(unittest.TestCase):

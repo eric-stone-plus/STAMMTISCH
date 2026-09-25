@@ -9,6 +9,8 @@ the BTC dominance figure is computed over the fetched page only.
 
 from __future__ import annotations
 
+import time
+from datetime import datetime
 from typing import Any
 
 from rich.text import Text
@@ -22,6 +24,49 @@ from ..analysis import _run_async
 from ..widgets import CYAN, DIM, GREEN, GRAY, RED, WHITE
 
 _SPARK_RAMP = "▁▂▃▄▅▆▇█"
+
+
+def _price(value: float) -> str:
+    """Fixed-point price rendering — never scientific notation.
+
+    ``%g`` flips six-figure prices into ``8.459e+04``; grouped fixed
+    point keeps every magnitude readable, with precision scaled down for
+    sub-unit coins.
+    """
+    if value >= 1000:
+        return f"{value:,.2f}"
+    if value >= 1:
+        return f"{value:,.4f}"
+    if value > 0:
+        return f"{value:,.8f}"
+    return "—"
+
+
+def _age_text(seconds: float) -> str:
+    """Human data-age: ``23s`` / ``4m05s`` / ``2h03m``."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
+
+
+def _parse_epoch(stamp: Any) -> float | None:
+    """ISO-8601 stamp (as the board chain emits) → epoch seconds.
+
+    Zone-naive stamps are refused rather than guessed: the age segment
+    must never display a fabricated offset.
+    """
+    if not isinstance(stamp, str) or not stamp.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp.strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.timestamp()
 
 
 def spark_chars(values: list[float], width: int = 10) -> str:
@@ -46,6 +91,7 @@ class CryptoBoardScreen(Screen):
         Binding("escape", "back", "Back"),
         Binding("r", "refresh", "Refresh"),
         Binding("v", "chart", "Chart"),
+        Binding("k", "chart_browser", "K-line"),
         Binding("b", "backtest", "Backtest"),
         Binding("s", "screener", "Screener"),
         Binding("question_mark", "show_help", "Keys"),
@@ -63,11 +109,16 @@ class CryptoBoardScreen(Screen):
         self.engine = engine
         self.config = config
         self._rows: list[dict[str, Any]] = []
+        self._status_base = ""
+        self._status_is_board = False
+        self._data_epoch: float | None = None
+        self._fetched_epoch: float | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
             "  COINS  |  free-data chains: coingecko -> binance  |  "
-            "[V] Chart  [R] Refresh  [Esc] Back",
+            "[V] Chart  [K] K-line  [S] Screener  [B] Backtest  "
+            "[R] Refresh  [Esc] Back",
             classes="header-bar",
         )
         yield Static("  loading…", id="coins-status")
@@ -85,6 +136,8 @@ class CryptoBoardScreen(Screen):
         self.query_one("#coins-bt", DataTable).add_columns(
             "STRATEGY", "RET%", "MAXDD%", "SHARPE", "SORTINO", "CALMAR",
             "EXPO%", "WIN%", "TRADES", "PF")
+        # The data-age segment must tick even while the board sits idle.
+        self.set_interval(1.0, self._render_board_status)
         self.action_refresh()
 
     def action_refresh(self) -> None:
@@ -98,12 +151,13 @@ class CryptoBoardScreen(Screen):
                 self._apply([], None, str(result.get("error") or "failed"))
                 return
             self._apply(result.get("rows") or [], result.get("btc_dominance"),
-                        (result.get("rows") or [{}])[0].get("source", ""))
+                        (result.get("rows") or [{}])[0].get("source", ""),
+                        generated_at=result.get("generated_at"))
 
         _run_async(self, _work, _deliver, dedup_key="coins-refresh")
 
     def _apply(self, rows: list[dict[str, Any]], dominance: float | None,
-               source: str) -> None:
+               source: str, generated_at: str | None = None) -> None:
         self._rows = rows
         try:
             table = self.query_one("#coins-table", DataTable)
@@ -113,7 +167,7 @@ class CryptoBoardScreen(Screen):
                 table.add_row(
                     str(row.get("symbol") or "?"),
                     str(row.get("name") or ""),
-                    f"{float(row.get('last') or 0):,.4g}",
+                    _price(float(row.get("last") or 0)),
                     Text(f"{chg:+.2f}%", style=GREEN if chg >= 0 else RED),
                     Text(spark_chars(row.get("spark") or []), style=CYAN),
                     _compact(float(row.get("market_cap") or 0)),
@@ -124,10 +178,35 @@ class CryptoBoardScreen(Screen):
             dominance_text = (f"  BTC dominance {dominance:.1f}%"
                               if dominance else "")
             stamp = f" · src: {source}" if source else ""
-            self.query_one("#coins-status", Static).update(
-                f"  {len(rows)} coins{dominance_text}{stamp}")
+            self._status_base = f"  {len(rows)} coins{dominance_text}{stamp}"
+            self._fetched_epoch = time.time()
+            self._data_epoch = _parse_epoch(generated_at)
+            self._status_is_board = True
+            self._render_board_status()
         except Exception:
             pass
+
+    def _render_board_status(self) -> None:
+        """Refresh the board status line with a live data-age segment.
+
+        Only re-renders while the status line still belongs to the board:
+        operational messages (screener/backtest runs) own the line until
+        the next board apply.
+        """
+        if not self._status_is_board or not self._status_base:
+            return
+        if self._data_epoch:
+            age = _age_text(time.time() - self._data_epoch)
+            # Deliberate local wall clock: the stamp is an operator-facing
+            # "when did this data land" display, not a stored instant.
+            clock = datetime.fromtimestamp(self._data_epoch).strftime("%H:%M:%S")  # noqa: DTZ006
+            stamp = f" · data {clock} ({age} ago)"
+        else:
+            # Cache snapshots predating the generated_at stamp carry no
+            # data age; show that honestly instead of passing the render
+            # moment off as the data's.
+            stamp = " · data age unknown (unstamped cache payload)"
+        self._set_status_text(self._status_base + stamp, board=True)
 
     def _current_row(self) -> dict[str, Any] | None:
         table = self.query_one("#coins-table", DataTable)
@@ -147,6 +226,21 @@ class CryptoBoardScreen(Screen):
             return
         self.app.push_screen(TerminalChartScreen(
             self.engine, self.config, str(row.get("symbol"))))
+
+    def action_chart_browser(self) -> None:
+        """Browser K-line for the highlighted coin (same path as futures).
+
+        ``CRYPTO:<SYM>`` routes the chart server onto the free-data
+        candle chain instead of quantkit.
+        """
+        from .domains import _open_browser_chart
+
+        row = self._current_row()
+        if row is None:
+            self.notify("No coin row selected.", severity="warning")
+            return
+        _open_browser_chart(self, self.config,
+                            f"CRYPTO:{str(row.get('symbol') or '').upper()}")
 
     # ── batch screener (hundreds of pairs) ──────────────────────────
     def action_screener(self) -> None:
@@ -253,8 +347,15 @@ class CryptoBoardScreen(Screen):
             pass
 
     def _set_status(self, text: str) -> None:
+        # Operational messages own the status line: the age ticker stops
+        # overwriting it until the next board apply.
+        self._status_is_board = False
+        self._set_status_text(text)
+
+    def _set_status_text(self, text: str, board: bool = False) -> None:
         try:
             self.query_one("#coins-status", Static).update(text)
+            self._status_is_board = board
         except Exception:
             pass
 
@@ -264,6 +365,9 @@ class CryptoBoardScreen(Screen):
         self.app.push_screen(KeyHelpScreen("COINS — KEYS", [
             ("r", "refresh the board"),
             ("v", "in-terminal candle chart for the highlighted coin"),
+            ("k", "browser K-line for the highlighted coin (free-data chain)"),
+            ("s", "batch screener over hundreds of USDT pairs"),
+            ("b", "engine backtest (operator command)"),
             ("data", "coingecko markets, binance public tickers fallback"),
         ]))
 

@@ -8,6 +8,7 @@ and must not lag behind a poll); candles and crypto boards cache.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from .cache import cached
@@ -95,9 +96,16 @@ def _crypto_board_chain(limit: int, *, timeout: float) -> dict[str, Any]:
         ("binance", lambda: _binance_board(limit, timeout=timeout)),
     ):
         try:
-            return tracked(name, fetch)
+            payload = tracked(name, fetch)
         except Exception as exc:  # noqa: BLE001 - try the next source
             errors.append(f"{name}: {exc}")
+            continue
+        # Stamped inside the producer so a cache hit keeps reporting the
+        # true data age instead of the moment of the last cache read.
+        payload.setdefault(
+            "generated_at",
+            datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        return payload
     raise RuntimeError(f"no crypto board provider ({'; '.join(errors)})")
 
 
@@ -130,16 +138,49 @@ def _binance_board(limit: int, *, timeout: float) -> dict[str, Any]:
 
 def crypto_candles(symbol: str, *, interval: str = "1d", limit: int = 180,
                    timeout: float = 10.0) -> list[dict[str, Any]]:
-    """Crypto candles — Binance klines, cached."""
+    """Crypto candles — Binance klines, CoinGecko /ohlc fallback, cached.
+
+    Binance carries full fidelity (intraday intervals, real volume); when
+    it geo-blocks the configured egress (HTTP 451) or is otherwise down,
+    CoinGecko still serves daily candles with volume reported as 0.0.
+    The fallback only serves ``interval="1d"``: CoinGecko granularity is
+    endpoint-controlled, and quietly caching endpoint-chosen bars under a
+    key that promises another interval would make the cache lie. The
+    serving provider lands in the registry stats.
+    """
     pair = symbol.strip().upper().replace("-", "").replace("/", "")
     if pair.endswith("USD") and not pair.endswith("USDT"):
         # Board symbols are Yahoo-style (BTC-USD); the pair feed is USDT.
         pair = pair[:-3] + "USDT"
     if not pair.endswith("USDT"):
         pair = pair + "USDT"
+    coin = pair[:-4]
     return cached(
         f"cryptocandles:{pair}:{interval}:{limit}",
         ttl_seconds=60,
-        producer=lambda: binance.fetch_candles(
-            pair, interval=interval, limit=limit, timeout=timeout),
+        # Bounded staleness: unlike the board (which carries generated_at),
+        # a candles list has no age channel, so a dead chain must not serve
+        # days-old disk snapshots as current.
+        disk_ttl_seconds=3600,
+        producer=lambda: _crypto_candles_chain(
+            pair, coin, interval=interval, limit=limit, timeout=timeout),
     )
+
+
+def _crypto_candles_chain(pair: str, coin: str, *, interval: str, limit: int,
+                          timeout: float) -> list[dict[str, Any]]:
+    chain: list[tuple[str, Any]] = [
+        ("binance", lambda: binance.fetch_candles(
+            pair, interval=interval, limit=limit, timeout=timeout)),
+    ]
+    if interval == "1d":
+        chain.append(
+            ("coingecko", lambda: coingecko.fetch_candles(
+                coin, days=max(1, min(limit, 365)), timeout=timeout)[-limit:]))
+    errors: list[str] = []
+    for name, fetch in chain:
+        try:
+            return tracked(name, fetch)
+        except Exception as exc:  # noqa: BLE001 - try the next source
+            errors.append(f"{name}: {exc}")
+    raise RuntimeError(f"no crypto candles provider ({'; '.join(errors)})")

@@ -344,3 +344,69 @@ red being the documented quantkit-gated env fact (the repo venv HAS
 quantkit, `test_quantkit_absent_in_test_env_shape` asserts its absence —
 green in the CI/ephemeral env); ruff interface + the new tui file clean.
 
+
+## Round G — private-tree relocation integration + COINS defect batch (two-axis + cross-attack)
+
+Batch under review: uncommitted working tree on `91451fc`, plus two
+companion private-repo commits (`74d0881` adapter_cli `out_dir`,
+`20a161d` the remaining stale path constants). The spec: (1) re-integrate
+the four domain boards (ENERGY/FUTURES/SECURITY/SHIPPING) with the
+relocated+upgraded private tree — config repointing is host-local and
+never committed; (2) the four COINS defects from ui-review P6:
+scientific-notation prices, honest data age, browser K-line parity with
+futures' `k`, actionable 451 degradation; (3) house doctrine.
+
+Pre-diff integration verification (live, host-local): all four adapter
+commands re-pointed in the operator config and passing the repo's own
+validators — futures/shipping `mktdaily.sgx-board.v1`, spval
+`stammtisch.spval-board.v2` (v2 support pre-existed in
+`tui/domaindata.py`; the private adapter was the broken leg), racing
+`wagerkit.hkjc-board.v1`. ENERGY `fetch_watchlist` 14 rows / 0 errors
+via the configured proxy. SECURITY: QuantEngine loads the upgraded
+`quant_core` tree (CN quotes off the direct tencent endpoint, not the
+banned aggregators) and A-share fetches return bars. Both screens needed
+no STAMMTISCH-side code change — their failures were the stale
+`quantkit_path`/proxy config, fixed host-side. `crawler_compose_dir`
+deliberately left EMPTY: the firecrawl compose stack is decommissioned
+(no compose file exists anywhere on the host); the crawlers screen
+fails closed to "not configured" rather than pointing at a dead dir.
+Config backed up as `config.json.bak-20260925`.
+
+The diff: CoinGecko OHLC provider (`/search` rank-first id resolution →
+`/ohlc`, offline-parsed), `crypto_candles` binance→coingecko chain
+(daily-only fallback, disk TTL bounded to 1h), `generated_at` stamped
+INSIDE the board producer (cache hits keep telling the truth),
+chart_server `CRYPTO:` route + shared day-collapse + `SGX:`/`CRYPTO:`
+forecast guard + validated-mode-aware error copy, batch_screener
+structured 451/transport degradation with a near-universal-failure
+floor, strict-JSON persist, and the COINS screen: fixed-point `_price`,
+data-age ticker that yields to operational messages, `k` binding,
+honest chain labels.
+
+Method: mattpocock `code-review` (Standards + Spec parallel sub-agents)
+with the Round E cross-attack (each axis attacked the other's findings
+AND the adjudication plan). Adjudicated outcome:
+
+| Finding (axis, verdict after cross-attack) | Fix | Pin |
+|---|---|---|
+| P-1/N-1 (spec, CONFIRMED + ESCALATED — the round's real bug): the klines sweep swallowed every transport error, so a universal geo-block returned `evaluated: 0` with NaN tier medians rendered as `+nan%`, and `persist()` wrote NaN (invalid strict JSON) to the state root. The pre-existing bridge test PINNED the NaN shape: its fixture produced zero trades and it only asserted the `fee_tiers` key exists | transport failures counted separately from "no trades"; `rows==0` or ≥90% transport failure → structured `ok:False` (451-aware actionable copy); `persist` `allow_nan=False`; `stock_screen` empty-sample guard | `test_klines_geo_block_fails_closed`, `test_near_universal_failure_floor_refuses_survivor_stats` (the survivor is reported but never as a statistic), `test_healthy_sweep_still_returns_tiers`, `test_nan_payload_is_refused`, `test_empty_sample_fails_closed`; the bridge fixture rebuilt as a zigzag that produces real trades, now asserting `evaluated==3` and FINITE tiers |
+| P-3 (spec, CONFIRMED): the chart page fires `/api/forecast` unconditionally and the handler had no class guard — every `k` press spawned `kronos_cmd` (600s timeout) on `CRYPTO:BTC`; `SGX:` had the same pre-existing exposure | live-mode guard returns a structured "not supported" body before normalization/kronos | `test_forecast_refuses_free_chain_classes` (both prefixes) |
+| P-2 (spec, OVERTURN-in-part → AMEND): branch ordering follows the pinned validated-mode doctrine (`test_validated_mode_failure_never_calls_live_provider` — validated mode MUST NOT reach live chains); the report's "SGX has a TUI preflight for this" premise was false (that notify guards `external_bars_root`). Operator config is `ohlcv_mode=live` | mode-aware error copy names the design block instead of a generic loader error | `test_validated_mode_names_the_design_block` |
+| P-5/N-4 (spec, CONFIRMED): disk-cache snapshots predating the stamp (3-day TTL) rendered a fabricated `data …(0s ago)`; a candles list has no age channel at all | unstamped payloads render `data age unknown (unstamped cache payload)`; candles `disk_ttl_seconds=3600` bounds stale-serving on a dead chain | `test_unstamped_cache_payload_never_fakes_data_age` |
+| S-1 (standards, CONFIRMED; spec attack AMENDED scope — the intraday leg is unreachable via shipped callers, the volume half is live): the cache key promised an interval the coingecko leg ignored | fallback serves `interval="1d"` only; intraday requests fail honestly with the binance error | `test_crypto_candles_intraday_never_falls_back` (fallback not even attempted) |
+| S-5/P-7 (both axes, CONFIRMED + ESCALATED): the relocation had been applied only to `adapter_cli.py`; `pptx_build`/`pptx_charts` `OUT_DIR` and `ledger/data.py` `DEFAULT_OUT`+`BENCH_MARKET_XLSX` still resolved the pre-move root (the ledger would silently recreate a stale tree; the report's "xlsx missing" half was false — it exists at the new location) | private-repo `20a161d` fixes all four constants | `test_relocation_paths.py` — four pins against the REAL tree; plugin+ledger suites 68 green |
+| S-2 (standards, SPLIT by the spec attack): the day-collapse loop was a 3rd copy → extracted (`_collapse_day_bars`, external route consumes it too); served-by provenance deferral is spec-consistent (the provenance chip is validated-only by design) but contradicts the screen docstring "names the serving source" → DATED deferral, due with the 2026-10-10 batch | shared collapse helper; provenance gains an honest volume-placeholder note | existing external-bars pins + `test_chain_candles_map_to_payload` |
+| S-4/K (CONFIRMED, reorder): the do_GET wiring pin is the only end-to-end guard on spec-2c | live-server route tests added | `test_candles_route_serves_crypto_chain`, `test_crypto_board_preserves_provider_stamp` (setdefault, never overwrite) |
+| P-4 (CONFIRMED): `tui/charts.py` terminal label said "(binance)" while coingecko may serve | label → "(binance → coingecko)" | copy-only; sibling chain label convention |
+| S-3 (OVERTURNED by the spec attack: 4th cascade copy, zero operator-visible effect), S-6/L (OVERTURNED: spec-neutral churn), P-8 (OVERTURNED mostly: the provider ships with 5 offline pins, the help copy documents PRE-EXISTING `s`/`b` keys, the proxy configure is lock-protected process-local static config — same shape as `batch_screener._prepare`) | — | — |
+| P-6/F (DEFER-NOTE): the CRYPTO route ignores `start` (SGX precedent) and caps at the free-tier 365-day window; JS `marketOf` files `CRYPTO:` under US (cosmetic — the branch returns before market matters) | — | — |
+| MASKED FIND (neither axis, surfaced by the plan-A amendment trail): `stock_screen` referenced `AlpacaBroker` with NO import anywhere in the module (pre-existing ruff F821) — the STOCKS sweep was a guaranteed NameError at runtime | module-level import added | `test_empty_sample_fails_closed` exercises the import path |
+
+Suite after G: services+tui 560 passed / 1 skipped (repo venv; +11 pins,
+the former NaN RuntimeWarning noise gone with the rebuilt fixture);
+interface 321 passed (uv ephemeral, untouched this round); private-repo
+plugin+ledger 68 passed; cargo untouched (no Rust edits); ruff: every
+touched file at-or-below its HEAD finding count (batch_screener 4→3 via
+the F821 fix), new test file clean. Live smoke: screener degrades with
+the actionable 451 copy, board stamps `generated_at`, `CRYPTO:ETH`
+chart payload serves 92 collapsed day-bars through the coingecko leg.

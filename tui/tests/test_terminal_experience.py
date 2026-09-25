@@ -281,3 +281,134 @@ class CryptoBoardScreenTest(unittest.TestCase):
                 status = host_screen.query_one("#coins-status", Static)
                 self.assertIn("BTC dominance 55.0%", str(status.render()))
                 self.assertIn("coingecko", str(status.render()))
+
+    def test_price_rendering_is_never_scientific(self):
+        from tui.screens.crypto_board import _price
+
+        self.assertEqual(_price(84590.0), "84,590.00")
+        self.assertEqual(_price(1234567.891), "1,234,567.89")
+        self.assertEqual(_price(3000.0), "3,000.00")
+        self.assertEqual(_price(1.23456), "1.2346")
+        self.assertEqual(_price(0.9999), "0.99990000")
+        self.assertEqual(_price(0.00001234), "0.00001234")
+        self.assertEqual(_price(0.0), "—")
+        for value in (1e-8, 5e-4, 1.0, 999.99, 8.459e4, 1e9, 1e12, 9.9e13):
+            rendered = _price(value)
+            self.assertNotIn("e", rendered.lower(), rendered)
+
+    def test_age_text_and_stamp_parsing(self):
+        from tui.screens.crypto_board import _age_text, _parse_epoch
+
+        self.assertEqual(_age_text(5), "5s")
+        self.assertEqual(_age_text(65), "1m05s")
+        self.assertEqual(_age_text(3725), "1h02m")
+        self.assertEqual(_age_text(-3), "0s")
+        self.assertIsNone(_parse_epoch("2026-09-25T10:00:00"))  # naive: refused
+        self.assertIsNone(_parse_epoch("garbage"))
+        self.assertIsNone(_parse_epoch(None))
+        self.assertIsNotNone(_parse_epoch("2026-09-25T10:00:00+00:00"))
+
+    def test_status_carries_data_age_and_yields_to_operational(self):
+        asyncio.run(self._age_scenario())
+
+    async def _age_scenario(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from textual.widgets import Static
+
+        from tui.screens.crypto_board import CryptoBoardScreen
+
+        generated = (datetime.now(timezone.utc)
+                     - timedelta(seconds=5)).isoformat(timespec="seconds")
+        board = {"rows": [
+            {"symbol": "BTC", "name": "Bitcoin", "last": 84590.0,
+             "chg_24h": 1.5, "market_cap": 1.2e12, "volume": 3e10,
+             "spark": [], "source": "coingecko"},
+        ], "btc_dominance": 55.0, "generated_at": generated}
+        with mock.patch("services.datafeeds.service.crypto_board",
+                        return_value=board):
+            host_screen = CryptoBoardScreen(engine=None, config=None)
+
+            class Host(App):
+                pass
+
+            async with Host().run_test() as pilot:
+                host = pilot.app
+                host.push_screen(host_screen)
+                await pilot.pause()
+                await pilot.pause()
+                status = host_screen.query_one("#coins-status", Static)
+                rendered = str(status.render())
+                self.assertIn("data ", rendered)
+                self.assertIn("ago)", rendered)
+                # The price cell stays fixed-point end to end.
+                table = host_screen.query_one("#coins-table", DataTable)
+                self.assertEqual(str(table.get_cell_at((0, 2))), "84,590.00")
+                # Operational messages own the line; the ticker must not
+                # clobber them on the next render.
+                host_screen._set_status("  screener running")
+                host_screen._render_board_status()
+                self.assertIn("screener running",
+                              str(status.render()))
+
+    def test_unstamped_cache_payload_never_fakes_data_age(self):
+        asyncio.run(self._unstamped_scenario())
+
+    async def _unstamped_scenario(self) -> None:
+        from textual.widgets import Static
+
+        from tui.screens.crypto_board import CryptoBoardScreen
+
+        # Disk-cache snapshots predating the generated_at stamp carry no
+        # data age; the render moment must not be passed off as the
+        # data's.
+        board = {"rows": [
+            {"symbol": "BTC", "name": "Bitcoin", "last": 84590.0,
+             "chg_24h": 0.0, "market_cap": 1.2e12, "volume": 3e10,
+             "spark": [], "source": "coingecko"},
+        ], "btc_dominance": None}
+        with mock.patch("services.datafeeds.service.crypto_board",
+                        return_value=board):
+            host_screen = CryptoBoardScreen(engine=None, config=None)
+
+            class Host(App):
+                pass
+
+            async with Host().run_test() as pilot:
+                host = pilot.app
+                host.push_screen(host_screen)
+                await pilot.pause()
+                await pilot.pause()
+                rendered = str(host_screen.query_one("#coins-status",
+                                                     Static).render())
+        self.assertIn("age unknown", rendered)
+        self.assertNotIn("ago)", rendered)
+
+    def test_k_binding_opens_browser_chart_on_crypto_route(self):
+        asyncio.run(self._k_scenario())
+
+    async def _k_scenario(self) -> None:
+        from tui.screens.crypto_board import CryptoBoardScreen
+
+        board = {"rows": [
+            {"symbol": "BTC", "name": "Bitcoin", "last": 84590.0,
+             "chg_24h": 0.0, "market_cap": 1.2e12, "volume": 3e10,
+             "spark": [], "source": "coingecko"},
+        ], "btc_dominance": None}
+        with mock.patch("services.datafeeds.service.crypto_board",
+                        return_value=board), \
+             mock.patch("tui.screens.domains._open_browser_chart") as opener:
+            host_screen = CryptoBoardScreen(engine=None, config=None)
+
+            class Host(App):
+                pass
+
+            async with Host().run_test() as pilot:
+                host = pilot.app
+                host.push_screen(host_screen)
+                await pilot.pause()
+                await pilot.pause()
+                await pilot.press("k")
+                await pilot.pause()
+        opener.assert_called_once()
+        self.assertEqual(opener.call_args[0][2], "CRYPTO:BTC")

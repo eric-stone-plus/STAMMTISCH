@@ -230,9 +230,12 @@ class BatchScreenerTest(unittest.TestCase):
         ticker = [{"symbol": "BTCUSDT", "quoteVolume": "50"},
                   {"symbol": "ETHUSDT", "quoteVolume": "40"},
                   {"symbol": "LSKUSDT", "quoteVolume": "3"}]
-        kline = [[0] * 6] * 150
-        closes = np.concatenate([np.full(20, 100.0), np.full(10, 90.0),
-                                 np.linspace(90, 95, 60), np.linspace(95, 90, 60)])
+        # Zigzag closes: each 6-bar cycle drives RSI(2) below 10 and back
+        # above 60, so the sweep actually produces round trips. (The old
+        # flat-then-ramp fixture produced zero trades and silently pinned
+        # NaN tier medians — exactly the failure mode the ok:False guard
+        # now refuses.)
+        closes = np.tile([100.0, 99.0, 88.0, 90.0, 95.0, 99.0], 25)
         klines = [[0, 0, 0, 0, float(c), 0] for c in closes]
         with mock.patch.object(bs.dfhttp, "get_json",
                                side_effect=lambda url, **kw: (
@@ -241,7 +244,11 @@ class BatchScreenerTest(unittest.TestCase):
              mock.patch.object(bs, "configure_proxy_fallback"):
             out = bs.crypto_screen(cfg, min_volume=2, limit=10, workers=2)
         self.assertEqual(out["universe"], 3)
+        self.assertEqual(out["evaluated"], 3)
         self.assertIn("0.05%", out["fee_tiers"])
+        for tier in out["fee_tiers"].values():
+            self.assertTrue(np.isfinite(tier["median_net"]), tier)
+            self.assertTrue(np.isfinite(tier["positive_share"]), tier)
         with tempfile.TemporaryDirectory() as tmp:
             path = bs.persist(tmp, "crypto", out)
             self.assertTrue(path.is_file())

@@ -241,7 +241,7 @@ class TerminalChartScreen(Screen):
                 # Crypto pairs (and anything the CSV/chart chains refuse)
                 # still chart through the keyless exchange feed.
                 return service.crypto_candles(self.symbol), (
-                    "free feed chain (binance) — unverified")
+                    "free feed chain (binance → coingecko) — unverified")
 
         def _apply_wrapper(result) -> None:
             # _run_async wraps worker exceptions as {"ok": False, ...}.
