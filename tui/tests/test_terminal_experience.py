@@ -110,6 +110,92 @@ class TerminalChartScreenTest(_HostAppHarness):
             chart = screen.query_one("#tc-chart", CandleChart)
             self.assertEqual(len(chart.candles), 30)
 
+    def test_refresh_names_the_serving_leg_offline(self):
+        # The unpinned half of the round: the fetch path must name the
+        # leg that ACTUALLY served, and the label must list every leg
+        # the chain tries (the old daily label silently dropped alpaca).
+        asyncio.run(self._refresh_scenario("AAPL", "daily_candles_with_source",
+                                           "yahoo", "stooq → yahoo → alpaca"))
+
+    def test_refresh_crypto_path_names_the_serving_leg(self):
+        asyncio.run(self._refresh_scenario("BTC", "crypto_candles_with_source",
+                                           "coingecko", "binance → coingecko",
+                                           daily_fails=True))
+
+    async def _refresh_scenario(self, symbol: str, fn: str, leg: str,
+                                chain: str, *, daily_fails: bool = False):
+        from contextlib import nullcontext
+
+        from services.datafeeds import service as df_service
+        served = [{"time": "2026-09-25", "open": 1.0, "high": 2.0,
+                   "low": 0.5, "close": 1.5, "volume": 9.0}]
+        served_patch = mock.patch.object(df_service, fn,
+                                         return_value=(served, leg))
+        # Force the daily leg to blow up so _work falls through to crypto.
+        daily_patch = (mock.patch.object(
+            df_service, "daily_candles_with_source",
+            side_effect=RuntimeError("daily chain refused"))
+            if daily_fails else nullcontext())
+        with served_patch, daily_patch:
+            host = self._host()
+            async with host.run_test() as pilot:
+                host.push_screen(TerminalChartScreen(
+                    engine=None, config=None, symbol=symbol))
+                head = None
+                for _ in range(100):
+                    await pilot.pause()
+                    head = host.screen.query_one("#tc-head", Static)
+                    if "served by" in str(head.render()):
+                        break
+                    await asyncio.sleep(0.05)
+                text = str(head.render())
+        self.assertIn(f"served by {leg}", text)
+        self.assertIn(chain, text)          # every leg visible, not just two
+        self.assertIn("unverified", text)
+
+
+class ChainLabelTest(unittest.TestCase):
+    """Pure ``_chain_label`` logic + the constant↔label drift contract."""
+
+    def test_served_leg_is_named_unknown_is_not_guessed(self):
+        from tui.charts import _chain_label
+        named = _chain_label("a → b → c", "b")
+        self.assertIn("served by b", named)
+        self.assertIn("a → b → c", named)
+        self.assertIn("unverified", named)
+        # A pre-stamp cache entry ("unknown") falls back to the bare chain
+        # description — never fabricates a serving leg.
+        for unknown in ("unknown", ""):
+            bare = _chain_label("a → b → c", unknown)
+            self.assertNotIn("served by", bare)
+            self.assertIn("a → b → c", bare)
+            self.assertIn("unverified", bare)
+
+    def test_sentinel_matches_the_service_constant(self):
+        # charts.py keeps its service imports lazy, so it re-declares the
+        # sentinel locally. This pin is the seam that stops the two from
+        # drifting: if service.SERVED_BY_UNKNOWN ever changed and charts.py
+        # did not follow, a pre-stamp entry would render as a GUESSED leg
+        # ("served by unknown") instead of the bare chain — a provenance lie.
+        from services.datafeeds import service
+        from tui import charts
+        self.assertEqual(charts._SERVED_BY_UNKNOWN, service.SERVED_BY_UNKNOWN)
+
+    def test_chart_labels_render_from_the_service_chain_constants(self):
+        # Single source of truth: charts.py builds its header labels from
+        # service.DAILY_CHAIN / CRYPTO_CHAIN, the same tuples the chain
+        # builders iterate. If a leg is added/reordered in one place only,
+        # this pin and the builder-order pins in test_datafeeds both fail.
+        from services.datafeeds import service
+        from tui.charts import _chain_label
+        self.assertEqual(" → ".join(service.DAILY_CHAIN),
+                         "stooq → yahoo → alpaca")
+        self.assertEqual(" → ".join(service.CRYPTO_CHAIN),
+                         "binance → coingecko")
+        daily_label = _chain_label(" → ".join(service.DAILY_CHAIN), "yahoo")
+        self.assertIn("alpaca", daily_label)   # third leg no longer dropped
+        self.assertIn("served by yahoo", daily_label)
+
 
 class FeedHealthScreenTest(_HostAppHarness):
     def test_provider_rows_and_cache_line(self):

@@ -395,7 +395,7 @@ AND the adjudication plan). Adjudicated outcome:
 | P-5/N-4 (spec, CONFIRMED): disk-cache snapshots predating the stamp (3-day TTL) rendered a fabricated `data …(0s ago)`; a candles list has no age channel at all | unstamped payloads render `data age unknown (unstamped cache payload)`; candles `disk_ttl_seconds=3600` bounds stale-serving on a dead chain | `test_unstamped_cache_payload_never_fakes_data_age` |
 | S-1 (standards, CONFIRMED; spec attack AMENDED scope — the intraday leg is unreachable via shipped callers, the volume half is live): the cache key promised an interval the coingecko leg ignored | fallback serves `interval="1d"` only; intraday requests fail honestly with the binance error | `test_crypto_candles_intraday_never_falls_back` (fallback not even attempted) |
 | S-5/P-7 (both axes, CONFIRMED + ESCALATED): the relocation had been applied only to `adapter_cli.py`; `pptx_build`/`pptx_charts` `OUT_DIR` and `ledger/data.py` `DEFAULT_OUT`+`BENCH_MARKET_XLSX` still resolved the pre-move root (the ledger would silently recreate a stale tree; the report's "xlsx missing" half was false — it exists at the new location) | private-repo `20a161d` fixes all four constants | `test_relocation_paths.py` — four pins against the REAL tree; plugin+ledger suites 68 green |
-| S-2 (standards, SPLIT by the spec attack): the day-collapse loop was a 3rd copy → extracted (`_collapse_day_bars`, external route consumes it too); served-by provenance deferral is spec-consistent (the provenance chip is validated-only by design) but contradicts the screen docstring "names the serving source" → DATED deferral, due with the 2026-10-10 batch | shared collapse helper; provenance gains an honest volume-placeholder note | existing external-bars pins + `test_chain_candles_map_to_payload` |
+| S-2 (standards, SPLIT by the spec attack): the day-collapse loop was a 3rd copy → extracted (`_collapse_day_bars`, external route consumes it too); served-by provenance deferral is spec-consistent (the provenance chip is validated-only by design) but contradicts the screen docstring "names the serving source" → DATED deferral, due with the 2026-10-10 batch **(PAID EARLY — see Round J)** | shared collapse helper; provenance gains an honest volume-placeholder note | existing external-bars pins + `test_chain_candles_map_to_payload` |
 | S-4/K (CONFIRMED, reorder): the do_GET wiring pin is the only end-to-end guard on spec-2c | live-server route tests added | `test_candles_route_serves_crypto_chain`, `test_crypto_board_preserves_provider_stamp` (setdefault, never overwrite) |
 | P-4 (CONFIRMED): `tui/charts.py` terminal label said "(binance)" while coingecko may serve | label → "(binance → coingecko)" | copy-only; sibling chain label convention |
 | S-3 (OVERTURNED by the spec attack: 4th cascade copy, zero operator-visible effect), S-6/L (OVERTURNED: spec-neutral churn), P-8 (OVERTURNED mostly: the provider ships with 5 offline pins, the help copy documents PRE-EXISTING `s`/`b` keys, the proxy configure is lock-protected process-local static config — same shape as `batch_screener._prepare`) | — | — |
@@ -517,3 +517,55 @@ branches idempotent).
 
 Suite after I: services+tui 571 passed / 2 skipped (+4 pins); ruff
 touched files 4 findings = HEAD baseline, zero new.
+
+## Round J — served-by provenance for the free-data chains (the dated deferral paid early; two-axis + cross-attack)
+
+Pays the Round G S-2 dated deferral (due 2026-10-10) ahead of schedule on
+operator order. The tension G recorded: the web-chart provenance chip is
+validated-only **by adjudicated design** (unchanged here), yet the terminal
+chart/board docstrings promised the free-data header "names the serving
+source" — while the label was a static chain description that never knew
+which leg actually fetched the bars. Round J makes the live chains honest.
+
+Design: each chain producer stamps the serving leg **inside** the cached
+payload (`{"candles": …, "served_by": name}`), so a cache hit keeps naming
+the leg that really fetched (not the moment of the read); `*_with_source`
+returns `(candles, served_by)` while the bare-list `daily_candles` /
+`crypto_candles` contract stays intact for existing consumers; entries cached
+before the stamp (bare-list shape, memory or disk) read back as
+`SERVED_BY_UNKNOWN`, never a guessed leg. `DAILY_CHAIN` / `CRYPTO_CHAIN`
+tuples are the single source of truth — both builders iterate them and
+`tui/charts.py` renders its header label from them, so the label can name
+neither a leg the chain skips nor miss one it tries.
+
+First-pass two-axis review found (all fixed in this round's diff):
+
+| Finding (verdict) | Fix | Pin |
+|---|---|---|
+| A-1 (HARD, rule 5): the whole `tui/charts.py` behaviour change shipped unpinned — `_chain_label` branch logic, the switch to `*_with_source`, and the daily label silently dropping its alpaca leg | `_chain_label` names the served leg; `"unknown"`/empty fall back to the bare chain (no guess); daily label rendered from `DAILY_CHAIN` (all three legs) | `ChainLabelTest` (pure) + `TerminalChartScreenTest._refresh_scenario` screen pins driving the real `_run_async` thread for BOTH the daily path and the crypto fallback (daily forced to fail first) |
+| A-2 (HARD, rule 2 fail-closed): `_candles_and_source` returned `[], "unknown"` for a corrupt (non-list, non-dict) cache payload = a silent empty chart | raises `TypeError` — corrupt cache halts loudly, never renders | `test_candles_and_source_shapes_fail_closed_on_corrupt` (list→unknown, dict→leg, `candles:None`→honest-empty, corrupt→TypeError) |
+| A-3 (judgement): Primitive Obsession — magic `"unknown"` string-compared across three modules | `SERVED_BY_UNKNOWN` constant in service.py; charts.py keeps a lazy-import-safe local `_SERVED_BY_UNKNOWN` | `test_sentinel_matches_the_service_constant` (the seam that stops the two drifting — added after the cross-attack caught the comment promising a pin that did not exist) |
+| A-4 (judgement): duplicated chain knowledge, no drift detector — charts.py hardcoded the leg strings while the authoritative chain lived in service.py | `DAILY_CHAIN`/`CRYPTO_CHAIN` constants; builders iterate them; charts.py renders from them (zero hardcoded leg names remain) | `ChainOrderDriftTest` drives the REAL builders and parses the legs back out of the all-failed error message, comparing to the constants; `test_chart_labels_render_from_the_service_chain_constants` |
+| A-5 (spec a3): `daily_candles` docstring still read "Stooq primary, Yahoo chart fallback" (two legs, pre-alpaca) | docstring → "the DAILY_CHAIN legs in order" | covered by A-4's constant pins |
+
+Cross-attack (second pass) ruled both axes **SHIP-GREEN** and surfaced three
+non-blocking items, all closed before commit: (1) the two axes independently
+converged on charts.py's comment claiming "a test pins them equal" when no
+such test existed → added `test_sentinel_matches_the_service_constant`;
+(2) a ruff I001 (missing blank line between the stdlib and first-party local
+imports in `_refresh_scenario`) → fixed; (3) the standards axis LIVE-verified
+a fail-open hole — a leg named by a chain constant but absent from the
+builder's `legs` dict raised a `KeyError` that the loop's BLE001 catch
+laundered into a "provider failed" string, masking the programming error as a
+permanent outage → both builders now raise `RuntimeError(… without a
+fetcher …)` BEFORE the loop, pinned by
+`test_orphan_chain_leg_fails_loud_not_as_a_provider_outage`.
+
+chart_server: `crypto_candles_payload` provenance gains `served_by`; the
+volume-placeholder note is conditional — dropped only when binance
+demonstrably served (real volume), kept for coingecko (reports no volume) and
+`"unknown"` (cannot vouch). The `source` label is rendered from
+`CRYPTO_CHAIN`.
+
+Suite after J: services+tui+interface 905 passed / 4 skipped (+15 pins over
+Round I); ruff touched files net −4 vs HEAD baseline, zero new.

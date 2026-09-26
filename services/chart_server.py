@@ -499,8 +499,8 @@ def crypto_candles_payload(config: Any, symbol: str) -> dict:
     configure_data_proxy(getattr(config, "data_proxy_url", "") or None)
     configure_proxy_fallback(getattr(config, "egress_proxy_url", "") or None)
     try:
-        candles = df_service.crypto_candles(match.group(1), interval="1d",
-                                            limit=365)
+        candles, served_by = df_service.crypto_candles_with_source(
+            match.group(1), interval="1d", limit=365)
     except Exception as exc:  # noqa: BLE001 — a dead chain is a closed gate
         return {
             "ok": False,
@@ -516,16 +516,29 @@ def crypto_candles_payload(config: Any, symbol: str) -> dict:
             "symbol": symbol,
             "candles": [],
         }
+    provenance: dict[str, str] = {
+        "data_mode": "crypto-chain",
+        # Chain description rendered from the same constant the fallback
+        # logic iterates — the label cannot drift from the real legs.
+        "source": "free-data chain ({})".format(
+            " -> ".join(df_service.CRYPTO_CHAIN)),
+        # Served-by: which leg ACTUALLY fetched these bars (stamped inside
+        # the producer, so cache hits keep telling the truth; "unknown" =
+        # a cache entry predating the stamp).
+        "served_by": served_by,
+    }
+    if served_by != "binance":
+        # The coingecko leg reports no volume, and "unknown" cannot vouch
+        # for measured turnover either — the warning stays unless binance
+        # demonstrably served.
+        provenance["note"] = (
+            "the coingecko fallback reports no volume; 0.0 volumes "
+            "may be placeholders, not measured turnover")
     return {
         "ok": True,
         "symbol": symbol,
         "candles": out,
-        "provenance": {
-            "data_mode": "crypto-chain",
-            "source": "free-data chain (binance -> coingecko)",
-            "note": "the coingecko fallback reports no volume; 0.0 volumes "
-                    "may be placeholders, not measured turnover",
-        },
+        "provenance": provenance,
     }
 
 

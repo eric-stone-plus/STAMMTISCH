@@ -965,7 +965,7 @@ class CryptoCandlesTest(unittest.TestCase):
             self.assertIn("invalid crypto symbol", payload["error"])
 
     def test_dead_chain_fails_closed(self):
-        with mock.patch("services.datafeeds.service.crypto_candles",
+        with mock.patch("services.datafeeds.service.crypto_candles_with_source",
                         side_effect=RuntimeError(
                             "no crypto candles provider (binance: HTTP 451)")):
             payload = chart_server.crypto_candles_payload(
@@ -981,8 +981,8 @@ class CryptoCandlesTest(unittest.TestCase):
             {"time": "2026-09-26", "open": 1.5, "high": 3.0, "low": 1.0,
              "close": 2.5, "volume": 8.0},
         ]
-        with mock.patch("services.datafeeds.service.crypto_candles",
-                        return_value=candles) as fetch:
+        with mock.patch("services.datafeeds.service.crypto_candles_with_source",
+                        return_value=(candles, "binance")) as fetch:
             payload = chart_server.crypto_candles_payload(
                 self._config(), "CRYPTO:BTC")
         self.assertTrue(payload["ok"], payload.get("error"))
@@ -990,7 +990,39 @@ class CryptoCandlesTest(unittest.TestCase):
         self.assertEqual(len(payload["candles"]), 2)
         self.assertEqual(payload["candles"][1]["close"], 2.5)
         self.assertEqual(payload["provenance"]["data_mode"], "crypto-chain")
+        # binance demonstrably served: the stamp names it and the
+        # volume-placeholder warning (coingecko-only) is absent
+        self.assertEqual(payload["provenance"]["served_by"], "binance")
+        self.assertNotIn("note", payload["provenance"])
         fetch.assert_called_once_with("BTC", interval="1d", limit=365)
+
+    def test_fallback_leg_is_named_and_keeps_the_volume_note(self):
+        # The whole point of served-by: when the coingecko fallback
+        # serves, the payload must say so AND keep the placeholder-volume
+        # warning (its bars carry 0.0 volumes).
+        candles = [{"time": "2026-09-26", "open": 1.0, "high": 2.0,
+                    "low": 0.5, "close": 1.5, "volume": 0.0}]
+        with mock.patch("services.datafeeds.service.crypto_candles_with_source",
+                        return_value=(candles, "coingecko")):
+            payload = chart_server.crypto_candles_payload(
+                self._config(), "CRYPTO:BTC")
+        self.assertTrue(payload["ok"], payload.get("error"))
+        self.assertEqual(payload["provenance"]["served_by"], "coingecko")
+        self.assertIn("placeholders", payload["provenance"]["note"])
+
+    def test_unknown_served_by_never_claims_measured_volume(self):
+        # "unknown" = a cache entry predating the served-by stamp: it
+        # cannot vouch for measured turnover, so the warning stays
+        # (fail-safe, never a guessed leg).
+        candles = [{"time": "2026-09-26", "open": 1.0, "high": 2.0,
+                    "low": 0.5, "close": 1.5, "volume": 0.0}]
+        with mock.patch("services.datafeeds.service.crypto_candles_with_source",
+                        return_value=(candles, "unknown")):
+            payload = chart_server.crypto_candles_payload(
+                self._config(), "CRYPTO:BTC")
+        self.assertTrue(payload["ok"], payload.get("error"))
+        self.assertEqual(payload["provenance"]["served_by"], "unknown")
+        self.assertIn("placeholders", payload["provenance"]["note"])
 
     def test_intraday_candles_collapse_to_calendar_days(self):
         candles = [
@@ -999,8 +1031,8 @@ class CryptoCandlesTest(unittest.TestCase):
             {"time": "2026-09-25 16:00", "open": 1.5, "high": 4.0, "low": 1.2,
              "close": 3.0, "volume": 5.0},
         ]
-        with mock.patch("services.datafeeds.service.crypto_candles",
-                        return_value=candles):
+        with mock.patch("services.datafeeds.service.crypto_candles_with_source",
+                        return_value=(candles, "binance")):
             payload = chart_server.crypto_candles_payload(
                 self._config(), "CRYPTO:ETH")
         self.assertTrue(payload["ok"], payload.get("error"))
@@ -1014,8 +1046,8 @@ class CryptoCandlesTest(unittest.TestCase):
         self.assertEqual(bar["volume"], 9.0)  # summed
 
     def test_proxy_configuration_follows_operator_config(self):
-        with mock.patch("services.datafeeds.service.crypto_candles",
-                        return_value=[]), \
+        with mock.patch("services.datafeeds.service.crypto_candles_with_source",
+                        return_value=([], "binance")), \
              mock.patch("services.datafeeds.http.configure_data_proxy") as primary, \
              mock.patch("services.datafeeds.http.configure_proxy_fallback") as fallback:
             chart_server.crypto_candles_payload(self._config(), "CRYPTO:BTC")
@@ -1064,13 +1096,16 @@ class CryptoRouteWiringTest(unittest.TestCase):
         config, cache = self._live_config()
         candles = [{"time": "2026-09-25", "open": 1.0, "high": 2.0,
                     "low": 0.5, "close": 1.5, "volume": 9.0}]
-        with cache, mock.patch("services.datafeeds.service.crypto_candles",
-                               return_value=candles):
+        with cache, mock.patch(
+                "services.datafeeds.service.crypto_candles_with_source",
+                return_value=(candles, "binance")):
             status, payload = self._get_json(
                 config, "/api/candles?symbol=CRYPTO:BTC")
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"], payload.get("error"))
         self.assertEqual(payload["candles"][0]["close"], 1.5)
+        # the served-by stamp survives all the way onto the wire
+        self.assertEqual(payload["provenance"]["served_by"], "binance")
 
     def test_forecast_refuses_free_chain_classes(self):
         config, cache = self._live_config()

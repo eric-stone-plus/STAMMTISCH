@@ -30,6 +30,24 @@ _BODY_DOWN = "█"
 _WICK = "│"
 
 
+# Served-by sentinel for pre-stamp cache entries. Mirrors the canonical
+# services.datafeeds.service.SERVED_BY_UNKNOWN; a test pins them equal so
+# they cannot drift (charts.py keeps service imports lazy for offline use).
+_SERVED_BY_UNKNOWN = "unknown"
+
+
+def _chain_label(chain: str, served_by: str) -> str:
+    """Honest free-chain header label: name the leg that ACTUALLY served.
+
+    ``"unknown"`` (a cache entry predating the served-by stamp) falls
+    back to the plain chain description instead of guessing a leg.
+    """
+    if served_by and served_by != _SERVED_BY_UNKNOWN:
+        return (f"free feed chain ({chain}), served by {served_by}"
+                " — unverified")
+    return f"free feed chain ({chain}) — unverified"
+
+
 def _series_bounds(candles: list[dict[str, Any]]) -> tuple[float, float] | None:
     highs = [float(c["high"]) for c in candles if c.get("high") is not None]
     lows = [float(c["low"]) for c in candles if c.get("low") is not None]
@@ -234,14 +252,21 @@ class TerminalChartScreen(Screen):
                     if candles:
                         return candles, "quantkit daily pipeline (verified)"
             from services.datafeeds import service
+            # Render the header label from the same chain constants the
+            # fallback logic iterates, so the label can never name legs
+            # the chain does not actually try (or miss one that it does).
+            daily_label = " → ".join(service.DAILY_CHAIN)
+            crypto_label = " → ".join(service.CRYPTO_CHAIN)
             try:
-                return service.daily_candles(self.symbol), (
-                    "free feed chain (stooq → yahoo) — unverified")
+                candles, served = service.daily_candles_with_source(
+                    self.symbol)
+                return candles, _chain_label(daily_label, served)
             except Exception:
                 # Crypto pairs (and anything the CSV/chart chains refuse)
                 # still chart through the keyless exchange feed.
-                return service.crypto_candles(self.symbol), (
-                    "free feed chain (binance → coingecko) — unverified")
+                candles, served = service.crypto_candles_with_source(
+                    self.symbol)
+                return candles, _chain_label(crypto_label, served)
 
         def _apply_wrapper(result) -> None:
             # _run_async wraps worker exceptions as {"ok": False, ...}.

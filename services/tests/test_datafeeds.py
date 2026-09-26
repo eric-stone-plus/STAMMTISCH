@@ -404,6 +404,75 @@ class ServiceChainTest(unittest.TestCase):
         self.assertEqual(stats["binance"].failed, 1)
         self.assertEqual(stats["coingecko"].ok, 1)
 
+    def test_crypto_candles_with_source_names_the_serving_leg(self):
+        candles = [{"time": "2026-09-25", "open": 1, "high": 2, "low": 0.5,
+                    "close": 1.5, "volume": 7.0}]
+        dfcache.reset_cache()
+        with mock.patch.object(binance, "fetch_candles",
+                               return_value=candles):
+            bars, served = service.crypto_candles_with_source(
+                "BTC", interval="1d", limit=181)
+        self.assertEqual(bars, candles)
+        self.assertEqual(served, "binance")
+        dfcache.reset_cache()
+        with mock.patch.object(binance, "fetch_candles",
+                               side_effect=FeedError("binance", "HTTP 451")), \
+             mock.patch.object(coingecko, "fetch_candles",
+                               return_value=candles):
+            bars, served = service.crypto_candles_with_source(
+                "BTC", interval="1d", limit=182)
+        self.assertEqual(bars, candles)
+        self.assertEqual(served, "coingecko")
+        dfcache.reset_cache()
+
+    def test_crypto_candles_cache_hit_keeps_the_served_by_stamp(self):
+        # The stamp lives inside the cached payload: a cache hit must
+        # still name the leg that ACTUALLY fetched, not the moment of
+        # the read.
+        candles = [{"time": "2026-09-25", "open": 1, "high": 2, "low": 0.5,
+                    "close": 1.5, "volume": 7.0}]
+        dfcache.reset_cache()
+        with mock.patch.object(binance, "fetch_candles",
+                               return_value=candles) as fetch:
+            first = service.crypto_candles_with_source(
+                "BTC", interval="1d", limit=183)
+            second = service.crypto_candles_with_source(
+                "BTC", interval="1d", limit=183)
+        self.assertEqual(first, second)
+        self.assertEqual(second[1], "binance")
+        self.assertEqual(fetch.call_count, 1)
+        dfcache.reset_cache()
+
+    def test_pre_stamp_cache_entries_report_unknown_not_a_guess(self):
+        # Entries written before chains carried served_by (memory/disk
+        # shape = bare list) must read back as "unknown", never a leg.
+        candles = [{"time": "2026-09-25", "open": 1, "high": 2, "low": 0.5,
+                    "close": 1.5, "volume": 0.0}]
+        dfcache.reset_cache()
+        dfcache._TTL["cryptocandles:LTCUSDT:1d:180"] = (
+            time.time() + 60, list(candles))
+        try:
+            bars, served = service.crypto_candles_with_source(
+                "LTC", interval="1d", limit=180)
+        finally:
+            dfcache.reset_cache()
+        self.assertEqual(bars, candles)
+        self.assertEqual(served, "unknown")
+
+    def test_daily_candles_with_source_names_the_serving_leg(self):
+        candles = [{"time": "2026-09-25", "open": 1, "high": 2, "low": 0.5,
+                    "close": 1.5, "volume": 9}]
+        dfcache.reset_cache()
+        with mock.patch.object(stooq, "fetch_candles",
+                               side_effect=FeedError("stooq", "down")), \
+             mock.patch.object(yahoo, "fetch_candles", return_value=candles):
+            bars, served = service.daily_candles_with_source("NVDA")
+        self.assertEqual(bars, candles)
+        self.assertEqual(served, "yahoo")
+        # the list contract stays intact on top of the same cache entry
+        self.assertEqual(service.daily_candles("NVDA"), candles)
+        dfcache.reset_cache()
+
     def test_crypto_candles_coingecko_fallback_trims_to_limit(self):
         candles = [{"time": f"2026-09-{day:02d}", "open": 1, "high": 2,
                     "low": 0.5, "close": 1.5, "volume": 0.0}
@@ -445,6 +514,79 @@ class ServiceChainTest(unittest.TestCase):
         # setdefault, never overwrite: a producer-side stamp outranks the
         # chain's own clock.
         self.assertEqual(result["generated_at"], "2020-01-01T00:00:00+00:00")
+
+
+def _error_legs(msg: str) -> list[str]:
+    """Parse the leg names, in try-order, out of an all-failed chain error."""
+    inner = msg.split("(", 1)[1].rsplit(")", 1)[0]
+    return [part.split(":", 1)[0].strip() for part in inner.split(";")]
+
+
+class ChainOrderDriftTest(unittest.TestCase):
+    """The builders must iterate DAILY_CHAIN / CRYPTO_CHAIN in order.
+
+    charts.py renders its header labels from the same constants, so a leg
+    added/reordered in one place but not the other is a silent lie on the
+    screen. These pins drive the REAL builders and read the legs back out
+    of the all-failed error message — the constant is the only place both
+    the label and the fallback order come from.
+    """
+
+    def setUp(self):
+        registry.reset_stats()
+        dfcache.reset_cache()
+        dfcache.configure_disk_cache(None)
+
+    def test_daily_chain_tries_every_leg_in_constant_order(self):
+        with mock.patch.object(stooq, "fetch_candles",
+                               side_effect=FeedError("stooq", "down")), \
+             mock.patch.object(yahoo, "fetch_candles",
+                               side_effect=FeedError("yahoo", "down")), \
+             mock.patch("services.config.Config"), \
+             mock.patch("services.brokers.alpaca.AlpacaBroker") as AB:
+            AB.return_value.daily_bars.side_effect = FeedError("alpaca", "no key")
+            with self.assertRaises(RuntimeError) as ctx:
+                service._daily_candles_chain("AAPL", timeout=0.01)
+        self.assertEqual(_error_legs(str(ctx.exception)),
+                         list(service.DAILY_CHAIN))
+
+    def test_crypto_chain_tries_every_leg_in_constant_order(self):
+        with mock.patch.object(binance, "fetch_candles",
+                               side_effect=FeedError("binance", "HTTP 451")), \
+             mock.patch.object(coingecko, "fetch_candles",
+                               side_effect=FeedError("coingecko", "down")), \
+             self.assertRaises(RuntimeError) as ctx:
+            service._crypto_candles_chain("BTCUSDT", "BTC", interval="1d",
+                                          limit=5, timeout=0.01)
+        self.assertEqual(_error_legs(str(ctx.exception)),
+                         list(service.CRYPTO_CHAIN))
+
+    def test_orphan_chain_leg_fails_loud_not_as_a_provider_outage(self):
+        # Constant↔implementation drift — a leg the constant names but no
+        # fetcher backs — is a programming error. It must raise as such,
+        # NOT get laundered by the chain's BLE001 catch into a "provider
+        # failed" string that would hide the missing leg forever.
+        with mock.patch.object(service, "DAILY_CHAIN",
+                               ("stooq", "yahoo", "alpaca", "ghost")), \
+             self.assertRaises(RuntimeError) as ctx:
+            service._daily_candles_chain("AAPL", timeout=0.01)
+        self.assertIn("without a fetcher", str(ctx.exception))
+        self.assertIn("ghost", str(ctx.exception))
+        self.assertNotIn("no candle provider", str(ctx.exception))
+
+    def test_candles_and_source_shapes_fail_closed_on_corrupt(self):
+        # Pre-stamp list → honestly "unknown"; stamped dict → its leg;
+        # corrupt (neither) → TypeError, never a silent empty chart.
+        self.assertEqual(service._candles_and_source([{"close": 1.0}]),
+                         ([{"close": 1.0}], "unknown"))
+        self.assertEqual(
+            service._candles_and_source(
+                {"candles": [{"close": 2.0}], "served_by": "binance"}),
+            ([{"close": 2.0}], "binance"))
+        self.assertEqual(service._candles_and_source({"candles": None}),
+                         ([], "unknown"))
+        with self.assertRaises(TypeError):
+            service._candles_and_source("corrupt-string-payload")
 
 
 class JournalTest(unittest.TestCase):

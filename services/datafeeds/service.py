@@ -44,17 +44,57 @@ def quotes(symbols: list[str], *, timeout: float = 6.0) -> dict[str, dict[str, A
     return out
 
 
+# Ordered chain legs — the single source of truth for fallback order.
+# tui/charts.py renders its header labels from these tuples; the chain
+# builders below iterate them, so label and behaviour cannot diverge.
+DAILY_CHAIN = ("stooq", "yahoo", "alpaca")
+CRYPTO_CHAIN = ("binance", "coingecko")
+# Served-by for cache entries written before chains carried the stamp.
+SERVED_BY_UNKNOWN = "unknown"
+
+
 def daily_candles(symbol: str, *, timeout: float = 10.0) -> list[dict[str, Any]]:
-    """Daily candles — Stooq primary, Yahoo chart fallback, cached."""
+    """Daily candles — the DAILY_CHAIN legs in order, cached."""
+    return daily_candles_with_source(symbol, timeout=timeout)[0]
+
+
+def daily_candles_with_source(
+    symbol: str, *, timeout: float = 10.0
+) -> tuple[list[dict[str, Any]], str]:
+    """``daily_candles`` plus which chain leg actually served.
+
+    The served-by stamp lives INSIDE the cached payload, so a cache hit
+    keeps naming the leg that really fetched the bars. Entries cached
+    before the stamp existed report ``"unknown"`` rather than guessing.
+    """
     text = symbol.strip().upper()
-    return cached(
+    payload = cached(
         f"candles:{text}",
         ttl_seconds=6 * 3600,
         producer=lambda: _daily_candles_chain(text, timeout=timeout),
     )
+    return _candles_and_source(payload)
 
 
-def _daily_candles_chain(symbol: str, *, timeout: float) -> list[dict[str, Any]]:
+def _candles_and_source(payload: Any) -> tuple[list[dict[str, Any]], str]:
+    """Split a cached chain payload into (candles, served_by).
+
+    Tolerates the pre-stamp list shape (memory/disk entries written
+    before chains carried served_by): honestly ``"unknown"``, never a
+    guessed leg. Any other type is corrupt cache state — fail closed
+    (rule 2), never silently render an empty chart.
+    """
+    if isinstance(payload, list):
+        return payload, SERVED_BY_UNKNOWN
+    if isinstance(payload, dict):
+        return (payload.get("candles") or [],
+                str(payload.get("served_by") or SERVED_BY_UNKNOWN))
+    raise TypeError(
+        f"corrupt candles cache payload: expected list or dict, "
+        f"got {type(payload).__name__}")
+
+
+def _daily_candles_chain(symbol: str, *, timeout: float) -> dict[str, Any]:
     errors: list[str] = []
     def _alpaca_candles():
         from ..config import Config as _Config
@@ -68,13 +108,25 @@ def _daily_candles_chain(symbol: str, *, timeout: float) -> list[dict[str, Any]]
                  "high": float(b["h"]), "low": float(b["l"]),
                  "close": float(b["c"]), "volume": float(b.get("v", 0))}
                 for b in bars]
-    for name, fetch in (
-        ("stooq", lambda: stooq.fetch_candles(symbol, timeout=timeout)),
-        ("yahoo", lambda: yahoo.fetch_candles(symbol, timeout=timeout)),
-        ("alpaca", _alpaca_candles),
-    ):
+    legs = {
+        "stooq": lambda: stooq.fetch_candles(symbol, timeout=timeout),
+        "yahoo": lambda: yahoo.fetch_candles(symbol, timeout=timeout),
+        "alpaca": _alpaca_candles,
+    }
+    # A leg named by DAILY_CHAIN but absent from `legs` is a programming
+    # error (constant↔implementation drift), not a provider outage. Raise
+    # BEFORE the loop so the BLE001 catch cannot launder the KeyError into
+    # a "provider failed" string that would mask the missing leg forever.
+    missing = [name for name in DAILY_CHAIN if name not in legs]
+    if missing:
+        raise RuntimeError(f"DAILY_CHAIN legs without a fetcher: {missing}")
+    # Iterate DAILY_CHAIN (the single source of truth for order) so the
+    # fallback sequence can never drift from the label charts.py renders.
+    for name in DAILY_CHAIN:
         try:
-            return tracked(name, fetch)
+            # Stamp the serving leg inside the producer: cache hits keep
+            # naming the source that actually served.
+            return {"candles": tracked(name, legs[name]), "served_by": name}
         except Exception as exc:  # noqa: BLE001 - try the next source
             errors.append(f"{name}: {exc}")
     raise RuntimeError(f"no candle provider for {symbol} ({'; '.join(errors)})")
@@ -144,9 +196,23 @@ def crypto_candles(symbol: str, *, interval: str = "1d", limit: int = 180,
     it geo-blocks the configured egress (HTTP 451) or is otherwise down,
     CoinGecko still serves daily candles with volume reported as 0.0.
     The fallback only serves ``interval="1d"``: CoinGecko granularity is
-    endpoint-controlled, and quietly caching endpoint-chosen bars under a
-    key that promises another interval would make the cache lie. The
-    serving provider lands in the registry stats.
+    endpoint-controlled, and quietly caching endpoint-chosen bars under
+    a key that promises another interval would make the cache lie.
+    The serving provider lands in the registry stats.
+    """
+    return crypto_candles_with_source(
+        symbol, interval=interval, limit=limit, timeout=timeout)[0]
+
+
+def crypto_candles_with_source(
+    symbol: str, *, interval: str = "1d", limit: int = 180,
+    timeout: float = 10.0
+) -> tuple[list[dict[str, Any]], str]:
+    """``crypto_candles`` plus which chain leg actually served.
+
+    The stamp lives inside the cached payload (same doctrine as
+    ``daily_candles_with_source``): cache hits keep telling the truth,
+    and pre-stamp entries report ``"unknown"`` instead of guessing.
     """
     pair = symbol.strip().upper().replace("-", "").replace("/", "")
     if pair.endswith("USD") and not pair.endswith("USDT"):
@@ -155,7 +221,7 @@ def crypto_candles(symbol: str, *, interval: str = "1d", limit: int = 180,
     if not pair.endswith("USDT"):
         pair = pair + "USDT"
     coin = pair[:-4]
-    return cached(
+    payload = cached(
         f"cryptocandles:{pair}:{interval}:{limit}",
         ttl_seconds=60,
         # Bounded staleness: unlike the board (which carries generated_at),
@@ -165,22 +231,33 @@ def crypto_candles(symbol: str, *, interval: str = "1d", limit: int = 180,
         producer=lambda: _crypto_candles_chain(
             pair, coin, interval=interval, limit=limit, timeout=timeout),
     )
+    return _candles_and_source(payload)
 
 
 def _crypto_candles_chain(pair: str, coin: str, *, interval: str, limit: int,
-                          timeout: float) -> list[dict[str, Any]]:
-    chain: list[tuple[str, Any]] = [
-        ("binance", lambda: binance.fetch_candles(
-            pair, interval=interval, limit=limit, timeout=timeout)),
-    ]
-    if interval == "1d":
-        chain.append(
-            ("coingecko", lambda: coingecko.fetch_candles(
-                coin, days=max(1, min(limit, 365)), timeout=timeout)[-limit:]))
+                          timeout: float) -> dict[str, Any]:
+    legs = {
+        "binance": lambda: binance.fetch_candles(
+            pair, interval=interval, limit=limit, timeout=timeout),
+        # CoinGecko granularity is endpoint-controlled, so it only serves
+        # daily bars; caching endpoint-chosen bars under a key that promises
+        # another interval would make the cache lie.
+        "coingecko": lambda: coingecko.fetch_candles(
+            coin, days=max(1, min(limit, 365)), timeout=timeout)[-limit:],
+    }
+    # Same drift guard as the daily chain: a leg named by CRYPTO_CHAIN but
+    # missing from `legs` is a programming error, not a provider outage.
+    missing = [name for name in CRYPTO_CHAIN if name not in legs]
+    if missing:
+        raise RuntimeError(f"CRYPTO_CHAIN legs without a fetcher: {missing}")
     errors: list[str] = []
-    for name, fetch in chain:
+    # CRYPTO_CHAIN is the ordered source of truth; coingecko drops out for
+    # intraday intervals (it cannot honour them).
+    for name in CRYPTO_CHAIN:
+        if name == "coingecko" and interval != "1d":
+            continue
         try:
-            return tracked(name, fetch)
+            return {"candles": tracked(name, legs[name]), "served_by": name}
         except Exception as exc:  # noqa: BLE001 - try the next source
             errors.append(f"{name}: {exc}")
     raise RuntimeError(f"no crypto candles provider ({'; '.join(errors)})")
